@@ -43,16 +43,14 @@ object Main {
         }
       }
       for (w <- warnings) {
-        println(s"warning ${w}")
+        println(s"warning $w")
       }
     } catch {
-      case e: IllegalSourceException => {
+      case e: IllegalSourceException =>
         System.err.println(s"error ${e.msg}")
         System.exit(1)
-      }
-      case e: FileNotFoundException => {
+      case e: FileNotFoundException =>
         System.err.println(s"error: Cannot find file ${args(0)}")
-      }
     } finally {
       if (reader != null) {
         reader.close()
