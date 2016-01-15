@@ -1,8 +1,7 @@
 package c4.io
 
-import java.io.{FileOutputStream, File}
-
 import c4.messaging.{IllegalSourceException, Message}
+import c4.util.TestUtil
 import org.scalatest._
 
 import scala.collection.mutable.ArrayBuffer
@@ -110,13 +109,9 @@ class SourcePhase2ReaderTest extends FlatSpec with Matchers {
   def checkReader(input: String,
                   expected: Seq[(String, (Int, Int))],
                   expectedWarningsCount: Int = 0): Unit = {
-    val file = File.createTempFile("c4_test_", ".tmp.c")
-    val stream = new FileOutputStream(file)
-    stream.write(input.getBytes)
-    stream.close()
-
     val warnings: ArrayBuffer[Message] = ArrayBuffer.empty
-    val reader = new SourcePhase2Reader(warnings, file.getAbsolutePath)
+    val tempFilePath: String = TestUtil.createTempFile(input)
+    val reader = new SourcePhase2Reader(warnings, tempFilePath)
 
     var restExpected: Seq[(String, (Int, Int))] = expected
     while (restExpected.nonEmpty) {

@@ -32,6 +32,8 @@ class SourcePhase2Reader(val warnings: ArrayBuffer[Message],
    */
   def close() = file.close()
 
+  private var ungetBuf: Seq[(Char, (Int, Int))] = Seq.empty
+
   private var buffered: Seq[Char] = Seq.empty
   private var bufferedLoc: (Int, Int) = (-1, -1) // init value doesn't matter
   private var nextCharLoc: (Int, Int) = (1, 1)
@@ -61,10 +63,20 @@ class SourcePhase2Reader(val warnings: ArrayBuffer[Message],
     }
   }
 
+  def ungetc(c: (Char, (Int, Int))): Unit = {
+    ungetBuf = c +: ungetBuf
+  }
+
   /**
    * Read the next character and its physical location (line, col).
    */
   def read(): Option[(Char, (Int, Int))] = {
+    if (ungetBuf.nonEmpty) {
+      val r: Option[(Char, (Int, Int))] = Some(ungetBuf.head)
+      ungetBuf = ungetBuf.tail
+      return r
+    }
+
     val r = readImpl()
     checkFileEnding(r)
     r

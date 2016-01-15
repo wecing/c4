@@ -4,7 +4,7 @@ import java.io.FileNotFoundException
 
 import c4.io.SourcePhase2Reader
 import c4.messaging.{Message, IllegalSourceException}
-import c4.util.CharRepr
+import c4.util.CharUtil
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -39,7 +39,7 @@ object Main {
         r match {
           case None => eof = true
           case Some((c: Char, (line, col))) =>
-            println(s"\t${CharRepr(c)}\t($line, $col)")
+            println(s"\t${CharUtil.repr(c)}\t($line, $col)")
         }
       }
       for (w <- warnings) {
