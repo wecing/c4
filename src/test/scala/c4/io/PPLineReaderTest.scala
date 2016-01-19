@@ -124,7 +124,7 @@ class PPLineReaderTest extends FlatSpec with Matchers {
         |*/else
         |#error what happened?
         |#endif
-      """.stripMargin
+        |""".stripMargin
     val expected: Seq[PPLine] = Seq(
       PPLineIf(
         (1, 3),
@@ -161,7 +161,7 @@ class PPLineReaderTest extends FlatSpec with Matchers {
         List(),
         List(
           Located((9, 13), PPTokWhiteSpc(' ')),
-          Located((9, 14), PPTokStr("hi")))),
+          Located((9, 14), PPTokStr("\"hi\"")))),
       PPLineDefineFunc(
         (10, 1),
         Located((10, 9), "F2"),
@@ -205,7 +205,7 @@ class PPLineReaderTest extends FlatSpec with Matchers {
           Located((16, 1), PPTokSym("}")))),
       PPLineLine((17, 1), 35, None),
       PPLineTokens(List(Located((18, 1), PPTokId("X")))),
-      PPLineLine((19, 1), 32, Some("naxx.c")),
+      PPLineLine((19, 1), 32, Some("\"naxx.c\"")),
       PPLineTokens(
         List(
           Located((20, 1), PPTokId("F1")),
@@ -236,6 +236,9 @@ class PPLineReaderTest extends FlatSpec with Matchers {
           recur(rest.tail)
       }
     }
+
+    recur(expected)
+    reader.close()
   }
 
   private def toPPTokSyms(xs: Seq[Seq[String]]): Seq[Seq[PPTokSym]] = {
@@ -267,5 +270,6 @@ class PPLineReaderTest extends FlatSpec with Matchers {
 
     checkLine(tokens)
     warnings.isEmpty should be (true)
+    reader.close()
   }
 }
