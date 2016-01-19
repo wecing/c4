@@ -2,23 +2,10 @@ package c4
 
 import java.io.FileNotFoundException
 
-import c4.io.SourcePhase2Reader
+import c4.io.PPLineReader
 import c4.messaging.{Message, IllegalSourceException}
-import c4.util.CharUtil
 
 import scala.collection.mutable.ArrayBuffer
-
-// phase 3:
-//    preprocessing-token:
-//      header-name
-//      identifier
-//      pp-number
-//      character-constant
-//      string-literal
-//      operator
-//      punctuator
-//      (each other non-white-space characters)
-//      (each white-space characters)
 
 
 object Main {
@@ -28,18 +15,16 @@ object Main {
       System.exit(1)
     }
 
-    var reader: SourcePhase2Reader = null
+    var reader: PPLineReader = null
 
     try {
       val warnings: ArrayBuffer[Message] = ArrayBuffer.empty
-      reader = new SourcePhase2Reader(warnings, args(0))
+      reader = new PPLineReader(warnings, args(0))
       var eof = false
       while (!eof) {
-        val r: Option[(Char, (Int, Int))] = reader.read()
-        r match {
+        reader.read() match {
           case None => eof = true
-          case Some((c: Char, (line, col))) =>
-            println(s"\t${CharUtil.repr(c)}\t($line, $col)")
+          case Some(line) => println(line)
         }
       }
       for (w <- warnings) {
