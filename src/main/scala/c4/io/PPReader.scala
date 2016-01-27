@@ -10,18 +10,17 @@ object PPReader {
 
   // remove PPTokWhiteSpc's at beginning/end,
   // combine consecutive PPTokWhiteSpc's
-  private def rmExtraSpaces(tokens: Seq[L[PPTok]]): Seq[PPTok] = {
+  private def rmExtraSpaces(tokens: Seq[L[PPTok]]): Seq[L[PPTok]] = {
     tokens
-      .map(_.value)
-      .dropWhile(_.isInstanceOf[PPTokWhiteSpc])
+      .dropWhile(_.value.isInstanceOf[PPTokWhiteSpc])
       .reverse
-      .dropWhile(_.isInstanceOf[PPTokWhiteSpc])
+      .dropWhile(_.value.isInstanceOf[PPTokWhiteSpc])
       .reverse
-      .foldLeft(Seq.empty[PPTok])(
-        (accum: Seq[PPTok], tok: PPTok) => {
+      .foldLeft(Seq.empty[L[PPTok]])(
+        (accum: Seq[L[PPTok]], tok: L[PPTok]) => {
           if (accum.isEmpty
-            || !accum.last.isInstanceOf[PPTokWhiteSpc]
-            || !tok.isInstanceOf[PPTokWhiteSpc]) {
+            || !accum.last.value.isInstanceOf[PPTokWhiteSpc]
+            || !tok.value.isInstanceOf[PPTokWhiteSpc]) {
             accum :+ tok
           } else {
             accum
@@ -41,7 +40,7 @@ object PPReader {
                                 rawBody: Seq[L[PPTok]]) {
 
     val argNames: Seq[String] = rawArgNames.map(_.value)
-    val bodyTokens: Seq[PPTok] = rmExtraSpaces(rawBody)
+    val bodyTokens: Seq[PPTok] = rmExtraSpaces(rawBody).map(_.value)
 
     override def equals(other: Any): Boolean = other match {
       case that: FuncMacro =>
@@ -52,10 +51,25 @@ object PPReader {
     val bodyParts: Seq[BodyPart] = {
       val argNamesSet: Set[String] = Set(argNames:_*)
       def recur(tokens: Seq[L[PPTok]], accum: Seq[BodyPart]): Seq[BodyPart] = {
+        // TODO: large-scale copy-and-paste detected
         tokens match {
           case Seq() => accum
           // "#x"
           case (tok1@L(loc1, PPTokSym("#"), fileName))
+            :: (tok2@L(loc2, PPTokId(id), _))
+            :: xs =>
+            if (argNamesSet.contains(id)) {
+              recur(xs, accum :+ ToStrPart(L(loc1, id, fileName)))
+            } else {
+              ctx.warnings += SimpleMessage(
+                fileName.getOrElse(ctx.logicalFileName),
+                loc2,
+                s"Non-arg id $id appeared after '#' in function-like macro")
+              recur(xs, accum :+ TokPart(tok1) :+ TokPart(tok2))
+            }
+          // "# x"
+          case (tok1@L(loc1, PPTokSym("#"), fileName))
+            :: L(_, PPTokWhiteSpc(_), _)
             :: (tok2@L(loc2, PPTokId(id), _))
             :: xs =>
             if (argNamesSet.contains(id)) {
@@ -72,23 +86,41 @@ object PPReader {
             :: (tok2@L(loc2, PPTokSym("##"), _))
             :: (tok3@L(loc3, PPTokId(id3), _))
             :: xs =>
-            if (argNamesSet.contains(id1) && argNamesSet.contains(id3)) {
-              recur(
-                xs,
-                accum :+
-                  ConcatPart(
-                    L(loc1, id1, fileName),
-                    L(loc3, id3, fileName)))
-            } else {
-              ctx.warnings += SimpleMessage(
-                fileName.getOrElse(ctx.logicalFileName),
-                loc2,
-                s"Non-arg id ${if (argNamesSet.contains(id1)) id3 else id1}" +
-                  " appeared near '##' in function-like macro")
-              recur(
-                xs,
-                accum :+ TokPart(tok1) :+ TokPart(tok2) :+ TokPart(tok3))
-            }
+            recur(
+              xs,
+              accum :+
+                ConcatPart(L(loc1, id1, fileName), L(loc3, id3, fileName)))
+          // "x ##y"
+          case (tok1@L(loc1, PPTokId(id1), fileName))
+            :: L(_, PPTokWhiteSpc(_), _)
+            :: (tok2@L(loc2, PPTokSym("##"), _))
+            :: (tok3@L(loc3, PPTokId(id3), _))
+            :: xs =>
+            recur(
+              xs,
+              accum :+
+                ConcatPart(L(loc1, id1, fileName), L(loc3, id3, fileName)))
+          // "x## y"
+          case (tok1@L(loc1, PPTokId(id1), fileName))
+            :: (tok2@L(loc2, PPTokSym("##"), _))
+            :: L(_, PPTokWhiteSpc(_), _)
+            :: (tok3@L(loc3, PPTokId(id3), _))
+            :: xs =>
+            recur(
+              xs,
+              accum :+
+                ConcatPart(L(loc1, id1, fileName), L(loc3, id3, fileName)))
+          // "x ## y"
+          case (tok1@L(loc1, PPTokId(id1), fileName))
+            :: L(_, PPTokWhiteSpc(_), _)
+            :: (tok2@L(loc2, PPTokSym("##"), _))
+            :: L(_, PPTokWhiteSpc(_), _)
+            :: (tok3@L(loc3, PPTokId(id3), _))
+            :: xs =>
+            recur(
+              xs,
+              accum :+
+                ConcatPart(L(loc1, id1, fileName), L(loc3, id3, fileName)))
           // arg of the func macro
           case (tok@L(loc, PPTokId(id), fileName)) :: xs =>
             val p: BodyPart =
@@ -98,14 +130,14 @@ object PPReader {
                 TokPart(tok)
               }
             recur(xs, accum :+ p)
-          // "# x", or "#" is the last token
+          // illegal "#x"
           case (tok@L(loc, PPTokSym("#"), fileName)) :: xs =>
             ctx.warnings += SimpleMessage(
               fileName.getOrElse(ctx.logicalFileName),
               loc,
               "Token '#' not followed by argument of function-like macro")
             recur(xs, accum :+ TokPart(tok))
-          // "x ## y", "x## y", "x ##y", or "##" is the last token
+          // illgal "x##y"
           case tok1 :: (tok2@L(loc, PPTokSym("##"), fileName)) :: xs =>
             ctx.warnings += SimpleMessage(
               fileName.getOrElse(ctx.logicalFileName),
@@ -117,12 +149,12 @@ object PPReader {
             recur(xs, accum :+ TokPart(tok))
         }
       }
-      recur(rawBody, Seq.empty)
+      recur(rmExtraSpaces(rawBody), Seq.empty)
     }
   }
 
   private final class ObjMacro(rawBody: Seq[L[PPTok]]) {
-    val bodyTokens: Seq[PPTok] = rmExtraSpaces(rawBody)
+    val bodyTokens: Seq[PPTok] = rmExtraSpaces(rawBody).map(_.value)
 
     override def equals(other: Any): Boolean = other match {
       case that: ObjMacro => bodyTokens == that.bodyTokens
@@ -153,7 +185,6 @@ object PPReader {
 
   // pp = macro expansion + #line processing
   private def pp(ctx: PPReaderCtx, rawTokens: Seq[L[PPTok]]): Seq[L[PPTok]] = {
-    // println(s"pp: $rawTokens") // TODO
     // #line transformation
     val tokens: Seq[L[PPTok]] =
       rawTokens.map(_.transform(ctx.logicalFileName, ctx.logicalLineNumOffset))
@@ -161,7 +192,6 @@ object PPReader {
     // returns false if no macro expansion happened
     type T = Either[(Set[String], L[String]), L[PPTok]]
     def expand(tokens: Seq[T]): Seq[T] = {
-      // println(s"tokens: ${tokens.map(fromT).map(_.value).filterNot(_.isInstanceOf[PPTokWhiteSpc]).map(_.raw).mkString(" ")}") // TODO
       final case class FuncArgSearch(funcName: L[String],
                                      funcNameIgnoreSet: Set[String],
                                      lparen: Option[T],
@@ -188,6 +218,7 @@ object PPReader {
                     // set foundMacro only when search is complete
                     accum
                   case Some(Right(objMacro: ObjMacro)) =>
+                    // TODO: c89 also allows '##' to be used inside objMacros.
                     foundMacro = true
                     accum ++ objMacro.bodyTokens.map {
                       case PPTokId(id) =>
@@ -223,6 +254,8 @@ object PPReader {
                   foundMacro = true
                   val args: Seq[Seq[T]] =
                     (s.foundArgs.map(_._1) :+ s.curArg).map(expand).map(trim)
+                  val argsRaw: Seq[Seq[T]] = // not expanded yet
+                    (s.foundArgs.map(_._1) :+ s.curArg).map(trim)
                   val funcMacro: FuncMacro =
                     ctx.macros.get(s.funcName.value).get.left.get
                   if (args.length != funcMacro.argNames.length) {
@@ -234,6 +267,8 @@ object PPReader {
                   }
                   val argsMap: collection.Map[String, Seq[T]] =
                     collection.Map(funcMacro.argNames.zip(args):_*)
+                  val argsMapRaw: collection.Map[String, Seq[T]] =
+                    collection.Map(funcMacro.argNames.zip(argsRaw):_*)
                   for ((k, v) <- argsMap.iterator) {
                     if (v.isEmpty) {
                       throw IllegalSourceException(SimpleMessage(
@@ -253,24 +288,64 @@ object PPReader {
                           Seq(Right(L(s.funcName.loc, t, s.funcName.fileName)))
                       }
                     case p: ToStrPart =>
-                      val str: String =
-                        argsMap.get(p.arg.value).get.map {
-                          case Left((_, located)) => located.value
-                          case Right(located) => located.value.raw
-                        }.mkString
+                      val str: String = {
+                        var r = ""
+                        var isPrevWhiteSpace = false
+                        argsMapRaw.get(p.arg.value).get.foreach {
+                          case Left((_, located)) =>
+                            r += located.value
+                            isPrevWhiteSpace = false
+                          case Right(located) => located.value match {
+                            case x: PPTokWhiteSpc =>
+                              if (!isPrevWhiteSpace) {
+                                r += " "
+                                isPrevWhiteSpace = true
+                              }
+                            case x: PPTokStr =>
+                              r += x.repr
+                                .replace("\\", "\\\\") // \ => \\
+                                .replace("\"", "\\\"") // " => \"
+                              isPrevWhiteSpace = false
+                            case x: PPTokChar =>
+                              r += x.repr
+                                .replace("\\", "\\\\") // \ => \\
+                                .replace("\"", "\\\"") // " => \"
+                              isPrevWhiteSpace = false
+                            case _ =>
+                              r += located.value.raw
+                              isPrevWhiteSpace = false
+                          }
+                        }
+                        r
+                      }
                       Seq(Right(L(
                         s.funcName.loc,
-                        PPTokStr(TextUtils.strReprQ(str)),
+                        PPTokStr("\"" + str + "\""),
                         s.funcName.fileName)))
                     case p: ConcatPart =>
                       // TODO: support other tokens as well!
-                      val arg1: Seq[T] = argsMap.get(p.arg1.value).get
-                      val arg2: Seq[T] = argsMap.get(p.arg2.value).get
+                      val arg1: Seq[T] = argsMapRaw.getOrElse(
+                        p.arg1.value,
+                        Seq(Left( // not arg, just an identifier
+                          Set.empty[String],
+                          L(s.funcName.loc,
+                            p.arg1.value,
+                            s.funcName.fileName))))
+                      val arg2: Seq[T] = argsMapRaw.getOrElse(
+                        p.arg2.value,
+                        Seq(Left( // not arg, just an identifier
+                          Set.empty[String],
+                          L(s.funcName.loc,
+                            p.arg2.value,
+                            s.funcName.fileName))))
                       val newT: T = (arg1.last, arg2.head) match {
                         case (Left((s1, x1)), Left((s2, x2))) =>
                           Left((
                             s1 ++ s2,
                             L(x1.loc, x1.value + x2.value, x1.fileName)))
+                        case (Left((s1, x1)), Right(L(_, PPTokNum(num), _)))
+                          if !num.exists(".+-".contains(_)) =>
+                          Left((s1, L(x1.loc, x1.value + num, x1.fileName)))
                         case _ =>
                           throw IllegalSourceException(SimpleMessage(
                             ctx.logicalFileName,
@@ -287,7 +362,7 @@ object PPReader {
                       }
                   }
                   status = None
-                  accum ++ expanded
+                  accum ++ expand(expanded)
                 } else {
                   status = Some(s.copy(
                     curArg = s.curArg :+ t,
@@ -355,7 +430,7 @@ object PPReader {
 
   private def ppEvalConstBoolExpr(ctx: PPReaderCtx,
                                   tokens: Seq[L[PPTok]]): Boolean = {
-    ???
+    ??? // TODO
   }
 
   private def doPPCmd(ctx: PPReaderCtx, cmd: PPLine): Unit = {

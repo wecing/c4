@@ -241,7 +241,9 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
               }
             case p =>
               file.ungetc(p)
-              recur(accum :+ L(loc1, PPTokId("L")))
+              val xs: Seq[(Char, (Int, Int))] =
+                takeWhile(c => isDigit(c) || isAlpha(c) || c == '_')
+              recur(accum :+ L(loc1, PPTokId("L" + xs.map(_._1).mkString)))
           }
         case (c1, loc1) if c1 == '\'' || c1 == '"' =>
           readCharStrLiteral(c1 == '"') match {
@@ -429,6 +431,7 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
         readEmptyLine()
         PPLineEndif(loc)
       case "include" =>
+        // TODO: c89 allows the arguments of #include to be macro-expanded
         def readIncludeHeader(endsOn: Char, accum: String): String = {
           file.read().get match {
             case ('\n', loc1) => throw IllegalSourceException(SimpleMessage(

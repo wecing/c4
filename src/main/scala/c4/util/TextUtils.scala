@@ -19,7 +19,11 @@ object TextUtils {
 
   // like repr, but quoted
   def strReprQ(s: String): String = {
-    "\"" + s.replace("\n", "\\n").replace("\"", "\\\"") + "\""
+    "" +
+      "\"" +
+      s.replace("\n", "\\n")
+        .replace("\"", "\\\"") +
+      "\""
   }
 
   def fromStrReprQ(reprQ: Located[String]): String = {

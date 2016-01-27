@@ -60,6 +60,12 @@ class PPLineReaderTest extends FlatSpec with Matchers {
       Seq(Seq("1ae", "1e+", "1ae-", "1aE+", "1E-", "1ae-0xF.E+").map(PPTokNum)))
   }
 
+  it should "recognize identifiers" in {
+    checkPPTokens(
+      "L LO LOW OW\n",
+      Seq(Seq("L", "LO", "LOW", "OW").map(PPTokId)))
+  }
+
   it should "recognize string and character literals" in {
     checkPPTokens("\"//\"\n", Seq(Seq(PPTokStr("\"//\""))))
     checkPPTokens("L\"/*\"\n", Seq(Seq(PPTokStr("L\"/*\""))))
