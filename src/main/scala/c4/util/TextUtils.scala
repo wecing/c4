@@ -1,6 +1,6 @@
 package c4.util
 
-object CharUtil {
+object TextUtils {
   private val reprMap: Map[Char, String] = Map(
     ' ' -> "space",
     '\t' -> "\\t",
@@ -15,6 +15,15 @@ object CharUtil {
       return c.toString
     }
     reprMap.getOrElse(c, s"\\x${c.toInt.toHexString}")
+  }
+
+  // like repr, but quoted
+  def strReprQ(s: String): String = {
+    "\"" + s.replace("\n", "\\n").replace("\"", "\\\"") + "\""
+  }
+
+  def fromStrReprQ(reprQ: Located[String]): String = {
+    reprQ.value // TODO - this needs to be implemented...
   }
 
   // '\r' is not considered as white space character in C89.

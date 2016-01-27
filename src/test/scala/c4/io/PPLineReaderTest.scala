@@ -205,7 +205,7 @@ class PPLineReaderTest extends FlatSpec with Matchers {
           Located((16, 1), PPTokSym("}")))),
       PPLineLine((17, 1), 35, None),
       PPLineTokens(List(Located((18, 1), PPTokId("X")))),
-      PPLineLine((19, 1), 32, Some("\"naxx.c\"")),
+      PPLineLine((19, 1), 32, Some(Located((19, 10), "\"naxx.c\""))),
       PPLineTokens(
         List(
           Located((20, 1), PPTokId("F1")),

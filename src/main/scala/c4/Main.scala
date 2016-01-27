@@ -2,8 +2,9 @@ package c4
 
 import java.io.FileNotFoundException
 
-import c4.io.PPLineReader
+import c4.io.{PPTok, PPReader}
 import c4.messaging.{Message, IllegalSourceException}
+import c4.util.Located
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -15,18 +16,18 @@ object Main {
       System.exit(1)
     }
 
-    var reader: PPLineReader = null
-
     try {
       val warnings: ArrayBuffer[Message] = ArrayBuffer.empty
-      reader = new PPLineReader(warnings, args(0))
-      var eof = false
-      while (!eof) {
-        reader.read() match {
-          case None => eof = true
-          case Some(line) => println(line)
+      val tokens: Seq[Located[PPTok]] = PPReader.read(warnings, args(0))
+      var prevLineNum: Int = 0
+      for (t <- tokens) {
+        if (t.loc._1 != prevLineNum) {
+          println()
+          prevLineNum = t.loc._1
         }
+        print(t.value.raw)
       }
+      println()
       for (w <- warnings) {
         println(s"warning $w")
       }
@@ -36,10 +37,6 @@ object Main {
         System.exit(1)
       case e: FileNotFoundException =>
         System.err.println(s"error: Cannot find file ${args(0)}")
-    } finally {
-      if (reader != null) {
-        reader.close()
-      }
     }
   }
 }

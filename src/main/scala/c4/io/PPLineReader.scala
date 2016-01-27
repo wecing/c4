@@ -1,7 +1,7 @@
 package c4.io
 
 import c4.messaging.{SimpleMessage, IllegalSourceException, Message}
-import c4.util.{Located => L, CharUtil}
+import c4.util.{Located => L, TextUtils}
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -36,7 +36,7 @@ final case class PPLineDefineFunc(loc: (Int, Int),
 final case class PPLineUndef(loc: (Int, Int), name: L[String]) extends PPLine
 final case class PPLineLine(loc: (Int, Int),
                             line: Int, // use repr here for __FILE__
-                            fileNameRepr: Option[String]) extends PPLine
+                            fileNameRepr: Option[L[String]]) extends PPLine
 final case class PPLineError(loc: (Int, Int), msg: String) extends PPLine
 final case class PPLinePragma(loc: (Int, Int)) extends PPLine
 final case class PPLineNull(loc: (Int, Int)) extends PPLine // null directive
@@ -58,7 +58,7 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
     file.read() match {
       case None => None
       case Some(('\n', _)) => read() // empty line, retry on next line
-      case Some((c: Char, _)) if CharUtil.isWhiteSpace(c) => read()
+      case Some((c: Char, _)) if TextUtils.isWhiteSpace(c) => read()
       case Some(p@('/', loc1)) =>
         // it is possible that there's a pp directive after block comment,
         // so we cannot simply ungetc() then readPPTokensLine() here.
@@ -215,11 +215,11 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
               file.ungetc(p)
               recur(accum :+ L(loc1, PPTokSym("/")))
           }
-        case (c1, loc1) if CharUtil.isWhiteSpace(c1) =>
+        case (c1, loc1) if TextUtils.isWhiteSpace(c1) =>
           if (inPPDirective && c1 != ' ' && c1 != '\t') {
             throw IllegalSourceException(SimpleMessage(
               fileName, loc1,
-              s"unexpected whitespace character <${CharUtil.repr(c1)}>" +
+              s"unexpected whitespace character <${TextUtils.repr(c1)}>" +
                 " inside preprocessing directive"))
           } else {
             recur(accum :+ L(loc1, PPTokWhiteSpc(c1)))
@@ -374,12 +374,12 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
           file.ungetc(p1)
           ()
       }
-      takeWhile(c => CharUtil.isWhiteSpace(c) && c != '\n')
+      takeWhile(c => TextUtils.isWhiteSpace(c) && c != '\n')
     }
     def unexpectedChar(p: (Char, (Int, Int))): IllegalSourceException = {
       throw IllegalSourceException(new SimpleMessage(
         fileName, p._2,
-        s"Unexpected character ${CharUtil.repr(p._1)} at" +
+        s"Unexpected character ${TextUtils.repr(p._1)} at" +
           s" line ${p._2._1}, col ${p._2._2}; identifier expected"))
     }
     def readEmptyLine(): Unit = {
@@ -451,7 +451,7 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
           case (c, loc1) =>
             throw IllegalSourceException(SimpleMessage(
               fileName, loc1,
-              s"Unexpected character ${CharUtil.repr(c)} in #include"))
+              s"Unexpected character ${TextUtils.repr(c)} in #include"))
         }
       case "define" =>
         def expectId(): L[String] = {
@@ -483,7 +483,7 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
                     case (c, loc1) =>
                       throw IllegalSourceException(new SimpleMessage(
                         fileName, loc1,
-                        s"Unexpected character <${CharUtil.repr(c)}> inside" +
+                        s"Unexpected character <${TextUtils.repr(c)}> inside" +
                           " #define, comma or ')' expected"))
                   }
                 }
@@ -512,14 +512,14 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
               s"Illegal line number inside #line directive: ${tok.value.num}"))
           }
         }
-        def getFileNameRepr(tok: L[PPTokStr]): String = {
+        def getFileNameRepr(tok: L[PPTokStr]): L[String] = {
           val repr: String = tok.value.repr
           if (repr.charAt(0) != '"') {
             throw new IllegalSourceException(new SimpleMessage(
               fileName, tok.loc,
               s"Illegal file name inside #line directive: $repr"))
           }
-          repr
+          L(tok.loc, repr)
         }
         toks.filterNot(isPPTokWhiteSpc) match {
           case num :: Seq() if num.value.isInstanceOf[PPTokNum] =>
