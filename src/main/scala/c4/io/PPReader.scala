@@ -1,5 +1,8 @@
 package c4.io
 
+import java.text.SimpleDateFormat
+import java.util.{Date, Calendar}
+
 import c4.messaging.{SimpleMessage, IllegalSourceException, Message}
 import c4.util.{Located => L, TextUtils}
 
@@ -51,7 +54,7 @@ object PPReader {
     val bodyParts: Seq[BodyPart] = {
       val argNamesSet: Set[String] = Set(argNames:_*)
       def recur(tokens: Seq[L[PPTok]], accum: Seq[BodyPart]): Seq[BodyPart] = {
-        // TODO: large-scale copy-and-paste detected
+        // TODO: very-large-scale-copy-and-paste detected
         tokens match {
           case Seq() => accum
           // "#x"
@@ -137,7 +140,7 @@ object PPReader {
               loc,
               "Token '#' not followed by argument of function-like macro")
             recur(xs, accum :+ TokPart(tok))
-          // illgal "x##y"
+          // illegal "x##y"
           case tok1 :: (tok2@L(loc, PPTokSym("##"), fileName)) :: xs =>
             ctx.warnings += SimpleMessage(
               fileName.getOrElse(ctx.logicalFileName),
@@ -153,15 +156,27 @@ object PPReader {
     }
   }
 
-  private final class ObjMacro(rawBody: Seq[L[PPTok]]) {
+  sealed private class ObjMacro(rawBody: Seq[L[PPTok]]) {
     val bodyTokens: Seq[PPTok] = rmExtraSpaces(rawBody).map(_.value)
 
+    def predefinedName: Option[String] = None
+
     override def equals(other: Any): Boolean = other match {
-      case that: ObjMacro => bodyTokens == that.bodyTokens
+      case that: ObjMacro =>
+        bodyTokens == that.bodyTokens && predefinedName == that.predefinedName
       case _ => false
     }
   }
 
+  private object LineMacro extends ObjMacro(Seq.empty) {
+    override def predefinedName: Option[String] = Some("__LINE__")
+  }
+  private object FileMacro extends ObjMacro(Seq.empty) {
+    override def predefinedName: Option[String] = Some("__FILE__")
+  }
+  private object DateMacro extends ObjMacro(Seq.empty) {
+    override def predefinedName: Option[String] = Some("__DATE__")
+  }
 
   private final class PPReaderCtx(val warnings: ArrayBuffer[Message],
                                   fileName: String) {
@@ -180,7 +195,11 @@ object PPReader {
 
     ///// preserved across files //////
 
-    val macros: mutable.Map[String, Either[FuncMacro, ObjMacro]] = mutable.Map()
+    val macros: mutable.Map[String, Either[FuncMacro, ObjMacro]] = mutable.Map(
+      LineMacro.predefinedName.get -> Right(LineMacro),
+      FileMacro.predefinedName.get -> Right(FileMacro),
+      DateMacro.predefinedName.get -> Right(DateMacro)
+    )
   }
 
   // pp = macro expansion + #line processing
@@ -220,13 +239,40 @@ object PPReader {
                   case Some(Right(objMacro: ObjMacro)) =>
                     // TODO: c89 also allows '##' to be used inside objMacros.
                     foundMacro = true
-                    accum ++ objMacro.bodyTokens.map {
-                      case PPTokId(id) =>
-                        Left((
-                          ignoreSet + name.value,
-                          L(name.loc, id, name.fileName)))
-                      case t: PPTok =>
-                        Right(L(name.loc, t, name.fileName))
+                    val located: L[Any] = tok match {
+                      case Left((_, x)) => x
+                      case Right(x) => x
+                    }
+                    objMacro match {
+                      case LineMacro =>
+                        accum :+ Right(L(
+                          located.loc,
+                          PPTokNum(located.loc._1.toString),
+                          located.fileName))
+                      case FileMacro =>
+                        accum :+ Right(L(
+                          located.loc,
+                          PPTokStr(ctx.logicalFileNameRepr),
+                          located.fileName))
+                      case DateMacro =>
+                        val day: String = "%2d".format(
+                          Calendar.getInstance().get(Calendar.DAY_OF_MONTH))
+                        val date: String =
+                          new SimpleDateFormat("MMM %s yyyy".format(day))
+                            .format(new Date())
+                        accum :+ Right(L(
+                          located.loc,
+                          PPTokStr("\"" + date + "\""),
+                          located.fileName))
+                      case _ =>
+                        accum ++ objMacro.bodyTokens.map {
+                          case PPTokId(id) =>
+                            Left((
+                              ignoreSet + name.value,
+                              L(name.loc, id, name.fileName)))
+                          case t: PPTok =>
+                            Right(L(name.loc, t, name.fileName))
+                        }
                     }
                 }
               case Right(_) =>
