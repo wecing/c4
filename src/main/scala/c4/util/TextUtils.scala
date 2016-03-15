@@ -19,6 +19,33 @@ object TextUtils {
     reprMap.getOrElse(c, s"\\x${c.toInt.toHexString}")
   }
 
+  def fromCharReprQ(reprQ: Located[String]): Char = {
+    var legal = reprQ.value.head == '\'' && reprQ.value.last == '\''
+    var c: Char = '\0'
+    if (legal) {
+      try {
+        val str = fromStrReprQ(Located(
+          reprQ.loc, "\"" + reprQ.value.init.tail + "\"", reprQ.fileName))
+        if (str.length != 1) {
+          legal = false
+        } else {
+          c = str.head
+        }
+      } catch {
+        case _: IllegalSourceException =>
+          legal = false
+      }
+    }
+    if (!legal) {
+      throw IllegalSourceException(SimpleMessage(
+        reprQ.fileName.getOrElse("<unknown>"),
+        reprQ.loc,
+        "Illegal character literal"
+      ))
+    }
+    c
+  }
+
   // given a string, return a legal C string constant representation
   // TODO: support more esc seqs?
   def strReprQ(s: String): String = {

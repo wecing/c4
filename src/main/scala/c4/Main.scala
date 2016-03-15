@@ -2,9 +2,8 @@ package c4
 
 import java.io.FileNotFoundException
 
-import c4.io.{PPTok, PPReader}
+import c4.io.SourcePhase7Reader
 import c4.messaging.{Message, IllegalSourceException}
-import c4.util.Located
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -18,14 +17,14 @@ object Main {
 
     try {
       val warnings: ArrayBuffer[Message] = ArrayBuffer.empty
-      val tokens: Seq[Located[PPTok]] = PPReader.read(warnings, args(0))
-      var prevLineNum: Int = 0
-      for (t <- tokens) {
-        if (t.loc._1 != prevLineNum) {
-          println()
-          prevLineNum = t.loc._1
+      val reader = new SourcePhase7Reader(warnings, args(0))
+      var stop = false
+      while (!stop) {
+        reader.get() match {
+          case None => stop = true
+          case Some(t) =>
+            println(t.value.toString)
         }
-        print(t.value.raw)
       }
       println()
       for (w <- warnings) {

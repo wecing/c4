@@ -296,12 +296,22 @@ object PPReader {
                       .dropWhile(isWhiteSpc)
                       .reverse
                   }
+                  // the argument of "F()" will be recognized as Seq(Seq()),
+                  // instead of Seq.empty. this special check fixes that...
+                  def checkNoArg(x: Seq[Seq[T]]): Seq[Seq[T]] = {
+                    if (x == Seq(Seq.empty)) {
+                      Seq.empty
+                    } else {
+                      x
+                    }
+                  }
                   // found all arguments
                   foundMacro = true
                   val args: Seq[Seq[T]] =
-                    (s.foundArgs.map(_._1) :+ s.curArg).map(expand).map(trim)
+                    checkNoArg(s.foundArgs.map(_._1) :+ s.curArg)
+                      .map(expand).map(trim)
                   val argsRaw: Seq[Seq[T]] = // not expanded yet
-                    (s.foundArgs.map(_._1) :+ s.curArg).map(trim)
+                    checkNoArg(s.foundArgs.map(_._1) :+ s.curArg).map(trim)
                   val funcMacro: FuncMacro =
                     ctx.macros.get(s.funcName.value).get.left.get
                   if (args.length != funcMacro.argNames.length) {
@@ -309,7 +319,9 @@ object PPReader {
                       ctx.logicalFileName,
                       s.funcName.loc,
                       s"Wrong number of arguments passed to" +
-                        s" func-like macro ${s.funcName.value}"))
+                        s" func-like macro ${s.funcName.value}:" +
+                        s" expected ${funcMacro.argNames.length}," +
+                        s" received ${args.length} (${args})"))
                   }
                   val argsMap: collection.Map[String, Seq[T]] =
                     collection.Map(funcMacro.argNames.zip(args):_*)
@@ -441,7 +453,12 @@ object PPReader {
                       case Left((_, t)) => t.loc
                       case Right(t) => t.loc
                     },
-                    "Unexpected token"))
+                    s"Unexpected token ${
+                      x match {
+                        case Left((_, t)) => t.value
+                        case Right(t) => t.value
+                      }
+                    }"))
               }
           }
         } ++ (status match {
