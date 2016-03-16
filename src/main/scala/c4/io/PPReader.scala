@@ -458,7 +458,7 @@ object PPReader {
                         case Left((_, t)) => t.value
                         case Right(t) => t.value
                       }
-                    }"))
+                    }; '(' expected"))
               }
           }
         } ++ (status match {

@@ -10,18 +10,17 @@ import scala.collection.mutable.ArrayBuffer
 
 class SourcePhase7ReaderTest extends FlatSpec with Matchers {
   it should "pass tcc's pp tests" in {
-    // TODO: probably a huge and tough bug here
+    // TODO: ## not yet fully implemented
     // checkPP("/pp/01.c", "/pp/01.expect")
     checkPP("/pp/02.c", "/pp/02.expect")
     checkPP("/pp/03.c", "/pp/03.expect")
     checkPP("/pp/04.c", "/pp/04.expect")
-    // TODO: ## not yet completely implemented
+    // TODO: ## not yet fully implemented
     // checkPP("/pp/05.c", "/pp/05.expect")
     checkPP("/pp/06.c", "/pp/06.expect")
-    // TODO: bug
-    // checkPP("/pp/07.c", "/pp/07.expect")
+    checkPP("/pp/07.c", "/pp/07.expect")
     checkPP("/pp/08.c", "/pp/08.expect")
-    // TODO: bug
+    // TODO: is "a##b##c" allowed in c89?
     // checkPP("/pp/09.c", "/pp/09.expect")
     checkPP("/pp/10.c", "/pp/10.expect")
   }
@@ -65,7 +64,7 @@ class SourcePhase7ReaderTest extends FlatSpec with Matchers {
       srcWarnings.size should be(0)
       expectedWarnings.size should be(0)
     } catch {
-      case IllegalSourceException(msg: SimpleMessage) =>
+      case e@IllegalSourceException(msg: SimpleMessage) =>
         val fileName =
           if (msg.fileName == tempSrcPath) {
             srcPath
@@ -75,9 +74,9 @@ class SourcePhase7ReaderTest extends FlatSpec with Matchers {
             msg.fileName
           }
         val errMsg: String = msg.copy(fileName = fileName).toString
-        fail(s"unexpected IllegalArgumentException: $errMsg")
+        fail(s"unexpected IllegalArgumentException: $errMsg", e)
       case e: IllegalSourceException =>
-        fail(s"unexpected IllegalArgumentException: ${e.msg.toString}")
+        fail(s"unexpected IllegalArgumentException: ${e.msg.toString}", e)
     }
   }
 }

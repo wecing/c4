@@ -7,6 +7,21 @@ import org.scalatest._
 import scala.collection.mutable.ArrayBuffer
 
 class PPReaderTest extends FlatSpec with Matchers {
+  it should "accept function-like macros with no arguments" in {
+    checkPPTokens(
+      """#define f() 998
+        |f()
+        |""".stripMargin,
+      Seq("998"))
+
+    checkPPTokens(
+      """#define f() 998
+        |f()
+        |f()
+        |""".stripMargin,
+      Seq("998", "998"))
+  }
+
   it should "expand the example macros in c89 spec as expected" in {
     checkPPTokens(
       """#define x    3

@@ -60,7 +60,9 @@ final case class TokDouble(d: Double) extends Tok
 final case class TokLongDouble(ld: BigDecimal) extends Tok
 final case class TokChar(c: Char) extends Tok
 final case class TokWideChar(c: Char) extends Tok
-final case class TokStr(s: String) extends Tok
+final case class TokStr(s: String) extends Tok {
+  override def toString: String = s"TokStr(${TextUtils.strReprQ(s)})"
+}
 final case class TokWideStr(s: String) extends Tok
 // keywords
 case object Tok_auto extends Tok
