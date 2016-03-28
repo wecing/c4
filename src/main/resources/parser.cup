@@ -1,0 +1,32 @@
+/*
+  To generator parser, use:
+
+  java -jar src/main/resources/java-cup-11b.jar \
+       -parser CupParser -symbols CupSymbols -destdir src/main/java/c4/ast/ \
+       src/main/resources/parser.cup
+*/
+package c4.ast;
+
+import java.math.BigInteger;
+import java_cup.runtime.*;
+
+parser code {: /* not needed */ :}
+
+init with {: /* no need to initialize */ :};
+scan with {: return getScanner().next_token(); :};
+
+terminal            SEMI, PLUS;
+terminal BigInteger NUMBER;
+
+non terminal            expr_list;
+non terminal BigInteger expr;
+
+precedence left PLUS;
+
+expr_list ::= expr_list expr:e SEMI     {: System.out.println(e); :}
+            | expr:e SEMI               {: System.out.println(e); :}
+            ;
+
+expr      ::= expr:e1 PLUS expr:e2      {: RESULT = e1.add(e2); :}
+            | NUMBER:n                  {: RESULT = n; :}
+            ;
