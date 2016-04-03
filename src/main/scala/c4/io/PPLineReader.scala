@@ -1,7 +1,8 @@
 package c4.io
 
 import c4.messaging.{SimpleMessage, IllegalSourceException, Message}
-import c4.util.{Located => L, TextUtils}
+import c4.util.legacy.{Located => L}
+import c4.util.TextUtils
 
 import scala.collection.mutable.ArrayBuffer
 

@@ -1,6 +1,7 @@
 package c4.util
 
 import c4.messaging.IllegalSourceException
+import c4.util.legacy.{Located => L}
 import org.scalatest._
 
 class TextUtilsTest extends FlatSpec with Matchers {
@@ -37,6 +38,6 @@ class TextUtilsTest extends FlatSpec with Matchers {
   }
 
   def eval(s: String): String = {
-    TextUtils.fromStrReprQ(Located((-1, -1), "\"" + s + "\""))
+    TextUtils.fromStrReprQ(L((-1, -1), "\"" + s + "\""))
   }
 }

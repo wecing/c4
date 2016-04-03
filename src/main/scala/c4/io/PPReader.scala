@@ -4,7 +4,8 @@ import java.text.SimpleDateFormat
 import java.util.{Date, Calendar}
 
 import c4.messaging.{SimpleMessage, IllegalSourceException, Message}
-import c4.util.{Located => L, TextUtils}
+import c4.util.legacy.{Located => L}
+import c4.util.TextUtils
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer

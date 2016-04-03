@@ -8,17 +8,185 @@ package c4.ast;
 /** CUP generated class containing symbol constants. */
 public class CupSymbols {
   /* terminals */
-  public static final int error = 1;
-  public static final int PLUS = 3;
-  public static final int NUMBER = 4;
-  public static final int SEMI = 2;
+  public static final int QMARK = 76;
+  public static final int SHORT = 31;
+  public static final int SIGNED = 32;
+  public static final int MOD_ASSIGN = 81;
+  public static final int GT = 67;
+  public static final int SUB_ASSIGN = 83;
+  public static final int CONST = 15;
+  public static final int B_OR_ASSIGN = 88;
+  public static final int INTEGER_LIT = 3;
+  public static final int L_AND = 74;
+  public static final int LONG_DOUBLE_LIT = 6;
+  public static final int GEQ = 69;
+  public static final int REGISTER = 29;
+  public static final int ENUM = 21;
+  public static final int SIZEOF = 33;
+  public static final int COMMA = 50;
+  public static final int RBRACE = 48;
+  public static final int RPAREN = 46;
+  public static final int WIDE_CHAR_LIT = 8;
+  public static final int DOUBLE = 19;
+  public static final int SUB = 59;
+  public static final int STRUCT = 35;
+  public static final int LBRACE = 47;
+  public static final int LPAREN = 45;
+  public static final int TILDE = 60;
+  public static final int RSHIFT_ASSIGN = 85;
+  public static final int FLOAT_LIT = 4;
+  public static final int LE = 66;
+  public static final int XOR_ASSIGN = 87;
+  public static final int DEC = 55;
+  public static final int FLOAT = 23;
+  public static final int GOTO = 25;
+  public static final int B_NOT = 61;
+  public static final int EQ = 70;
+  public static final int MOD = 63;
+  public static final int PTR = 53;
+  public static final int B_AND_ASSIGN = 86;
+  public static final int ADD_ASSIGN = 82;
+  public static final int LONG = 28;
+  public static final int B_OR = 73;
+  public static final int WHILE = 42;
+  public static final int UNION = 38;
+  public static final int MUL_ASSIGN = 79;
+  public static final int ASSIGN = 78;
+  public static final int CHAR = 14;
+  public static final int SWITCH = 36;
+  public static final int DO = 18;
+  public static final int FOR = 24;
+  public static final int STAR = 57;
+  public static final int VOID = 40;
+  public static final int ADD = 58;
+  public static final int EXTERN = 22;
+  public static final int DIV = 62;
+  public static final int RETURN = 30;
+  public static final int DOUBLE_LIT = 5;
+  public static final int ELSE = 20;
+  public static final int BREAK = 12;
+  public static final int DOT = 49;
+  public static final int INT = 27;
   public static final int EOF = 0;
+  public static final int SEMICOLON = 51;
+  public static final int STR_LIT = 9;
+  public static final int RSBRKT = 44;
+  public static final int DEFAULT = 17;
+  public static final int INC = 54;
+  public static final int LSBRKT = 43;
+  public static final int L_OR = 75;
+  public static final int error = 1;
+  public static final int CONTINUE = 16;
+  public static final int IF = 26;
+  public static final int UNSIGNED = 39;
+  public static final int LSHIFT_ASSIGN = 84;
+  public static final int ID = 2;
+  public static final int DIV_ASSIGN = 80;
+  public static final int COLON = 77;
+  public static final int VOLATILE = 41;
+  public static final int CASE = 13;
+  public static final int CHAR_LIT = 7;
+  public static final int RSHIFT = 65;
+  public static final int WIDE_STR_LIT = 10;
+  public static final int NEQ = 71;
+  public static final int ELLIPSIS = 52;
+  public static final int STATIC = 34;
+  public static final int LSHIFT = 64;
+  public static final int TYPEDEF = 37;
+  public static final int XOR = 72;
+  public static final int AUTO = 11;
+  public static final int LEQ = 68;
+  public static final int B_AND = 56;
   public static final String[] terminalNames = new String[] {
   "EOF",
   "error",
-  "SEMI",
-  "PLUS",
-  "NUMBER"
+  "ID",
+  "INTEGER_LIT",
+  "FLOAT_LIT",
+  "DOUBLE_LIT",
+  "LONG_DOUBLE_LIT",
+  "CHAR_LIT",
+  "WIDE_CHAR_LIT",
+  "STR_LIT",
+  "WIDE_STR_LIT",
+  "AUTO",
+  "BREAK",
+  "CASE",
+  "CHAR",
+  "CONST",
+  "CONTINUE",
+  "DEFAULT",
+  "DO",
+  "DOUBLE",
+  "ELSE",
+  "ENUM",
+  "EXTERN",
+  "FLOAT",
+  "FOR",
+  "GOTO",
+  "IF",
+  "INT",
+  "LONG",
+  "REGISTER",
+  "RETURN",
+  "SHORT",
+  "SIGNED",
+  "SIZEOF",
+  "STATIC",
+  "STRUCT",
+  "SWITCH",
+  "TYPEDEF",
+  "UNION",
+  "UNSIGNED",
+  "VOID",
+  "VOLATILE",
+  "WHILE",
+  "LSBRKT",
+  "RSBRKT",
+  "LPAREN",
+  "RPAREN",
+  "LBRACE",
+  "RBRACE",
+  "DOT",
+  "COMMA",
+  "SEMICOLON",
+  "ELLIPSIS",
+  "PTR",
+  "INC",
+  "DEC",
+  "B_AND",
+  "STAR",
+  "ADD",
+  "SUB",
+  "TILDE",
+  "B_NOT",
+  "DIV",
+  "MOD",
+  "LSHIFT",
+  "RSHIFT",
+  "LE",
+  "GT",
+  "LEQ",
+  "GEQ",
+  "EQ",
+  "NEQ",
+  "XOR",
+  "B_OR",
+  "L_AND",
+  "L_OR",
+  "QMARK",
+  "COLON",
+  "ASSIGN",
+  "MUL_ASSIGN",
+  "DIV_ASSIGN",
+  "MOD_ASSIGN",
+  "ADD_ASSIGN",
+  "SUB_ASSIGN",
+  "LSHIFT_ASSIGN",
+  "RSHIFT_ASSIGN",
+  "B_AND_ASSIGN",
+  "XOR_ASSIGN",
+  "B_OR_ASSIGN"
   };
 }
 

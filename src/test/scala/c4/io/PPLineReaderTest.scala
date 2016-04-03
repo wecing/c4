@@ -1,7 +1,8 @@
 package c4.io
 
 import c4.messaging.Message
-import c4.util.{Located, TestUtil}
+import c4.util.TestUtil
+import c4.util.legacy.Located
 import org.scalatest._
 
 import scala.collection.mutable.ArrayBuffer

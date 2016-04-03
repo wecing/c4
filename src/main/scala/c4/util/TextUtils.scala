@@ -1,6 +1,7 @@
 package c4.util
 
-import c4.messaging.{SimpleMessage, IllegalSourceException}
+import c4.messaging.{IllegalSourceException, SimpleMessage}
+import c4.util.legacy.{Located => L}
 
 object TextUtils {
   private val reprMap: Map[Char, String] = Map(
@@ -19,12 +20,12 @@ object TextUtils {
     reprMap.getOrElse(c, s"\\x${c.toInt.toHexString}")
   }
 
-  def fromCharReprQ(reprQ: Located[String]): Char = {
+  def fromCharReprQ(reprQ: L[String]): Char = {
     var legal = reprQ.value.head == '\'' && reprQ.value.last == '\''
-    var c: Char = '\0'
+    var c: Char = '\u0000'
     if (legal) {
       try {
-        val str = fromStrReprQ(Located(
+        val str = fromStrReprQ(L(
           reprQ.loc, "\"" + reprQ.value.init.tail + "\"", reprQ.fileName))
         if (str.length != 1) {
           legal = false
@@ -57,7 +58,7 @@ object TextUtils {
   }
 
   // given a C string quoted with "", extract the string content
-  def fromStrReprQ(reprQ: Located[String]): String = {
+  def fromStrReprQ(reprQ: L[String]): String = {
     sealed abstract class EscCase
     case object Unknown extends EscCase
     final case class Oct(v: Seq[Int]) extends EscCase {
