@@ -296,7 +296,7 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
           // "sizeof" and "..." are not handled here
           val s2set = Set(
             "++", "--", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
-            "*=", "/=", "%=", "+=", "-=", "&=", "^=", "|=", "##")
+            "*=", "/=", "%=", "+=", "-=", "&=", "^=", "|=", "##", "->")
           val s3set = Set("<<=", ">>=")
           val sym: String = file.read().get match {
             case p@('\n', _) =>

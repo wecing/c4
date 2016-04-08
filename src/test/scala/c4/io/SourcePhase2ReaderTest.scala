@@ -47,6 +47,29 @@ class SourcePhase2ReaderTest extends FlatSpec with Matchers {
 
   }
 
+  it should "recognize -> as an operator" in {
+    checkReader("memcpy(&sin, ai->ai_addr, sizeof sin);\n", Seq(
+      ("memcpy", (1, 1)),
+      ("(", (1, 7)),
+      ("&", (1, 8)),
+      ("sin", (1, 9)),
+      (",", (1, 12)),
+      (" ", (1, 13)),
+      ("ai", (1, 14)),
+      ("->", (1, 16)),
+      ("ai_addr", (1, 18)),
+      (",", (1, 25)),
+      (" ", (1, 26)),
+      ("sizeof", (1, 27)),
+      (" ", (1, 33)),
+      ("sin", (1, 34)),
+      (")", (1, 37)),
+      (";", (1, 38)),
+      ("\n", (1, 39))
+    ))
+
+  }
+
   it should "remove backslash followed by a newline" in {
     val input: String = "such \t \\\nscala\\\nvery\\ \nsyntax\n"
     val expected: Seq[(String, (Int, Int))] = Seq(

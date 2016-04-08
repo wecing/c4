@@ -98,6 +98,15 @@ class PPLineReaderTest extends FlatSpec with Matchers {
       Seq(PPTokSym("'"))))
   }
 
+  it should "recognize -> as an operator" in {
+    checkPPTokens("memcpy(&sin, ai->ai_addr, sizeof sin);\n", Seq(Seq(
+      PPTokId("memcpy"), PPTokSym("("), PPTokSym("&"), PPTokId("sin"),
+      PPTokSym(","), PPTokId("ai"), PPTokSym("->"),
+      PPTokId("ai_addr"), PPTokSym(","), PPTokSym("sizeof"),
+      PPTokId("sin"), PPTokSym(")"), PPTokSym(";")
+    )))
+  }
+
   it should "recognize preprocessing directives" in {
     val input: String =
       """  #if/**/0

@@ -14,7 +14,22 @@ import c4.io.*;
 import c4.util.Loc;
 import c4.util.Located;
 
-parser code {: /* not needed */ :}
+parser code {:
+  public C4Scanner getC4Scanner() {
+    return (C4Scanner) getScanner();
+  }
+
+  @Override public void syntax_error(Symbol cur_token) {
+    String tokenRepr = "<unknown>";
+    if (0 <= cur_token.sym) {
+      tokenRepr = CupSymbols.terminalNames[cur_token.sym];
+    }
+    tokenRepr += ", " + cur_token.value;
+
+    System.err.println("Syntax error at " + tokenRepr);
+    report_expected_token_ids();
+  }
+:}
 
 init with {: /* no need to initialize */ :};
 scan with {: return getScanner().next_token(); :};
@@ -30,6 +45,9 @@ terminal Located<TokWideChar>   WIDE_CHAR_LIT   ;
 terminal Located<TokStr>        STR_LIT         ;
 terminal Located<TokWideStr>    WIDE_STR_LIT    ;
 
+// context-sensitive typedef name
+terminal Located<TokId>         TYPEDEF_NAME    ;
+
 // keywords
 terminal Loc    AUTO, BREAK, CASE, CHAR, CONST, CONTINUE, DEFAULT, DO, DOUBLE,
                 ELSE, ENUM, EXTERN, FLOAT, FOR, GOTO, IF, INT, LONG, REGISTER,
@@ -41,7 +59,7 @@ terminal Loc    LSBRKT, RSBRKT, LPAREN, RPAREN, LBRACE, RBRACE,
 //              .    ,      ;          ...       ->   ++   --   &      *
                 DOT, COMMA, SEMICOLON, ELLIPSIS, PTR, INC, DEC, B_AND, STAR,
 //              +    -    ~      !      /    %    <<      >>      <   >
-                ADD, SUB, TILDE, B_NOT, DIV, MOD, LSHIFT, RSHIFT, LE, GT,
+                ADD, SUB, TILDE, L_NOT, DIV, MOD, LSHIFT, RSHIFT, LE, GT,
 //              <=   >=   ==  !=   ^    |     &&     ||    ?      :
                 LEQ, GEQ, EQ, NEQ, XOR, B_OR, L_AND, L_OR, QMARK, COLON,
 //              =       *=          /=          %=          +=
@@ -51,17 +69,441 @@ terminal Loc    LSBRKT, RSBRKT, LPAREN, RPAREN, LBRACE, RBRACE,
 //              ^=          |=
                 XOR_ASSIGN, B_OR_ASSIGN;
 
-non terminal expr;
+// non terminal expr;
 // non terminal            expr_list;
 // non terminal BigInteger expr;
+non terminal translation_unit, external_declaration, function_definition, declaration, declaration_specifiers, init_declarator_list, init_declarator, declarator, direct_declarator, pointer, type_qualifier_list, parameter_type_list, parameter_list, parameter_declaration, identifier_list, compound_statement, declaration_list, statement_list, storage_class_specifier, type_specifier, struct_or_union_specifier, struct_or_union, struct_declaration_list, struct_declaration, specifier_qualifier_list, struct_declarator_list, struct_declarator, enum_specifier, enumerator_list, enumerator, type_qualifier, initializer, initializer_list, type_name, abstract_declarator, direct_abstract_declarator, statement, labeled_statement, expression_statement, selection_statement, iteration_statement, jump_statement, expression, constant_expression, assignment_expression, conditional_expression, logical_or_expression, logical_and_expression, inclusive_or_expression, exclusive_or_expression, and_expression, equality_expression, relational_expression, shift_expression, additive_expression, multiplicative_expression, assignment_operator, unary_expression, postfix_expression, argument_expression_list, cast_expression, primary_expression;
 
-// precedence left ADD;
+precedence nonassoc ELSE;
 
-// expr_list ::= expr_list expr:e SEMI     {: System.out.println(e); :}
-//             | expr:e SEMI               {: System.out.println(e); :}
+// expr_list ::= expr_list expr:e SEMICOLON {: System.out.println(e); :}
+//             | expr:e SEMICOLON           {: System.out.println(e); :}
 //             ;
 //
 // expr      ::= expr:e1 PLUS expr:e2      {: RESULT = e1.add(e2); :}
 //             | NUMBER:n                  {: RESULT = n; :}
 //             ;
-expr ::= ID;
+// expr ::= ID;
+
+start with translation_unit;
+
+translation_unit
+    ::= translation_unit external_declaration
+      |                  external_declaration
+      ;
+
+external_declaration
+    ::= function_definition
+      | declaration
+      ;
+
+function_definition
+    ::= declaration_specifiers declarator declaration_list
+        {: getC4Scanner().enterScope(); :}
+        compound_statement
+        {: getC4Scanner().exitScope(); :}
+      | declaration_specifiers declarator
+        {: getC4Scanner().enterScope(); :}
+        compound_statement
+        {: getC4Scanner().exitScope(); :}
+      |                        declarator declaration_list
+        {: getC4Scanner().enterScope(); :}
+        compound_statement
+        {: getC4Scanner().exitScope(); :}
+      |                        declarator
+        {: getC4Scanner().enterScope(); :}
+        compound_statement
+        {: getC4Scanner().exitScope(); :}
+      ;
+
+// TODO: when declaration_specifiers contains "typedef", add all IDs
+//       appeared in init_declarator_list to the typedef names set.
+declaration
+    ::= declaration_specifiers init_declarator_list SEMICOLON
+      | declaration_specifiers                      SEMICOLON
+      ;
+
+declaration_specifiers
+    ::= storage_class_specifier declaration_specifiers
+      | storage_class_specifier
+      | type_specifier declaration_specifiers
+      | type_specifier
+      | type_qualifier declaration_specifiers
+      | type_qualifier
+      ;
+
+init_declarator_list
+    ::= init_declarator
+      | init_declarator_list COMMA init_declarator
+      ;
+
+init_declarator
+    ::= declarator
+      | declarator ASSIGN initializer
+      ;
+
+declarator
+    ::= pointer direct_declarator
+      |         direct_declarator
+      ;
+
+direct_declarator
+    ::= ID
+      | LPAREN declarator RPAREN
+      | direct_declarator LSBRKT constant_expression RSBRKT
+      | direct_declarator LSBRKT                     RSBRKT
+      | direct_declarator LPAREN parameter_type_list RPAREN
+      | direct_declarator LPAREN identifier_list RPAREN
+      | direct_declarator LPAREN                 RPAREN
+      ;
+
+pointer
+    ::= STAR type_qualifier_list pointer
+      | STAR type_qualifier_list
+      | STAR                     pointer
+      | STAR
+      ;
+
+type_qualifier_list
+    ::= type_qualifier_list type_qualifier
+      |                     type_qualifier
+      ;
+
+parameter_type_list
+    ::= parameter_list
+      | parameter_list COMMA ELLIPSIS
+      ;
+
+parameter_list
+    ::=                      parameter_declaration
+      | parameter_list COMMA parameter_declaration
+      ;
+
+parameter_declaration
+    ::= declaration_specifiers declarator
+      | declaration_specifiers abstract_declarator
+      | declaration_specifiers
+      ;
+
+identifier_list
+    ::= identifier_list COMMA ID
+      |                       ID
+      ;
+
+compound_statement
+    ::= LBRACE declaration_list statement_list RBRACE
+      | LBRACE declaration_list                RBRACE
+      | LBRACE                  statement_list RBRACE
+      | LBRACE                                 RBRACE
+      ;
+
+declaration_list
+    ::=                  declaration
+      | declaration_list declaration
+      ;
+
+statement_list
+    ::=                statement
+      | statement_list statement
+      ;
+
+storage_class_specifier
+    ::= TYPEDEF
+      | EXTERN
+      | STATIC
+      | AUTO
+      | REGISTER
+      ;
+
+type_specifier
+    ::= VOID
+      | CHAR
+      | SHORT
+      | INT
+      | LONG
+      | FLOAT
+      | DOUBLE
+      | SIGNED
+      | UNSIGNED
+      | struct_or_union_specifier
+      | enum_specifier
+      | TYPEDEF_NAME
+      ;
+
+struct_or_union_specifier
+    ::= struct_or_union ID LBRACE struct_declaration_list RBRACE
+      | struct_or_union    LBRACE struct_declaration_list RBRACE
+      | struct_or_union ID
+      ;
+
+struct_or_union
+    ::= STRUCT
+      | UNION
+      ;
+
+struct_declaration_list
+    ::=                         struct_declaration
+      | struct_declaration_list struct_declaration
+      ;
+
+struct_declaration
+    ::= specifier_qualifier_list struct_declarator_list SEMICOLON
+      ;
+
+specifier_qualifier_list
+    ::= type_specifier specifier_qualifier_list
+      | type_specifier
+      | type_qualifier specifier_qualifier_list
+      | type_qualifier
+      ;
+
+struct_declarator_list
+    ::= struct_declarator_list COMMA struct_declarator
+      |                              struct_declarator
+      ;
+
+struct_declarator
+    ::= declarator
+      | declarator COLON constant_expression
+      |            COLON constant_expression
+      ;
+
+enum_specifier
+    ::= ENUM ID LBRACE enumerator_list RBRACE
+      | ENUM    LBRACE enumerator_list RBRACE
+      | ENUM ID
+      ;
+
+enumerator_list
+    ::=                       enumerator
+      | enumerator_list COMMA enumerator
+      ;
+
+enumerator
+    ::= ID
+      | ID ASSIGN constant_expression
+      ;
+
+type_qualifier
+    ::= CONST
+      | VOLATILE
+      ;
+
+initializer
+    ::= assignment_expression
+      | LBRACE initializer_list       RBRACE
+      | LBRACE initializer_list COMMA RBRACE
+      ;
+
+initializer_list
+    ::=                        initializer
+      | initializer_list COMMA initializer
+      ;
+
+type_name
+    ::= specifier_qualifier_list abstract_declarator
+      | specifier_qualifier_list
+      ;
+
+abstract_declarator
+    ::= pointer
+      | pointer direct_abstract_declarator
+      |         direct_abstract_declarator
+      ;
+
+direct_abstract_declarator
+    ::= LPAREN abstract_declarator RPAREN
+      | direct_abstract_declarator LSBRKT constant_expression RSBRKT
+      | direct_abstract_declarator LSBRKT                     RSBRKT
+      |                            LSBRKT constant_expression RSBRKT
+      |                            LSBRKT                     RSBRKT
+      | direct_abstract_declarator LPAREN parameter_type_list RPAREN
+      | direct_abstract_declarator LPAREN                     RPAREN
+      |                            LPAREN parameter_type_list RPAREN
+      |                            LPAREN                     RPAREN
+      ;
+
+statement
+    ::= labeled_statement
+      | {: getC4Scanner().enterScope(); :}
+        compound_statement
+        {: getC4Scanner().exitScope(); :}
+      | expression_statement
+      | selection_statement
+      | iteration_statement
+      | jump_statement
+      ;
+
+labeled_statement
+    ::= ID COLON statement
+      | CASE constant_expression COLON statement
+      | DEFAULT COLON statement
+      ;
+
+expression_statement
+    ::= expression SEMICOLON
+      |            SEMICOLON
+      ;
+
+selection_statement
+    ::= IF LPAREN expression RPAREN statement
+      | IF LPAREN expression RPAREN statement ELSE statement
+      | SWITCH LPAREN expression RPAREN statement
+      ;
+
+iteration_statement
+    ::= WHILE LPAREN expression RPAREN statement
+      | DO statement WHILE LPAREN expression RPAREN SEMICOLON
+      | FOR LPAREN expression_statement
+                   expression_statement
+                   expression RPAREN statement
+      | FOR LPAREN expression_statement
+                   expression_statement RPAREN statement
+      ;
+
+jump_statement
+    ::= GOTO ID SEMICOLON
+      | CONTINUE SEMICOLON
+      | BREAK SEMICOLON
+      | RETURN expression SEMICOLON
+      | RETURN SEMICOLON
+      ;
+
+expression
+    ::=                  assignment_expression
+      | expression COMMA assignment_expression
+      ;
+
+constant_expression
+    ::= conditional_expression
+      ;
+
+assignment_expression
+    ::= conditional_expression
+      | unary_expression assignment_operator assignment_expression
+      ;
+
+conditional_expression
+    ::= logical_or_expression
+      | logical_or_expression QMARK expression COLON conditional_expression
+      ;
+
+logical_or_expression
+    ::=                            logical_and_expression
+      | logical_or_expression L_OR logical_and_expression
+      ;
+
+logical_and_expression
+    ::=                              inclusive_or_expression
+      | logical_and_expression L_AND inclusive_or_expression
+      ;
+
+inclusive_or_expression
+    ::=                              exclusive_or_expression
+      | inclusive_or_expression B_OR exclusive_or_expression
+      ;
+
+exclusive_or_expression
+    ::=                             and_expression
+      | exclusive_or_expression XOR and_expression
+      ;
+
+and_expression
+    ::=                      equality_expression
+      | and_expression B_AND equality_expression
+      ;
+
+equality_expression
+    ::=                         relational_expression
+      | equality_expression EQ  relational_expression
+      | equality_expression NEQ relational_expression
+      ;
+
+relational_expression
+    ::=                           shift_expression
+      | relational_expression LE  shift_expression
+      | relational_expression GT  shift_expression
+      | relational_expression LEQ shift_expression
+      | relational_expression GEQ shift_expression
+      ;
+
+shift_expression
+    ::=                         additive_expression
+      | shift_expression LSHIFT additive_expression
+      | shift_expression RSHIFT additive_expression
+      ;
+
+additive_expression
+    ::=                         multiplicative_expression
+      | additive_expression ADD multiplicative_expression
+      | additive_expression SUB multiplicative_expression
+      ;
+
+multiplicative_expression
+    ::=                                cast_expression
+      | multiplicative_expression STAR cast_expression
+      | multiplicative_expression DIV  cast_expression
+      | multiplicative_expression MOD  cast_expression
+      ;
+
+assignment_operator
+    ::= ASSIGN
+      | MUL_ASSIGN
+      | DIV_ASSIGN
+      | MOD_ASSIGN
+      | ADD_ASSIGN
+      | SUB_ASSIGN
+      | LSHIFT_ASSIGN
+      | RSHIFT_ASSIGN
+      | B_AND_ASSIGN
+      | XOR_ASSIGN
+      | B_OR_ASSIGN
+      ;
+
+unary_expression
+    ::= postfix_expression
+      | INC unary_expression
+      | DEC unary_expression
+      | B_AND cast_expression
+      | STAR  cast_expression
+      | ADD   cast_expression
+      | SUB   cast_expression
+      | TILDE cast_expression
+      | L_NOT cast_expression
+      | SIZEOF unary_expression
+      | SIZEOF LPAREN type_name RPAREN
+      ;
+
+postfix_expression
+    ::= primary_expression
+      | postfix_expression LSBRKT expression RSBRKT
+      | postfix_expression LPAREN argument_expression_list RPAREN
+      | postfix_expression LPAREN                          RPAREN
+      | postfix_expression DOT ID
+      | postfix_expression PTR ID
+      | postfix_expression INC
+      | postfix_expression DEC
+      ;
+
+argument_expression_list
+    ::=                                assignment_expression
+      | argument_expression_list COMMA assignment_expression
+      ;
+
+cast_expression
+    ::= unary_expression
+      | LPAREN type_name RPAREN cast_expression
+      ;
+
+primary_expression
+    ::= ID
+      | INTEGER_LIT
+      | FLOAT_LIT
+      | DOUBLE_LIT
+      | LONG_DOUBLE_LIT
+      | CHAR_LIT
+      | WIDE_CHAR_LIT
+      | STR_LIT
+      | WIDE_STR_LIT
+      | LPAREN expression RPAREN
+      ;
