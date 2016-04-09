@@ -48,18 +48,14 @@ class SourcePhase7ReaderTest extends FlatSpec with Matchers {
         (srcTok, expTok) match {
           case (Some(srcT), Some(expT)) =>
             if (expT.value != srcT.value) {
-              fail(s"$srcPath, line ${srcT.loc.pos._1}" +
-                s" col ${srcT.loc.pos._2}:" +
-                s" expected ${expT.value}, got ${srcT.value}")
+              fail(s"${srcT.loc}: expected ${expT.value}, got ${srcT.value}")
             }
           case (None, None) =>
             quit = true
           case (Some(srcT), None) =>
-            fail(s"unexpected token at line ${srcT.loc.pos._1}," +
-              s" col ${srcT.loc.pos._2}")
+            fail(s"unexpected token at ${srcT.loc}")
           case (None, Some(expT)) =>
-            fail(s"missing token ${expT.value} at $expectedPath" +
-              s" line ${expT.loc.pos._1}, col ${expT.loc.pos._2}")
+            fail(s"missing expected token ${expT.value} at ${expT.loc}")
         }
       }
 

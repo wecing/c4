@@ -1,6 +1,6 @@
 package c4.util.legacy
 
-import c4.util.{Located => L, Loc}
+import c4.util.{Located => L, LocPoint}
 
 final case class Located[+T](loc: (Int, Int),
                              value: T,
@@ -9,5 +9,5 @@ final case class Located[+T](loc: (Int, Int),
     Located((loc._1 + lineNumOffset, loc._2), value, Some(newFileName))
   }
 
-  def toNew = L(Loc(loc, fileName), value)
+  def toNew = L(LocPoint(loc, fileName), value)
 }
