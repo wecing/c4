@@ -5,6 +5,7 @@ import java_cup.runtime.Symbol
 
 import c4.io._
 import c4.io.SourcePhase7Reader
+import c4.util.Located
 
 
 class C4Scanner(val reader: SourcePhase7Reader) extends Scanner {

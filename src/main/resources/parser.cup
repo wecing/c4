@@ -8,11 +8,16 @@
 package c4.ast;
 
 import java.math.BigInteger;
+
+import scala.collection.Seq;
+import scala.Tuple2;
+import scala.util.Either;
+import scala.Option;
+
 import java_cup.runtime.*;
 
 import c4.io.*;
-import c4.util.Loc;
-import c4.util.Located;
+import c4.util.*;
 
 parser code {:
   public C4Scanner getC4Scanner() {
@@ -28,6 +33,26 @@ parser code {:
 
     System.err.println("Syntax error at " + tokenRepr);
     report_expected_token_ids();
+  }
+
+  private static <T> Option<T> some(T t) {
+    return JavaUtils.some(t);
+  }
+
+  private static <T> Option<T> none() {
+    return JavaUtils.none();
+  }
+
+  private static <T, P> Tuple2<T, P> pair(T t, P p) {
+    return JavaUtils.pair(t, p);
+  }
+
+  private static <A, B> Either<A, B> left(A a) {
+    return JavaUtils.left(a);
+  }
+
+  private static <A, B> Either<A, B> right(B b) {
+    return JavaUtils.right(b);
   }
 :}
 
@@ -72,7 +97,35 @@ terminal Loc    LSBRKT, RSBRKT, LPAREN, RPAREN, LBRACE, RBRACE,
 // non terminal expr;
 // non terminal            expr_list;
 // non terminal BigInteger expr;
-non terminal translation_unit, external_declaration, function_definition, declaration, declaration_specifiers, init_declarator_list, init_declarator, declarator, direct_declarator, pointer, type_qualifier_list, parameter_type_list, parameter_list, parameter_declaration, identifier_list, compound_statement, declaration_list, statement_list, storage_class_specifier, type_specifier, struct_or_union_specifier, struct_or_union, struct_declaration_list, struct_declaration, specifier_qualifier_list, struct_declarator_list, struct_declarator, enum_specifier, enumerator_list, enumerator, type_qualifier, initializer, initializer_list, type_name, abstract_declarator, direct_abstract_declarator, statement, labeled_statement, expression_statement, selection_statement, iteration_statement, jump_statement, expression, constant_expression, assignment_expression, conditional_expression, logical_or_expression, logical_and_expression, inclusive_or_expression, exclusive_or_expression, and_expression, equality_expression, relational_expression, shift_expression, additive_expression, multiplicative_expression, assignment_operator, unary_expression, postfix_expression, argument_expression_list, cast_expression, primary_expression;
+non terminal translation_unit, external_declaration, function_definition, declaration, declaration_specifiers, init_declarator_list, init_declarator, direct_declarator, pointer, type_qualifier_list, parameter_type_list, parameter_list, parameter_declaration, identifier_list, compound_statement, declaration_list, statement_list, storage_class_specifier, initializer, initializer_list, type_name, abstract_declarator, direct_abstract_declarator, statement, labeled_statement, expression_statement, selection_statement, iteration_statement, jump_statement;
+
+non terminal Located<Declarator> declarator;
+
+non terminal Seq<Tuple2<Located<TokId>, Option<Located<Expr>>>> enumerator_list;
+non terminal     Tuple2<Located<TokId>, Option<Located<Expr>>>  enumerator;
+
+non terminal Seq<Located<StructDeclaration>> struct_declaration_list;
+non terminal     Located<StructDeclaration>  struct_declaration;
+
+non terminal Seq<Tuple2<Option<Located<Declarator>>, Option<Located<Expr>>>>
+    struct_declarator_list;
+non terminal     Tuple2<Option<Located<Declarator>>, Option<Located<Expr>>>
+    struct_declarator;
+
+non terminal Seq<Located<Either<TypeSpecifier, TypeQualifier>>>
+    specifier_qualifier_list;
+non terminal Located<TypeSpecifier> type_specifier,
+    enum_specifier, struct_or_union_specifier;
+non terminal Located<TypeQualifier> type_qualifier;
+
+non terminal Located<Expr> expression,
+    constant_expression, assignment_expression, conditional_expression,
+    logical_or_expression, logical_and_expression, inclusive_or_expression,
+    exclusive_or_expression, and_expression, equality_expression,
+    relational_expression, shift_expression, additive_expression,
+    multiplicative_expression, assignment_operator, unary_expression,
+    postfix_expression, argument_expression_list, cast_expression,
+    primary_expression;
 
 precedence nonassoc ELSE;
 
@@ -142,7 +195,7 @@ init_declarator
       | declarator ASSIGN initializer
       ;
 
-declarator
+declarator // Located<Declarator>
     ::= pointer direct_declarator
       |         direct_declarator
       ;
@@ -215,78 +268,128 @@ storage_class_specifier
       | REGISTER
       ;
 
-type_specifier
-    ::= VOID
-      | CHAR
-      | SHORT
-      | INT
-      | LONG
-      | FLOAT
-      | DOUBLE
-      | SIGNED
-      | UNSIGNED
-      | struct_or_union_specifier
-      | enum_specifier
-      | TYPEDEF_NAME
+type_specifier // Located<TypeSpecifier>
+    ::= VOID:loc     {: RESULT = new Located(loc,     c4.ast.Void$.MODULE$); :}
+      | CHAR:loc     {: RESULT = new Located(loc,     c4.ast.Char$.MODULE$); :}
+      | SHORT:loc    {: RESULT = new Located(loc,    c4.ast.Short$.MODULE$); :}
+      | INT:loc      {: RESULT = new Located(loc,      c4.ast.Int$.MODULE$); :}
+      | LONG:loc     {: RESULT = new Located(loc,     c4.ast.Long$.MODULE$); :}
+      | FLOAT:loc    {: RESULT = new Located(loc,    c4.ast.Float$.MODULE$); :}
+      | DOUBLE:loc   {: RESULT = new Located(loc,   c4.ast.Double$.MODULE$); :}
+      | SIGNED:loc   {: RESULT = new Located(loc,   c4.ast.Signed$.MODULE$); :}
+      | UNSIGNED:loc {: RESULT = new Located(loc, c4.ast.Unsigned$.MODULE$); :}
+      | struct_or_union_specifier:x     {: RESULT = x; :}
+      | enum_specifier:x                {: RESULT = x; :}
+      | TYPEDEF_NAME:x
+        {: RESULT = new Located(x.loc(), new TypedefName(x.value())); :}
       ;
 
-struct_or_union_specifier
-    ::= struct_or_union ID LBRACE struct_declaration_list RBRACE
-      | struct_or_union    LBRACE struct_declaration_list RBRACE
-      | struct_or_union ID
+struct_or_union_specifier // Located<TypeSpecifier>
+    ::= STRUCT:loc1 ID:id LBRACE struct_declaration_list:body RBRACE:loc2
+        {: RESULT = Located$.MODULE$.of(loc1, loc2,
+            new StructSpecifier(some(id), some(body))); :}
+      | STRUCT:loc1       LBRACE struct_declaration_list:body RBRACE:loc2
+        {: RESULT = Located$.MODULE$.of(loc1, loc2,
+            new StructSpecifier(  none(), some(body))); :}
+      | STRUCT:loc1 ID:id
+        {: RESULT = Located$.MODULE$.of(loc1, id.loc(),
+            new StructSpecifier(some(id),     none())); :}
+      | UNION:loc1  ID:id LBRACE struct_declaration_list:body RBRACE:loc2
+        {: RESULT = Located$.MODULE$.of(loc1, loc2,
+            new UnionSpecifier(some(id), some(body))); :}
+      | UNION:loc1        LBRACE struct_declaration_list:body RBRACE:loc2
+        {: RESULT = Located$.MODULE$.of(loc1, loc2,
+            new UnionSpecifier(  none(), some(body))); :}
+      | UNION:loc1  ID:id
+        {: RESULT = Located$.MODULE$.of(loc1, id.loc(),
+            new UnionSpecifier(some(id),     none())); :}
       ;
 
-struct_or_union
-    ::= STRUCT
-      | UNION
+struct_declaration_list // Seq[L[StructDeclaration]]
+    ::=                            struct_declaration:x
+        {: RESULT = JavaUtils.seq(x); :}
+      | struct_declaration_list:xs struct_declaration:x
+        {: RESULT = JavaUtils.append(xs, x); :}
       ;
 
-struct_declaration_list
-    ::=                         struct_declaration
-      | struct_declaration_list struct_declaration
+struct_declaration // L[StructDeclaration]
+    ::= specifier_qualifier_list:a struct_declarator_list:b SEMICOLON:c
+        {: RESULT = StructDeclaration$.MODULE$.ofLoc(a, b, c); :}
       ;
 
-struct_declaration
-    ::= specifier_qualifier_list struct_declarator_list SEMICOLON
+specifier_qualifier_list // Seq<Located<Either<TypeSpecifier, TypeQualifier>>>
+    ::= type_specifier:x specifier_qualifier_list:xs
+        {:
+          RESULT = JavaUtils.prepend(
+            new Located(x.loc(), left(x.value())),
+            xs);
+        :}
+      | type_specifier:x
+        {: RESULT = JavaUtils.seq(new Located(x.loc(), left(x.value()))); :}
+      | type_qualifier:x specifier_qualifier_list:xs
+        {:
+          RESULT = JavaUtils.prepend(
+            new Located(x.loc(), right(x.value())),
+            xs);
+        :}
+      | type_qualifier:x
+        {: RESULT = JavaUtils.seq(new Located(x.loc(), right(x.value()))); :}
       ;
 
-specifier_qualifier_list
-    ::= type_specifier specifier_qualifier_list
-      | type_specifier
-      | type_qualifier specifier_qualifier_list
-      | type_qualifier
+struct_declarator_list // Seq[(Option[L[Declarator]], Option[L[Expr]])]
+    ::= struct_declarator_list:xs COMMA struct_declarator:x
+        {: RESULT = JavaUtils.append(xs, x); :}
+      |                                 struct_declarator:x
+        {: RESULT = JavaUtils.seq(x); :}
       ;
 
-struct_declarator_list
-    ::= struct_declarator_list COMMA struct_declarator
-      |                              struct_declarator
+struct_declarator // (Option[Located[Declarator]], Option[Located[Expr]])
+    ::= declarator:x
+        {: RESULT = pair(some(x), none()); :}
+      | declarator:x COLON constant_expression:e
+        {: RESULT = pair(some(x), some(e)); :}
+      |              COLON constant_expression:e
+        {: RESULT = pair(none(), some(e)); :}
       ;
 
-struct_declarator
-    ::= declarator
-      | declarator COLON constant_expression
-      |            COLON constant_expression
+enum_specifier // Located[TypeSpecifier]
+    ::= ENUM:loc1 ID:id LBRACE enumerator_list:body RBRACE:loc2
+        {:
+          RESULT = new Located(
+            LocRange.of(loc1, loc2),
+            new EnumSpecifier(some(id), some(body)));
+        :}
+      | ENUM:loc1       LBRACE enumerator_list:body RBRACE:loc2
+        {:
+          RESULT = new Located(
+            LocRange.of(loc1, loc2),
+            new EnumSpecifier(none(), some(body)));
+        :}
+      | ENUM:loc  ID:id
+        {:
+          RESULT = new Located(
+            LocRange.of(loc, id.loc()),
+            new EnumSpecifier(some(id), none()));
+        :}
       ;
 
-enum_specifier
-    ::= ENUM ID LBRACE enumerator_list RBRACE
-      | ENUM    LBRACE enumerator_list RBRACE
-      | ENUM ID
+enumerator_list // Seq[(Located[TokId], Option[Located[Expr]])]
+    ::=                          enumerator:x
+        {: RESULT = JavaUtils.seq(x); :}
+      | enumerator_list:xs COMMA enumerator:x
+        {: RESULT = JavaUtils.append(xs, x); :}
       ;
 
-enumerator_list
-    ::=                       enumerator
-      | enumerator_list COMMA enumerator
+enumerator // (Located[TokId], Option[Located[Expr]])
+    ::= ID:id
+        {: RESULT = pair(id, none()); :}
+      | ID:id ASSIGN constant_expression:e
+        {: RESULT = pair(id, some(e)); :}
       ;
 
-enumerator
-    ::= ID
-      | ID ASSIGN constant_expression
-      ;
-
-type_qualifier
-    ::= CONST
-      | VOLATILE
+type_qualifier // Located<TypeQualifier>
+    ::= CONST:loc    {: RESULT = new Located(loc,    c4.ast.Const$.MODULE$); :}
+      | VOLATILE:loc {: RESULT = new Located(loc, c4.ast.Volatile$.MODULE$); :}
       ;
 
 initializer
@@ -369,57 +472,57 @@ jump_statement
       | RETURN SEMICOLON
       ;
 
-expression
+expression // Located<Expr>
     ::=                  assignment_expression
       | expression COMMA assignment_expression
       ;
 
-constant_expression
+constant_expression // Located<Expr>
     ::= conditional_expression
       ;
 
-assignment_expression
+assignment_expression // Located<Expr>
     ::= conditional_expression
       | unary_expression assignment_operator assignment_expression
       ;
 
-conditional_expression
+conditional_expression // Located<Expr>
     ::= logical_or_expression
       | logical_or_expression QMARK expression COLON conditional_expression
       ;
 
-logical_or_expression
+logical_or_expression // Located<Expr>
     ::=                            logical_and_expression
       | logical_or_expression L_OR logical_and_expression
       ;
 
-logical_and_expression
+logical_and_expression // Located<Expr>
     ::=                              inclusive_or_expression
       | logical_and_expression L_AND inclusive_or_expression
       ;
 
-inclusive_or_expression
+inclusive_or_expression // Located<Expr>
     ::=                              exclusive_or_expression
       | inclusive_or_expression B_OR exclusive_or_expression
       ;
 
-exclusive_or_expression
+exclusive_or_expression // Located<Expr>
     ::=                             and_expression
       | exclusive_or_expression XOR and_expression
       ;
 
-and_expression
+and_expression // Located<Expr>
     ::=                      equality_expression
       | and_expression B_AND equality_expression
       ;
 
-equality_expression
+equality_expression // Located<Expr>
     ::=                         relational_expression
       | equality_expression EQ  relational_expression
       | equality_expression NEQ relational_expression
       ;
 
-relational_expression
+relational_expression // Located<Expr>
     ::=                           shift_expression
       | relational_expression LE  shift_expression
       | relational_expression GT  shift_expression
@@ -427,19 +530,19 @@ relational_expression
       | relational_expression GEQ shift_expression
       ;
 
-shift_expression
+shift_expression // Located<Expr>
     ::=                         additive_expression
       | shift_expression LSHIFT additive_expression
       | shift_expression RSHIFT additive_expression
       ;
 
-additive_expression
+additive_expression // Located<Expr>
     ::=                         multiplicative_expression
       | additive_expression ADD multiplicative_expression
       | additive_expression SUB multiplicative_expression
       ;
 
-multiplicative_expression
+multiplicative_expression // Located<Expr>
     ::=                                cast_expression
       | multiplicative_expression STAR cast_expression
       | multiplicative_expression DIV  cast_expression
@@ -460,7 +563,7 @@ assignment_operator
       | B_OR_ASSIGN
       ;
 
-unary_expression
+unary_expression // Located<Expr>
     ::= postfix_expression
       | INC unary_expression
       | DEC unary_expression
@@ -474,7 +577,7 @@ unary_expression
       | SIZEOF LPAREN type_name RPAREN
       ;
 
-postfix_expression
+postfix_expression // Located<Expr>
     ::= primary_expression
       | postfix_expression LSBRKT expression RSBRKT
       | postfix_expression LPAREN argument_expression_list RPAREN
@@ -490,20 +593,29 @@ argument_expression_list
       | argument_expression_list COMMA assignment_expression
       ;
 
-cast_expression
-    ::= unary_expression
+cast_expression // Located<Expr>
+    ::= unary_expression:e {: RESULT = e; :}
       | LPAREN type_name RPAREN cast_expression
       ;
 
-primary_expression
-    ::= ID
-      | INTEGER_LIT
-      | FLOAT_LIT
-      | DOUBLE_LIT
-      | LONG_DOUBLE_LIT
-      | CHAR_LIT
-      | WIDE_CHAR_LIT
-      | STR_LIT
-      | WIDE_STR_LIT
-      | LPAREN expression RPAREN
+primary_expression // Located<Expr>
+    ::= ID:id
+        {: RESULT = new Located(id.loc(), new Id(id.value().id())); :}
+      | INTEGER_LIT:x
+        {: RESULT = new Located(x.loc(), new IntegerLit(x.value())); :}
+      | FLOAT_LIT:x
+        {: RESULT = new Located(x.loc(), new FloatLit(x.value())); :}
+      | DOUBLE_LIT:x
+        {: RESULT = new Located(x.loc(), new DoubleLit(x.value())); :}
+      | LONG_DOUBLE_LIT:x
+        {: RESULT = new Located(x.loc(), new LongDoubleLit(x.value())); :}
+      | CHAR_LIT:x
+        {: RESULT = new Located(x.loc(), new CharLit(x.value())); :}
+      | WIDE_CHAR_LIT:x
+        {: RESULT = new Located(x.loc(), new WideCharLit(x.value())); :}
+      | STR_LIT:x
+        {: RESULT = new Located(x.loc(), new StrLit(x.value())); :}
+      | WIDE_STR_LIT:x
+        {: RESULT = new Located(x.loc(), new WideStrLit(x.value())); :}
+      | LPAREN expression:e RPAREN {: RESULT = e; :}
       ;
