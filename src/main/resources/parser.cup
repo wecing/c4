@@ -54,6 +54,26 @@ parser code {:
   private static <A, B> Either<A, B> right(B b) {
     return JavaUtils.right(b);
   }
+
+  private static <A, B> A fst(Tuple2<A, B> x) {
+    return JavaUtils.fst(x);
+  }
+
+  private static <A, B> B snd(Tuple2<A, B> x) {
+    return JavaUtils.snd(x);
+  }
+
+  private static <T> Seq<T> seq() {
+    return JavaUtils.seq();
+  }
+
+  private static <T> T head(Seq<T> xs) {
+    return JavaUtils.head(xs);
+  }
+
+  private static <T> T last(Seq<T> xs) {
+    return JavaUtils.last(xs);
+  }
 :}
 
 init with {: /* no need to initialize */ :};
@@ -94,12 +114,58 @@ terminal Loc    LSBRKT, RSBRKT, LPAREN, RPAREN, LBRACE, RBRACE,
 //              ^=          |=
                 XOR_ASSIGN, B_OR_ASSIGN;
 
-// non terminal expr;
-// non terminal            expr_list;
-// non terminal BigInteger expr;
-non terminal translation_unit, external_declaration, function_definition, declaration, declaration_specifiers, init_declarator_list, init_declarator, direct_declarator, pointer, type_qualifier_list, parameter_type_list, parameter_list, parameter_declaration, identifier_list, compound_statement, declaration_list, statement_list, storage_class_specifier, initializer, initializer_list, type_name, abstract_declarator, direct_abstract_declarator, statement, labeled_statement, expression_statement, selection_statement, iteration_statement, jump_statement;
+non terminal Located<TypeName> type_name;
+
+non terminal Seq<Located<Stmt>> statement_list;
+non terminal     Located<Stmt>  statement;
+non terminal     Located<Stmt>  labeled_statement;
+non terminal     Located<Stmt>  selection_statement;
+non terminal     Located<Stmt>  iteration_statement;
+non terminal     Located<Stmt>  jump_statement;
+
+non terminal Located<ExprStmt>     expression_statement;
+non terminal Located<CompoundStmt> compound_statement;
+
+non terminal Seq<Located<Either<Located<FunctionDef>, Located<Declaration>>>>
+    translation_unit;
+non terminal     Located<Either<Located<FunctionDef>, Located<Declaration>>>
+    external_declaration;
+
+non terminal Located<FunctionDef> function_definition;
+
+non terminal Seq<Located<Declaration>> declaration_list;
+non terminal     Located<Declaration>  declaration;
+
+non terminal Seq<Tuple2<Located<Declarator>, Option<Located<Initializer>>>>
+    init_declarator_list;
+non terminal     Tuple2<Located<Declarator>, Option<Located<Initializer>>>
+    init_declarator;
+
+non terminal Seq<Located<Initializer>> initializer_list;
+non terminal     Located<Initializer>  initializer;
+
+non terminal Located<Pointer> pointer;
+
+non terminal Seq<Located<TokId>> identifier_list;
+
+non terminal Seq<Located<DeclarationSpecifier>> declaration_specifiers;
+non terminal Located<StorageClassSpecifier>
+    storage_class_specifier;
 
 non terminal Located<Declarator> declarator;
+
+non terminal Located<DirectDeclarator> direct_declarator;
+
+non terminal Located<AbstractDeclarator> abstract_declarator;
+
+non terminal Located<DirectAbstractDeclarator> direct_abstract_declarator;
+
+non terminal Tuple2<Seq<Located<ParamDeclaration>>, Option<Loc>>
+    parameter_type_list;
+non terminal        Seq<Located<ParamDeclaration>>
+    parameter_list;
+non terminal            Located<ParamDeclaration>
+    parameter_declaration;
 
 non terminal Seq<Tuple2<Located<TokId>, Option<Located<Expr>>>> enumerator_list;
 non terminal     Tuple2<Located<TokId>, Option<Located<Expr>>>  enumerator;
@@ -112,6 +178,8 @@ non terminal Seq<Tuple2<Option<Located<Declarator>>, Option<Located<Expr>>>>
 non terminal     Tuple2<Option<Located<Declarator>>, Option<Located<Expr>>>
     struct_declarator;
 
+non terminal Seq<Located<TypeQualifier>>
+    type_qualifier_list;
 non terminal Seq<Located<Either<TypeSpecifier, TypeQualifier>>>
     specifier_qualifier_list;
 non terminal Located<TypeSpecifier> type_specifier,
@@ -129,143 +197,217 @@ non terminal Located<Expr> expression,
 
 precedence nonassoc ELSE;
 
-// expr_list ::= expr_list expr:e SEMICOLON {: System.out.println(e); :}
-//             | expr:e SEMICOLON           {: System.out.println(e); :}
-//             ;
-//
-// expr      ::= expr:e1 PLUS expr:e2      {: RESULT = e1.add(e2); :}
-//             | NUMBER:n                  {: RESULT = n; :}
-//             ;
-// expr ::= ID;
-
 start with translation_unit;
 
-translation_unit
-    ::= translation_unit external_declaration
-      |                  external_declaration
+translation_unit // Seq[L[Either[L[FunctionDef], L[Declaration]]]]
+    ::= translation_unit:xs external_declaration:x
+        {: RESULT = JavaUtils.append(xs, x); :}
+      |                     external_declaration:x
+        {: RESULT = JavaUtils.seq(x); :}
       ;
 
-external_declaration
-    ::= function_definition
-      | declaration
+external_declaration // L[Either[L[FunctionDef], L[Declaration]]]
+    ::= function_definition:x
+        {: RESULT = Located.of(x.loc(), left(x)); :}
+      | declaration:y
+        {: RESULT = Located.of(y.loc(), right(y)); :}
       ;
 
-function_definition
-    ::= declaration_specifiers declarator declaration_list
+function_definition // Located<FunctionDef>
+    ::= declaration_specifiers:dss declarator:d declaration_list:dl
         {: getC4Scanner().enterScope(); :}
-        compound_statement
-        {: getC4Scanner().exitScope(); :}
-      | declaration_specifiers declarator
+        compound_statement:body
+        {: getC4Scanner().exitScope();
+           RESULT = Located.of(head(dss).loc(), body.loc(),
+            new FunctionDef(dss, d, some(dl), body)); :}
+      | declaration_specifiers:dss declarator:d
         {: getC4Scanner().enterScope(); :}
-        compound_statement
-        {: getC4Scanner().exitScope(); :}
-      |                        declarator declaration_list
+        compound_statement:body
+        {: getC4Scanner().exitScope();
+           RESULT = Located.of(head(dss).loc(), body.loc(),
+            new FunctionDef(dss, d, none(), body)); :}
+      |                            declarator:d declaration_list:dl
         {: getC4Scanner().enterScope(); :}
-        compound_statement
-        {: getC4Scanner().exitScope(); :}
-      |                        declarator
+        compound_statement:body
+        {: getC4Scanner().exitScope();
+           RESULT = Located.of(d.loc(), body.loc(),
+            new FunctionDef(JavaUtils.seq(), d, some(dl), body)); :}
+      |                            declarator:d
         {: getC4Scanner().enterScope(); :}
-        compound_statement
-        {: getC4Scanner().exitScope(); :}
+        compound_statement:body
+        {: getC4Scanner().exitScope();
+           RESULT = Located.of(d.loc(), body.loc(),
+            new FunctionDef(JavaUtils.seq(), d, none(), body)); :}
       ;
 
-// TODO: when declaration_specifiers contains "typedef", add all IDs
-//       appeared in init_declarator_list to the typedef names set.
-declaration
-    ::= declaration_specifiers init_declarator_list SEMICOLON
-      | declaration_specifiers                      SEMICOLON
+// when declaration_specifiers contains "typedef", all IDs
+// appeared in init_declarator_list are added to the typedef names set.
+declaration // Located<Declaration>
+    ::= declaration_specifiers:dss init_declarator_list:ids SEMICOLON:l
+        {: JavaUtils.checkTypedef(dss, ids, getC4Scanner());
+           RESULT = Located.of(head(dss).loc(), l,
+            new Declaration(dss, some(ids))); :}
+      | declaration_specifiers:dss                          SEMICOLON:l
+        {: RESULT = Located.of(head(dss).loc(), l, new Declaration(dss, none())); :}
       ;
 
-declaration_specifiers
-    ::= storage_class_specifier declaration_specifiers
-      | storage_class_specifier
-      | type_specifier declaration_specifiers
-      | type_specifier
-      | type_qualifier declaration_specifiers
-      | type_qualifier
+declaration_specifiers // Seq[L[DeclarationSpecifier]]
+    ::= storage_class_specifier:x declaration_specifiers:xs
+        {: RESULT = JavaUtils.prepend(
+            Located.of(x.loc(), last(xs).loc(),
+                new DeclarationSpecifierStorageClass(x)),
+            xs); :}
+      | storage_class_specifier:x
+        {: RESULT = JavaUtils.seq(
+            Located.of(x.loc(),
+                new DeclarationSpecifierStorageClass(x))); :}
+      | type_specifier:x declaration_specifiers:xs
+        {: RESULT = JavaUtils.prepend(
+            Located.of(x.loc(), last(xs).loc(),
+                new DeclarationSpecifierTypeSpecifier(x)),
+            xs); :}
+      | type_specifier:x
+        {: RESULT = JavaUtils.seq(
+            Located.of(x.loc(),
+                new DeclarationSpecifierTypeSpecifier(x))); :}
+      | type_qualifier:x declaration_specifiers:xs
+        {: RESULT = JavaUtils.prepend(
+            Located.of(x.loc(), last(xs).loc(),
+                new DeclarationSpecifierTypeQualifier(x)),
+            xs); :}
+      | type_qualifier:x
+        {: RESULT = JavaUtils.seq(
+            Located.of(x.loc(),
+                new DeclarationSpecifierTypeQualifier(x))); :}
       ;
 
-init_declarator_list
-    ::= init_declarator
-      | init_declarator_list COMMA init_declarator
+init_declarator_list // Seq[(L[Declarator], Option[L[Initializer]])]
+    ::=                               init_declarator:x
+        {: RESULT = JavaUtils.seq(x); :}
+      | init_declarator_list:xs COMMA init_declarator:x
+        {: RESULT = JavaUtils.append(xs, x); :}
       ;
 
-init_declarator
-    ::= declarator
-      | declarator ASSIGN initializer
+init_declarator // Tuple2<Located<Declarator>, Option<Located<Initializer>>>
+    ::= declarator:d
+        {: RESULT = pair(d, none()); :}
+      | declarator:d ASSIGN initializer:i
+        {: RESULT = pair(d, some(i)); :}
       ;
 
 declarator // Located<Declarator>
-    ::= pointer direct_declarator
-      |         direct_declarator
+    ::= pointer:ptr direct_declarator:dd
+        {: RESULT = Located.of(ptr.loc(), dd.loc(),
+            new Declarator(some(ptr), dd)); :}
+      |             direct_declarator:dd
+        {: RESULT = Located.of(dd.loc(), new Declarator(none(), dd)); :}
       ;
 
-direct_declarator
-    ::= ID
-      | LPAREN declarator RPAREN
-      | direct_declarator LSBRKT constant_expression RSBRKT
-      | direct_declarator LSBRKT                     RSBRKT
-      | direct_declarator LPAREN parameter_type_list RPAREN
-      | direct_declarator LPAREN identifier_list RPAREN
-      | direct_declarator LPAREN                 RPAREN
+direct_declarator // Located<DirectDeclarator>
+    ::= ID:id
+        {: RESULT = new Located(id.loc(), new DirectDeclaratorId(id)); :}
+      | LPAREN:l1 declarator:d RPAREN:l2
+        {: RESULT = Located.of(l1, l2, new DirectDeclaratorDeclarator(d)); :}
+      | direct_declarator:dd LSBRKT constant_expression:e RSBRKT:loc
+        {: RESULT = Located.of(dd.loc(), loc,
+            new DirectDeclaratorArray(dd, some(e))); :}
+      | direct_declarator:dd LSBRKT                       RSBRKT:loc
+        {: RESULT = Located.of(dd.loc(), loc,
+            new DirectDeclaratorArray(dd, none())); :}
+      | direct_declarator:dd LPAREN parameter_type_list:tl RPAREN:loc
+        {: RESULT = Located.of(dd.loc(), loc,
+            new DirectDeclaratorFuncTypes(dd, fst(tl), snd(tl))); :}
+      | direct_declarator:dd LPAREN identifier_list:il RPAREN:loc
+        {: RESULT = Located.of(dd.loc(), loc,
+            new DirectDeclaratorIdsList(dd, il)); :}
+      | direct_declarator:dd LPAREN                 RPAREN:loc
+        {: RESULT = Located.of(dd.loc(), loc,
+            new DirectDeclaratorIdsList(dd, JavaUtils.seq())); :}
       ;
 
-pointer
-    ::= STAR type_qualifier_list pointer
-      | STAR type_qualifier_list
-      | STAR                     pointer
-      | STAR
+pointer // Located<Pointer>
+    ::= STAR:loc type_qualifier_list:qs pointer:ptr
+        {: RESULT = Located.of(loc,      ptr.loc(), new Pointer(qs, some(ptr))); :}
+      | STAR:loc type_qualifier_list:qs
+        {: RESULT = Located.of(loc, head(qs).loc(), new Pointer(qs, none())); :}
+      | STAR:loc                        pointer:ptr
+        {: RESULT = Located.of(loc, ptr.loc(),
+            new Pointer(JavaUtils.seq(), some(ptr))); :}
+      | STAR:loc
+        {: RESULT = Located.of(loc, new Pointer(JavaUtils.seq(), none())); :}
       ;
 
-type_qualifier_list
-    ::= type_qualifier_list type_qualifier
-      |                     type_qualifier
+type_qualifier_list // Seq<Located<TypeQualifier>>
+    ::= type_qualifier_list:xs type_qualifier:x
+        {: RESULT = JavaUtils.append(xs, x); :}
+      |                        type_qualifier:x
+        {: RESULT = JavaUtils.seq(x); :}
       ;
 
-parameter_type_list
-    ::= parameter_list
-      | parameter_list COMMA ELLIPSIS
+parameter_type_list // (Seq[Located[ParamDeclaration]], Option[Loc])
+    ::= parameter_list:xs
+        {: RESULT = pair(xs, none()); :}
+      | parameter_list:xs COMMA ELLIPSIS:loc
+        {: RESULT = pair(xs, some(loc)); :}
       ;
 
-parameter_list
-    ::=                      parameter_declaration
-      | parameter_list COMMA parameter_declaration
+parameter_list // Seq[Located[ParamDeclaration]]
+    ::=                         parameter_declaration:x
+        {: RESULT = JavaUtils.seq(x); :}
+      | parameter_list:xs COMMA parameter_declaration:x
+        {: RESULT = JavaUtils.append(xs, x); :}
       ;
 
-parameter_declaration
-    ::= declaration_specifiers declarator
-      | declaration_specifiers abstract_declarator
-      | declaration_specifiers
+parameter_declaration // Located[ParamDeclaration]
+    ::= declaration_specifiers:dss declarator:d
+        {: RESULT = Located.of(head(dss).loc(), d.loc(),
+            new ParamDeclarationNamed(dss, d)); :}
+      | declaration_specifiers:dss abstract_declarator:ad
+        {: RESULT = Located.of(head(dss).loc(), ad.loc(),
+            new ParamDeclarationTypeOnly(dss, ad)); :}
+      | declaration_specifiers:dss
+        {: RESULT = Located.of(head(dss).loc(),
+            new ParamDeclarationTypeOnlySimple(dss)); :}
       ;
 
-identifier_list
-    ::= identifier_list COMMA ID
-      |                       ID
+identifier_list // Seq<Located<TokId>>
+    ::= identifier_list:xs COMMA ID:x
+        {: RESULT = JavaUtils.append(xs, x); :}
+      |                          ID:x
+        {: RESULT = JavaUtils.seq(x); :}
       ;
 
-compound_statement
-    ::= LBRACE declaration_list statement_list RBRACE
-      | LBRACE declaration_list                RBRACE
-      | LBRACE                  statement_list RBRACE
-      | LBRACE                                 RBRACE
+compound_statement // Located<CompoundStmt>
+    ::= LBRACE:l1 declaration_list:x statement_list:y RBRACE:l2
+        {: RESULT = Located.of(l1, l2, new CompoundStmt(    x,     y)); :}
+      | LBRACE:l1 declaration_list:x                  RBRACE:l2
+        {: RESULT = Located.of(l1, l2, new CompoundStmt(    x, seq())); :}
+      | LBRACE:l1                    statement_list:y RBRACE:l2
+        {: RESULT = Located.of(l1, l2, new CompoundStmt(seq(),     y)); :}
+      | LBRACE:l1                                     RBRACE:l2
+        {: RESULT = Located.of(l1, l2, new CompoundStmt(seq(), seq())); :}
       ;
 
-declaration_list
-    ::=                  declaration
-      | declaration_list declaration
+declaration_list // Seq<Located<Declaration>>
+    ::=                     declaration:x
+        {: RESULT = JavaUtils.seq(x); :}
+      | declaration_list:xs declaration:x
+        {: RESULT = JavaUtils.append(xs, x); :}
       ;
 
-statement_list
-    ::=                statement
-      | statement_list statement
+statement_list // Seq<Located<Stmt>>
+    ::=                   statement:x
+        {: RESULT = JavaUtils.seq(x); :}
+      | statement_list:xs statement:x
+        {: RESULT = JavaUtils.append(xs, x); :}
       ;
 
-storage_class_specifier
-    ::= TYPEDEF
-      | EXTERN
-      | STATIC
-      | AUTO
-      | REGISTER
+storage_class_specifier // Located<StorageClassSpecifier>
+    ::= TYPEDEF:loc  {: RESULT = Located.of(loc,  c4.ast.Typedef$.MODULE$); :}
+      | EXTERN:loc   {: RESULT = Located.of(loc,   c4.ast.Extern$.MODULE$); :}
+      | STATIC:loc   {: RESULT = Located.of(loc,   c4.ast.Static$.MODULE$); :}
+      | AUTO:loc     {: RESULT = Located.of(loc,     c4.ast.Auto$.MODULE$); :}
+      | REGISTER:loc {: RESULT = Located.of(loc, c4.ast.Register$.MODULE$); :}
       ;
 
 type_specifier // Located<TypeSpecifier>
@@ -392,84 +534,137 @@ type_qualifier // Located<TypeQualifier>
       | VOLATILE:loc {: RESULT = new Located(loc, c4.ast.Volatile$.MODULE$); :}
       ;
 
-initializer
-    ::= assignment_expression
-      | LBRACE initializer_list       RBRACE
-      | LBRACE initializer_list COMMA RBRACE
+initializer // Located<Initializer>
+    ::= assignment_expression:e
+        {: RESULT = Located.of(e.loc(), new InitializerExpr(e)); :}
+      | LBRACE:l1 initializer_list:il       RBRACE:l2
+        {: RESULT = Located.of(l1, l2, new InitializerStruct(il)); :}
+      | LBRACE:l1 initializer_list:il COMMA RBRACE:l2
+        {: RESULT = Located.of(l1, l2, new InitializerStruct(il)); :}
       ;
 
-initializer_list
-    ::=                        initializer
-      | initializer_list COMMA initializer
+initializer_list // Seq<Located<Initializer>>
+    ::=                           initializer:x
+        {: RESULT = JavaUtils.seq(x); :}
+      | initializer_list:xs COMMA initializer:x
+        {: RESULT = JavaUtils.append(xs, x); :}
       ;
 
-type_name
-    ::= specifier_qualifier_list abstract_declarator
-      | specifier_qualifier_list
+type_name // Located<TypeName>
+    ::= specifier_qualifier_list:sqs abstract_declarator:ad
+        {: RESULT = Located.of(head(sqs).loc(), ad.loc(),
+            new TypeName(sqs, some(ad))); :}
+      | specifier_qualifier_list:sqs
+        {: RESULT = Located.of(head(sqs).loc(),
+            new TypeName(sqs, none())); :}
       ;
 
-abstract_declarator
-    ::= pointer
-      | pointer direct_abstract_declarator
-      |         direct_abstract_declarator
+abstract_declarator // Located<AbstractDeclarator>
+    ::= pointer:ptr
+        {: RESULT = Located.of(ptr.loc(),
+            new AbstractDeclarator(some(ptr), none())); :}
+      | pointer:ptr direct_abstract_declarator:dad
+        {: RESULT = Located.of(ptr.loc(), dad.loc(),
+            new AbstractDeclarator(some(ptr), some(dad))); :}
+      |             direct_abstract_declarator:dad
+        {: RESULT = Located.of(dad.loc(),
+            new AbstractDeclarator(none(), some(dad))); :}
       ;
 
-direct_abstract_declarator
-    ::= LPAREN abstract_declarator RPAREN
-      | direct_abstract_declarator LSBRKT constant_expression RSBRKT
-      | direct_abstract_declarator LSBRKT                     RSBRKT
-      |                            LSBRKT constant_expression RSBRKT
-      |                            LSBRKT                     RSBRKT
-      | direct_abstract_declarator LPAREN parameter_type_list RPAREN
-      | direct_abstract_declarator LPAREN                     RPAREN
-      |                            LPAREN parameter_type_list RPAREN
-      |                            LPAREN                     RPAREN
+direct_abstract_declarator // Located<DirectAbstractDeclarator>
+    ::= LPAREN:b abstract_declarator:ad RPAREN:e
+        {: RESULT = Located.of(b, e, new DirectAbstractDeclaratorSimple(ad)); :}
+      | direct_abstract_declarator:dad LSBRKT   constant_expression:e RSBRKT:end
+        {: RESULT = Located.of(dad.loc(), end,
+            new DirectAbstractDeclaratorArray(some(dad), some(e))); :}
+      | direct_abstract_declarator:dad LSBRKT                         RSBRKT:end
+        {: RESULT = Located.of(dad.loc(), end,
+            new DirectAbstractDeclaratorArray(some(dad), none())); :}
+      |                                LSBRKT:b constant_expression:e RSBRKT:end
+        {: RESULT = Located.of(b, end,
+            new DirectAbstractDeclaratorArray(none(), some(e))); :}
+      |                                LSBRKT:b                       RSBRKT:end
+        {: RESULT = Located.of(b, end,
+            new DirectAbstractDeclaratorArray(none(), none())); :}
+      | direct_abstract_declarator:dad LPAREN   parameter_type_list:p RPAREN:end
+        {: RESULT = Located.of(dad.loc(), end,
+            new DirectAbstractDeclaratorFunc(some(dad), some(p))); :}
+      | direct_abstract_declarator:dad LPAREN                         RPAREN:end
+        {: RESULT = Located.of(dad.loc(), end,
+            new DirectAbstractDeclaratorFunc(some(dad), none())); :}
+      |                                LPAREN:b parameter_type_list:p RPAREN:end
+        {: RESULT = Located.of(b, end,
+            new DirectAbstractDeclaratorFunc(none(), some(p))); :}
+      |                                LPAREN:b                       RPAREN:end
+        {: RESULT = Located.of(b, end,
+            new DirectAbstractDeclaratorFunc(none(), none())); :}
       ;
 
-statement
-    ::= labeled_statement
+statement // Located<Stmt>
+    ::= labeled_statement:x {: RESULT = x; :}
       | {: getC4Scanner().enterScope(); :}
-        compound_statement
-        {: getC4Scanner().exitScope(); :}
-      | expression_statement
-      | selection_statement
-      | iteration_statement
-      | jump_statement
+        compound_statement:x
+        {: getC4Scanner().exitScope();
+           RESULT = Located.of(x.loc(), x.value()); :}
+      | expression_statement:x
+        {: RESULT = Located.of(x.loc(), x.value()); :}
+      | selection_statement:x {: RESULT = x; :}
+      | iteration_statement:x {: RESULT = x; :}
+      | jump_statement:x {: RESULT = x; :}
       ;
 
-labeled_statement
-    ::= ID COLON statement
-      | CASE constant_expression COLON statement
-      | DEFAULT COLON statement
+labeled_statement // Located<Stmt>
+    ::= ID:id COLON statement:s
+        {: RESULT = Located.of(id.loc(), s.loc(), new LabeledStmtId(id, s)); :}
+      | CASE:b constant_expression:e COLON statement:s
+        {: RESULT = Located.of(b, s.loc(), new LabeledStmtCase(e, s)); :}
+      | DEFAULT:b COLON statement:s
+        {: RESULT = Located.of(b, s.loc(), new LabeledStmtDefault(s)); :}
       ;
 
-expression_statement
-    ::= expression SEMICOLON
-      |            SEMICOLON
+expression_statement // Located<Stmt>
+    ::= expression:e SEMICOLON:end
+        {: RESULT = Located.of(e.loc(), end, new ExprStmt(some(e))); :}
+      |              SEMICOLON:end
+        {: RESULT = Located.of(end, new ExprStmt(none())); :}
       ;
 
-selection_statement
-    ::= IF LPAREN expression RPAREN statement
-      | IF LPAREN expression RPAREN statement ELSE statement
-      | SWITCH LPAREN expression RPAREN statement
+selection_statement // Located<Stmt>
+    ::= IF:b LPAREN expression:e RPAREN statement:s1
+        {: RESULT = Located.of(b, s1.loc(), new IfStmt(e, s1, none())); :}
+      | IF:b LPAREN expression:e RPAREN statement:s1 ELSE statement:s2
+        {: RESULT = Located.of(b, s2.loc(), new IfStmt(e, s1, some(s2))); :}
+      | SWITCH:b LPAREN expression:e RPAREN statement:s
+        {: RESULT = Located.of(b, s.loc(), new SwitchStmt(e, s)); :}
       ;
 
-iteration_statement
-    ::= WHILE LPAREN expression RPAREN statement
-      | DO statement WHILE LPAREN expression RPAREN SEMICOLON
-      | FOR LPAREN expression_statement
-                   expression_statement
-                   expression RPAREN statement
-      | FOR LPAREN expression_statement
-                   expression_statement RPAREN statement
+iteration_statement // Located<Stmt>
+    ::= WHILE:b LPAREN expression:e RPAREN statement:s
+        {: RESULT = Located.of(b, s.loc(), new WhileStmt(e, s)); :}
+      | DO:b statement:s WHILE LPAREN expression:expr RPAREN SEMICOLON:end
+        {: RESULT = Located.of(b, end, new DoWhileStmt(s, expr)); :}
+      | FOR:b LPAREN expression_statement:e1
+                     expression_statement:e2
+                     expression:e3 RPAREN statement:s
+        {: RESULT = Located.of(b, s.loc(),
+            new ForStmt(e1.value().e(), e2.value().e(), some(e3), s)); :}
+      | FOR:b LPAREN expression_statement:e1
+                     expression_statement:e2 RPAREN statement:s
+        {: RESULT = Located.of(b, s.loc(),
+            new ForStmt(e1.value().e(), e2.value().e(), none(), s)); :}
       ;
 
-jump_statement
-    ::= GOTO ID SEMICOLON
-      | CONTINUE SEMICOLON
-      | BREAK SEMICOLON
-      | RETURN expression SEMICOLON
-      | RETURN SEMICOLON
+jump_statement // Located<Stmt>
+    ::= GOTO:b ID:id SEMICOLON:e
+        {: RESULT = Located.of(b, e, new GotoStmt(id)); :}
+      | CONTINUE:b SEMICOLON:e
+        {: RESULT = Located.of(b, e, c4.ast.Continue$.MODULE$); :}
+      | BREAK:b SEMICOLON:e
+        {: RESULT = Located.of(b, e, c4.ast.Break$.MODULE$); :}
+      | RETURN:b expression:expr SEMICOLON:e
+        {: RESULT = Located.of(b, e, new Return(some(expr))); :}
+      | RETURN:b SEMICOLON:e
+        {: RESULT = Located.of(b, e, new Return(none())); :}
       ;
 
 expression // Located<Expr>

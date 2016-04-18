@@ -8,6 +8,8 @@ object Located {
   def of[T](begin: Loc, end: Loc, value: T): Located[T] = {
     Located(LocRange.of(begin, end), value)
   }
+
+  def of[T](loc: Loc, value: T): Located[T] = Located(loc, value) // for Java
 }
 
 sealed abstract class Loc

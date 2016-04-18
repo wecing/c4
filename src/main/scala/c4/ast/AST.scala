@@ -67,6 +67,123 @@ object StructDeclaration {
   }
 }
 
-sealed abstract class Declarator // TODO
+final case class Declarator(ptr: Option[L[Pointer]], dd: L[DirectDeclarator])
 
-// type StructDeclarator = ([L[Declarator], Option[L[Expr]])
+sealed abstract class DirectDeclarator
+final case class DirectDeclaratorId(tok: L[TokId]) extends DirectDeclarator
+final case class DirectDeclaratorDeclarator(d: L[Declarator])
+  extends DirectDeclarator
+final case class DirectDeclaratorArray(
+  dd: L[DirectDeclarator],
+  size: Option[L[Expr]]
+) extends DirectDeclarator
+final case class DirectDeclaratorFuncTypes(
+  dd: L[DirectDeclarator],
+  paramTypes: Seq[L[ParamDeclaration]],
+  ellipsis: Option[Loc]
+) extends DirectDeclarator
+final case class DirectDeclaratorIdsList(
+  dd: L[DirectDeclarator],
+  ids: Seq[L[TokId]]
+) extends DirectDeclarator
+
+final case class AbstractDeclarator(
+  ptr: Option[L[Pointer]],
+  dad: Option[L[DirectAbstractDeclarator]] // huh?
+)
+
+sealed abstract class DirectAbstractDeclarator
+final case class DirectAbstractDeclaratorSimple(
+  ad: L[AbstractDeclarator]
+) extends DirectAbstractDeclarator
+final case class DirectAbstractDeclaratorArray(
+  dad: Option[L[DirectAbstractDeclarator]],
+  size: Option[L[Expr]]
+) extends DirectAbstractDeclarator
+final case class DirectAbstractDeclaratorFunc(
+  dad: Option[L[DirectAbstractDeclarator]],
+  params: Option[(Seq[L[ParamDeclaration]], Option[Loc])]
+) extends DirectAbstractDeclarator
+
+sealed abstract class ParamDeclaration
+final case class ParamDeclarationNamed(
+  dss: Seq[L[DeclarationSpecifier]],
+  d: L[Declarator]
+) extends ParamDeclaration
+final case class ParamDeclarationTypeOnly(
+  dss: Seq[L[DeclarationSpecifier]],
+  ad: L[AbstractDeclarator]
+) extends ParamDeclaration
+final case class ParamDeclarationTypeOnlySimple(
+  dss: Seq[L[DeclarationSpecifier]]
+) extends ParamDeclaration
+
+sealed abstract class DeclarationSpecifier
+final case class DeclarationSpecifierStorageClass(
+  scs: L[StorageClassSpecifier]
+) extends DeclarationSpecifier
+final case class DeclarationSpecifierTypeSpecifier(
+  ts: L[TypeSpecifier]
+) extends DeclarationSpecifier
+final case class DeclarationSpecifierTypeQualifier(
+  tq: L[TypeQualifier]
+) extends DeclarationSpecifier
+
+sealed abstract class StorageClassSpecifier
+object Typedef extends StorageClassSpecifier
+object Extern extends StorageClassSpecifier
+object Static extends StorageClassSpecifier
+object Auto extends StorageClassSpecifier
+object Register extends StorageClassSpecifier
+
+final case class Pointer(qs: Seq[L[TypeQualifier]], ptr: Option[L[Pointer]])
+
+sealed abstract class Initializer
+final case class InitializerExpr(expr: L[Expr]) extends Initializer
+final case class InitializerStruct(il: Seq[L[Initializer]]) extends Initializer
+
+final case class Declaration(
+  dss: Seq[L[DeclarationSpecifier]],
+  ids: Option[Seq[(L[Declarator], Option[L[Initializer]])]]
+)
+
+final case class FunctionDef(
+  dss: Seq[L[DeclarationSpecifier]],
+  d: L[Declarator],
+  dl: Option[Seq[L[Declaration]]],
+  body: L[CompoundStmt]
+)
+
+sealed abstract class Stmt
+final case class CompoundStmt(
+  dl: Seq[L[Declaration]],
+  sl: Seq[L[Stmt]]
+) extends Stmt
+sealed abstract class LabeledStmt extends Stmt
+final case class LabeledStmtId(id: L[TokId], stmt: L[Stmt]) extends LabeledStmt
+final case class LabeledStmtCase(e: L[Expr], stmt: L[Stmt]) extends LabeledStmt
+final case class LabeledStmtDefault(stmt: L[Stmt]) extends LabeledStmt
+final case class ExprStmt(e: Option[L[Expr]]) extends Stmt
+final case class IfStmt(
+  cond: L[Expr],
+  thenS: L[Stmt],
+  elseS: Option[L[Stmt]]
+) extends Stmt
+final case class SwitchStmt(e: L[Expr], body: L[Stmt]) extends Stmt
+final case class WhileStmt(e: L[Expr], body: L[Stmt]) extends Stmt
+final case class DoWhileStmt(body: L[Stmt], e: L[Expr]) extends Stmt
+final case class ForStmt(
+  e1: Option[L[Expr]],
+  e2: Option[L[Expr]],
+  e3: Option[L[Expr]],
+  body: L[Stmt]
+) extends Stmt
+final case class GotoStmt(id: L[TokId]) extends Stmt
+object Continue extends Stmt
+object Break extends Stmt
+final case class Return(e: Option[L[Expr]]) extends Stmt
+
+final case class TypeName(
+  sqs: Seq[L[Either[TypeSpecifier, TypeQualifier]]],
+  ad: Option[L[AbstractDeclarator]]
+)
