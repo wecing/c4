@@ -37,7 +37,15 @@ class C4Scanner(val reader: SourcePhase7Reader) extends Scanner {
           } else {
             new Symbol(CupSymbols.ID, located)
           }
-        case tok => new Symbol(tok.cupSymbol, located)
+        case tok: TokInteger    => new Symbol(tok.cupSymbol, located)
+        case tok: TokFloat      => new Symbol(tok.cupSymbol, located)
+        case tok: TokDouble     => new Symbol(tok.cupSymbol, located)
+        case tok: TokLongDouble => new Symbol(tok.cupSymbol, located)
+        case tok: TokChar       => new Symbol(tok.cupSymbol, located)
+        case tok: TokWideChar   => new Symbol(tok.cupSymbol, located)
+        case tok: TokStr        => new Symbol(tok.cupSymbol, located)
+        case tok: TokWideStr    => new Symbol(tok.cupSymbol, located)
+        case tok => new Symbol(tok.cupSymbol, located.loc)
       }
     }
   }
