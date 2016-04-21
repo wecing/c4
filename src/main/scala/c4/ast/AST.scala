@@ -3,16 +3,49 @@ package c4.ast
 import c4.io._
 import c4.util.{Loc, LocRange, Located => L}
 
-sealed abstract class ExprUnaryOp
-object PrefixInc extends ExprUnaryOp // ++n
-object PrefixDec extends ExprUnaryOp // --n
-object Ref extends ExprUnaryOp // &n
-object Deref extends ExprUnaryOp // *n
-object Pos extends ExprUnaryOp // +n
-object Neg extends ExprUnaryOp // -n
-object BitNot extends ExprUnaryOp // ~n
-object LogicNot extends ExprUnaryOp // !n
-object SizeofVal extends ExprUnaryOp // sizeof(1)
+sealed abstract class UnaryOp
+object PrefixInc extends UnaryOp // ++n
+object PrefixDec extends UnaryOp // --n
+object PostfixInc extends UnaryOp // n++
+object PostfixDec extends UnaryOp // n--
+object Ref extends UnaryOp // &n
+object Deref extends UnaryOp // *n
+object Pos extends UnaryOp // +n
+object Neg extends UnaryOp // -n
+object BitNot extends UnaryOp // ~n
+object LogicNot extends UnaryOp // !n
+
+sealed abstract class BinaryOp
+object Assign extends BinaryOp // a = b
+object MulAssign extends BinaryOp // a *= b
+object DivAssign extends BinaryOp // a /= b
+object ModAssign extends BinaryOp // a %= b
+object AddAssign extends BinaryOp // a += b
+object SubAssign extends BinaryOp // a -= b
+object LShiftAssign extends BinaryOp // a <<= b
+object RShiftAssign extends BinaryOp // a >>= b
+object BinaryAndAssign extends BinaryOp // a &= b
+object XorAssign extends BinaryOp // a ^= b
+object BinaryOrAssign extends BinaryOp // a |= b
+object Comma extends BinaryOp // a, b
+object LogicOr extends BinaryOp // a || b
+object LogicAnd extends BinaryOp // a && b
+object BitOr extends BinaryOp // a | b
+object Xor extends BinaryOp // a ^ b
+object BitAnd extends BinaryOp // a & b
+object Eq extends BinaryOp // a == b
+object Neq extends BinaryOp // a != b
+object Less extends BinaryOp // a < b
+object Gt extends BinaryOp // a > b
+object Leq extends BinaryOp // a <= b
+object Geq extends BinaryOp // a >= b
+object LShift extends BinaryOp // a << b
+object RShift extends BinaryOp // a >> b
+object Add extends BinaryOp // a + b
+object Sub extends BinaryOp // a - b
+object Mul extends BinaryOp // a * b
+object Div extends BinaryOp // a / b
+object Mod extends BinaryOp // a % b
 
 sealed abstract class Expr
 final case class Id(id: String) extends Expr
@@ -24,8 +57,19 @@ final case class CharLit(tok: TokChar) extends Expr
 final case class WideCharLit(tok: TokWideChar) extends Expr
 final case class StrLit(tok: TokStr) extends Expr
 final case class WideStrLit(tok: TokWideStr) extends Expr
+final case class CastExpr(tp: L[TypeName], e: L[Expr]) extends Expr
+final case class ArrSubExpr(arr: L[Expr], sub: L[Expr]) extends Expr
+final case class FunCallExpr(fn: L[Expr], args: Seq[L[Expr]]) extends Expr
+final case class DotExpr(e: L[Expr], field: L[TokId]) extends Expr
+final case class PtrExpr(e: L[Expr], field: L[TokId]) extends Expr
+final case class SizeofValExpr(e: L[Expr]) extends Expr
+final case class SizeofTypeExpr(tp: L[TypeName]) extends Expr
 
-// final case class SizeofType(...) extends Expr // TODO
+final case class UnaryExpr(e: L[Expr], op: L[UnaryOp]) extends Expr
+final case class BinaryExpr(e1: L[Expr], e2: L[Expr], op: L[BinaryOp])
+  extends Expr
+final case class TernaryExpr(cond: L[Expr], thenE: L[Expr], elseE: L[Expr])
+  extends Expr
 
 sealed abstract class TypeSpecifier
 object Void extends TypeSpecifier

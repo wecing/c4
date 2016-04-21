@@ -23,7 +23,7 @@ class C4Scanner(val reader: SourcePhase7Reader) extends Scanner {
   }
 
   def addTypedefName(name: String): Unit = {
-    (scopeList.head + name) +: scopeList.tail
+    scopeList = (scopeList.head + name) +: scopeList.tail
   }
 
   @throws(classOf[java.lang.Exception])

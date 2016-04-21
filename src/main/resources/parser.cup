@@ -191,9 +191,12 @@ non terminal Located<Expr> expression,
     logical_or_expression, logical_and_expression, inclusive_or_expression,
     exclusive_or_expression, and_expression, equality_expression,
     relational_expression, shift_expression, additive_expression,
-    multiplicative_expression, assignment_operator, unary_expression,
-    postfix_expression, argument_expression_list, cast_expression,
+    multiplicative_expression, unary_expression,
+    postfix_expression, cast_expression,
     primary_expression;
+
+non terminal Seq<Located<Expr>> argument_expression_list;
+non terminal Located<BinaryOp> assignment_operator;
 
 precedence nonassoc ELSE;
 
@@ -668,129 +671,241 @@ jump_statement // Located<Stmt>
       ;
 
 expression // Located<Expr>
-    ::=                  assignment_expression
-      | expression COMMA assignment_expression
+    ::=                       assignment_expression:e2 {: RESULT = e2; :}
+      | expression:e1 COMMA:c assignment_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2, Located.of(c, c4.ast.Comma$.MODULE$))); :}
       ;
 
 constant_expression // Located<Expr>
-    ::= conditional_expression
+    ::= conditional_expression:e {: RESULT = e; :}
       ;
 
 assignment_expression // Located<Expr>
-    ::= conditional_expression
-      | unary_expression assignment_operator assignment_expression
+    ::= conditional_expression:e {: RESULT = e; :}
+      | unary_expression:e1 assignment_operator:op assignment_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2, op)); :}
       ;
 
 conditional_expression // Located<Expr>
-    ::= logical_or_expression
-      | logical_or_expression QMARK expression COLON conditional_expression
+    ::= logical_or_expression:e {: RESULT = e; :}
+      | logical_or_expression:e1 QMARK expression:e2
+                                 COLON conditional_expression:e3
+        {: RESULT = Located.of(e1.loc(), e3.loc(),
+            new TernaryExpr(e1, e2, e3)); :}
       ;
 
 logical_or_expression // Located<Expr>
-    ::=                            logical_and_expression
-      | logical_or_expression L_OR logical_and_expression
+    ::=                                  logical_and_expression:e
+        {: RESULT = e; :}
+      | logical_or_expression:e1 L_OR:op logical_and_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.LogicOr$.MODULE$))); :}
       ;
 
 logical_and_expression // Located<Expr>
-    ::=                              inclusive_or_expression
-      | logical_and_expression L_AND inclusive_or_expression
+    ::=                                    inclusive_or_expression:e
+        {: RESULT = e; :}
+      | logical_and_expression:e1 L_AND:op inclusive_or_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.LogicAnd$.MODULE$))); :}
       ;
 
 inclusive_or_expression // Located<Expr>
-    ::=                              exclusive_or_expression
-      | inclusive_or_expression B_OR exclusive_or_expression
+    ::=                                    exclusive_or_expression:e
+        {: RESULT = e; :}
+      | inclusive_or_expression:e1 B_OR:op exclusive_or_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.BitOr$.MODULE$))); :}
       ;
 
 exclusive_or_expression // Located<Expr>
-    ::=                             and_expression
-      | exclusive_or_expression XOR and_expression
+    ::=                                   and_expression:e
+        {: RESULT = e; :}
+      | exclusive_or_expression:e1 XOR:op and_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Xor$.MODULE$))); :}
       ;
 
 and_expression // Located<Expr>
-    ::=                      equality_expression
-      | and_expression B_AND equality_expression
+    ::=                            equality_expression:e
+        {: RESULT = e; :}
+      | and_expression:e1 B_AND:op equality_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.BitAnd$.MODULE$))); :}
       ;
 
 equality_expression // Located<Expr>
-    ::=                         relational_expression
-      | equality_expression EQ  relational_expression
-      | equality_expression NEQ relational_expression
+    ::=                               relational_expression:e
+        {: RESULT = e; :}
+      | equality_expression:e1 EQ:op  relational_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Eq$.MODULE$))); :}
+      | equality_expression:e1 NEQ:op relational_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Neq$.MODULE$))); :}
       ;
 
 relational_expression // Located<Expr>
-    ::=                           shift_expression
-      | relational_expression LE  shift_expression
-      | relational_expression GT  shift_expression
-      | relational_expression LEQ shift_expression
-      | relational_expression GEQ shift_expression
+    ::=                                 shift_expression:e
+        {: RESULT = e; :}
+      | relational_expression:e1 LE:op  shift_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Less$.MODULE$))); :}
+      | relational_expression:e1 GT:op  shift_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Gt$.MODULE$))); :}
+      | relational_expression:e1 LEQ:op shift_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Leq$.MODULE$))); :}
+      | relational_expression:e1 GEQ:op shift_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Geq$.MODULE$))); :}
       ;
 
 shift_expression // Located<Expr>
-    ::=                         additive_expression
-      | shift_expression LSHIFT additive_expression
-      | shift_expression RSHIFT additive_expression
+    ::=                               additive_expression:e
+        {: RESULT = e; :}
+      | shift_expression:e1 LSHIFT:op additive_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.LShift$.MODULE$))); :}
+      | shift_expression:e1 RSHIFT:op additive_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.RShift$.MODULE$))); :}
       ;
 
 additive_expression // Located<Expr>
-    ::=                         multiplicative_expression
-      | additive_expression ADD multiplicative_expression
-      | additive_expression SUB multiplicative_expression
+    ::=                               multiplicative_expression:e
+        {: RESULT = e; :}
+      | additive_expression:e1 ADD:op multiplicative_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Add$.MODULE$))); :}
+      | additive_expression:e1 SUB:op multiplicative_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Sub$.MODULE$))); :}
       ;
 
 multiplicative_expression // Located<Expr>
-    ::=                                cast_expression
-      | multiplicative_expression STAR cast_expression
-      | multiplicative_expression DIV  cast_expression
-      | multiplicative_expression MOD  cast_expression
+    ::=                                      cast_expression:e
+        {: RESULT = e; :}
+      | multiplicative_expression:e1 STAR:op cast_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Mul$.MODULE$))); :}
+      | multiplicative_expression:e1 DIV:op  cast_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Div$.MODULE$))); :}
+      | multiplicative_expression:e1 MOD:op  cast_expression:e2
+        {: RESULT = Located.of(e1.loc(), e2.loc(),
+            new BinaryExpr(e1, e2,
+                Located.of(op, c4.ast.Mod$.MODULE$))); :}
       ;
 
-assignment_operator
-    ::= ASSIGN
-      | MUL_ASSIGN
-      | DIV_ASSIGN
-      | MOD_ASSIGN
-      | ADD_ASSIGN
-      | SUB_ASSIGN
-      | LSHIFT_ASSIGN
-      | RSHIFT_ASSIGN
-      | B_AND_ASSIGN
-      | XOR_ASSIGN
-      | B_OR_ASSIGN
+assignment_operator // Located<BinaryOp>
+    ::= ASSIGN:x
+        {: RESULT = Located.of(x, c4.ast.Assign$.MODULE$); :}
+      | MUL_ASSIGN:x
+        {: RESULT = Located.of(x, c4.ast.MulAssign$.MODULE$); :}
+      | DIV_ASSIGN:x
+        {: RESULT = Located.of(x, c4.ast.DivAssign$.MODULE$); :}
+      | MOD_ASSIGN:x
+        {: RESULT = Located.of(x, c4.ast.ModAssign$.MODULE$); :}
+      | ADD_ASSIGN:x
+        {: RESULT = Located.of(x, c4.ast.AddAssign$.MODULE$); :}
+      | SUB_ASSIGN:x
+        {: RESULT = Located.of(x, c4.ast.SubAssign$.MODULE$); :}
+      | LSHIFT_ASSIGN:x
+        {: RESULT = Located.of(x, c4.ast.LShiftAssign$.MODULE$); :}
+      | RSHIFT_ASSIGN:x
+        {: RESULT = Located.of(x, c4.ast.RShiftAssign$.MODULE$); :}
+      | B_AND_ASSIGN:x
+        {: RESULT = Located.of(x, c4.ast.BinaryAndAssign$.MODULE$); :}
+      | XOR_ASSIGN:x
+        {: RESULT = Located.of(x, c4.ast.XorAssign$.MODULE$); :}
+      | B_OR_ASSIGN:x
+        {: RESULT = Located.of(x, c4.ast.BinaryOrAssign$.MODULE$); :}
       ;
 
 unary_expression // Located<Expr>
-    ::= postfix_expression
-      | INC unary_expression
-      | DEC unary_expression
-      | B_AND cast_expression
-      | STAR  cast_expression
-      | ADD   cast_expression
-      | SUB   cast_expression
-      | TILDE cast_expression
-      | L_NOT cast_expression
-      | SIZEOF unary_expression
-      | SIZEOF LPAREN type_name RPAREN
+    ::= postfix_expression:e {: RESULT = e; :}
+      | INC:op unary_expression:e
+        {: RESULT = Located.of(op, e.loc(),
+            new UnaryExpr(e, Located.of(op, c4.ast.PrefixInc$.MODULE$))); :}
+      | DEC:op unary_expression:e
+        {: RESULT = Located.of(op, e.loc(),
+            new UnaryExpr(e, Located.of(op, c4.ast.PrefixDec$.MODULE$))); :}
+      | B_AND:op cast_expression:e
+        {: RESULT = Located.of(op, e.loc(),
+            new UnaryExpr(e, Located.of(op, c4.ast.Ref$.MODULE$))); :}
+      | STAR:op  cast_expression:e
+        {: RESULT = Located.of(op, e.loc(),
+            new UnaryExpr(e, Located.of(op, c4.ast.Deref$.MODULE$))); :}
+      | ADD:op   cast_expression:e
+        {: RESULT = Located.of(op, e.loc(),
+            new UnaryExpr(e, Located.of(op, c4.ast.Pos$.MODULE$))); :}
+      | SUB:op   cast_expression:e
+        {: RESULT = Located.of(op, e.loc(),
+            new UnaryExpr(e, Located.of(op, c4.ast.Neg$.MODULE$))); :}
+      | TILDE:op cast_expression:e
+        {: RESULT = Located.of(op, e.loc(),
+            new UnaryExpr(e, Located.of(op, c4.ast.BitNot$.MODULE$))); :}
+      | L_NOT:op cast_expression:e
+        {: RESULT = Located.of(op, e.loc(),
+            new UnaryExpr(e, Located.of(op, c4.ast.LogicNot$.MODULE$))); :}
+      | SIZEOF:op unary_expression:e
+        {: RESULT = Located.of(op, e.loc(), new SizeofValExpr(e)); :}
+      | SIZEOF:b LPAREN type_name:tp RPAREN:e
+        {: RESULT = Located.of(b, e, new SizeofTypeExpr(tp)); :}
       ;
 
 postfix_expression // Located<Expr>
-    ::= primary_expression
-      | postfix_expression LSBRKT expression RSBRKT
-      | postfix_expression LPAREN argument_expression_list RPAREN
-      | postfix_expression LPAREN                          RPAREN
-      | postfix_expression DOT ID
-      | postfix_expression PTR ID
-      | postfix_expression INC
-      | postfix_expression DEC
+    ::= primary_expression:e {: RESULT = e; :}
+      | postfix_expression:e LSBRKT expression:sub RSBRKT:end
+        {: RESULT = Located.of(e.loc(), end, new ArrSubExpr(e, sub)); :}
+      | postfix_expression:e LPAREN argument_expression_list:args RPAREN:end
+        {: RESULT = Located.of(e.loc(), end, new FunCallExpr(e, args)); :}
+      | postfix_expression:e LPAREN                               RPAREN:end
+        {: RESULT = Located.of(e.loc(), end, new FunCallExpr(e, seq())); :}
+      | postfix_expression:e DOT ID:id
+        {: RESULT = Located.of(e.loc(), id.loc(), new DotExpr(e, id)); :}
+      | postfix_expression:e PTR ID:id
+        {: RESULT = Located.of(e.loc(), id.loc(), new PtrExpr(e, id)); :}
+      | postfix_expression:e INC:op
+        {: RESULT = Located.of(e.loc(), op,
+            new UnaryExpr(e, Located.of(op, c4.ast.PostfixInc$.MODULE$))); :}
+      | postfix_expression:e DEC:op
+        {: RESULT = Located.of(e.loc(), op,
+            new UnaryExpr(e, Located.of(op, c4.ast.PostfixDec$.MODULE$))); :}
       ;
 
-argument_expression_list
-    ::=                                assignment_expression
-      | argument_expression_list COMMA assignment_expression
+argument_expression_list // Seq[L[Expr]]
+    ::=                                   assignment_expression:x
+        {: RESULT = JavaUtils.seq(x); :}
+      | argument_expression_list:xs COMMA assignment_expression:x
+        {: RESULT = JavaUtils.append(xs, x); :}
       ;
 
 cast_expression // Located<Expr>
     ::= unary_expression:e {: RESULT = e; :}
-      | LPAREN type_name RPAREN cast_expression
+      | LPAREN:b type_name:tn RPAREN cast_expression:e
+        {: RESULT = Located.of(b, e.loc(), new CastExpr(tn, e)); :}
       ;
 
 primary_expression // Located<Expr>
