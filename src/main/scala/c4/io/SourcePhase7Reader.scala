@@ -153,7 +153,7 @@ case object Tok_|= extends Tok(Sym.B_OR_ASSIGN)
  */
 class SourcePhase7Reader(val warnings: ArrayBuffer[Message],
                          val fileName: String) {
-  private[this] var tokens: Seq[L[Tok]] = {
+  private var tokens: Seq[L[Tok]] = {
     PPReader
       .read(warnings, fileName)
       .foldLeft(Seq.empty[L[Tok]]) { (acc: Seq[L[Tok]], ppTok: L[PPTok]) =>

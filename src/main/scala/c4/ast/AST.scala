@@ -3,6 +3,11 @@ package c4.ast
 import c4.io._
 import c4.util.{Loc, LocRange, Located => L}
 
+object AST {
+  type TranslationUnit = Seq[L[ExternalDecl]]
+  type ExternalDecl = Either[L[FunctionDef], L[Declaration]]
+}
+
 sealed abstract class UnaryOp
 object PrefixInc extends UnaryOp // ++n
 object PrefixDec extends UnaryOp // --n
@@ -71,6 +76,7 @@ final case class BinaryExpr(e1: L[Expr], e2: L[Expr], op: L[BinaryOp])
 final case class TernaryExpr(cond: L[Expr], thenE: L[Expr], elseE: L[Expr])
   extends Expr
 
+// importing those type specifiers will mask scala's Int, Long, etc.
 sealed abstract class TypeSpecifier
 object Void extends TypeSpecifier
 object Char extends TypeSpecifier

@@ -6,10 +6,16 @@ final case class Located[+T](loc: Loc, value: T) {
 
 object Located {
   def of[T](begin: Loc, end: Loc, value: T): Located[T] = {
-    Located(LocRange.of(begin, end), value)
+    if (begin == end) {
+      Located(begin, value)
+    } else {
+      Located(LocRange.of(begin, end), value)
+    }
   }
 
   def of[T](loc: Loc, value: T): Located[T] = Located(loc, value) // for Java
+
+  def unit(loc: Loc): Located[Unit] = Located.of(loc, ())
 }
 
 sealed abstract class Loc
