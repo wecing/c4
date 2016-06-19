@@ -50,9 +50,10 @@ final case class T_struct(id: Int) extends Type[Nothing]
 final case class T_union(id: Int) extends Type[Nothing]
 final case class T_enum(id: Int) extends Type[Nothing]
 
+// the Option[C[Unit]] in argTps: isRegister?
 final case class T_func[C[X]](
     retTp: C[QType[C]],
-    argTps: Seq[C[QType[C]]],
+    args: Seq[(Option[C[Unit]], C[QType[C]])],
     varargs: Option[C[Unit]]) extends Type[C]
 
 final case class T_ptr[C[X]](tp: C[QType[C]]) extends Type[C]
@@ -61,11 +62,20 @@ final case class T_ptr[C[X]](tp: C[QType[C]]) extends Type[C]
 
 final case class QType[C[X]](qs: TypeQualifiers[C], tp: C[Type[C]])
 
-final case class TypeQualifiers[C[X]](
+final case class TypeQualifiers[+C[X]](
   isConst: Option[C[Unit]],
   isVolatile: Option[C[Unit]])
 
-final case class SuField[C[X]](name: Option[C[String]], tp: C[QType[C]], bitFieldSize: C[Int])
+object TypeQualifiers {
+  val None = TypeQualifiers(scala.None, scala.None)
+}
+
+///// Sue Defn /////
+
+final case class SuField[C[X]](
+  name: Option[C[String]],
+  tp: C[QType[C]],
+  bitFieldSize: Option[C[Int]])
 
 final case class StructDefn[C[X]](
     name: Option[C[String]],
@@ -73,5 +83,4 @@ final case class StructDefn[C[X]](
   // size: Int
   // offset: [Int]
   // alignment: Int
-  // defnloc: C[Unit]
 }
