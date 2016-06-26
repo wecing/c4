@@ -23,7 +23,7 @@ import scala.language.higherKinds
 //    FeatureRichLocated <: Located
 // then it is natual to have:
 //    Type[FeatureRichLocated] <: Type[Located]
-// so Type must be variant, i.e. Type[+C[X]].
+// so Type must be variant, i.e. Type[+C[_]].
 // given that, since we want:
 //    T_void <: Type[Id]
 //    T_void <: Type[Located]
@@ -32,37 +32,37 @@ import scala.language.higherKinds
 
 ///// Type /////
 
-sealed abstract class Type[+C[X]]
-object T_void extends Type[Nothing]
-object T_i8 extends Type[Nothing]
-object T_u8 extends Type[Nothing]
-object T_i16 extends Type[Nothing]
-object T_u16 extends Type[Nothing]
-object T_i32 extends Type[Nothing]
-object T_u32 extends Type[Nothing]
-object T_i64 extends Type[Nothing]
-object T_u64 extends Type[Nothing]
-object T_float extends Type[Nothing]
-object T_double extends Type[Nothing]
-object T_fp80 extends Type[Nothing] // x86's "long double"
+sealed abstract class Type[+C[_]]
+case object T_void extends Type[Nothing]
+case object T_i8 extends Type[Nothing]
+case object T_u8 extends Type[Nothing]
+case object T_i16 extends Type[Nothing]
+case object T_u16 extends Type[Nothing]
+case object T_i32 extends Type[Nothing]
+case object T_u32 extends Type[Nothing]
+case object T_i64 extends Type[Nothing]
+case object T_u64 extends Type[Nothing]
+case object T_float extends Type[Nothing]
+case object T_double extends Type[Nothing]
+case object T_fp80 extends Type[Nothing] // x86's "long double"
 
 final case class T_struct(id: Int) extends Type[Nothing]
 final case class T_union(id: Int) extends Type[Nothing]
 final case class T_enum(id: Int) extends Type[Nothing]
 
 // the Option[C[Unit]] in argTps: isRegister?
-final case class T_func[C[X]](
+final case class T_func[C[_]](
     retTp: C[QType[C]],
     args: Seq[(Option[C[Unit]], C[QType[C]])],
     varargs: Option[C[Unit]]) extends Type[C]
 
-final case class T_ptr[C[X]](tp: C[QType[C]]) extends Type[C]
+final case class T_ptr[C[_]](tp: C[QType[C]]) extends Type[C]
 
 ///// Qualified Type /////
 
-final case class QType[C[X]](qs: TypeQualifiers[C], tp: C[Type[C]])
+final case class QType[C[_]](qs: TypeQualifiers[C], tp: C[Type[C]])
 
-final case class TypeQualifiers[+C[X]](
+final case class TypeQualifiers[+C[_]](
   isConst: Option[C[Unit]],
   isVolatile: Option[C[Unit]])
 
@@ -72,12 +72,12 @@ object TypeQualifiers {
 
 ///// Sue Defn /////
 
-final case class SuField[C[X]](
+final case class SuField[C[_]](
   name: Option[C[String]],
   tp: C[QType[C]],
   bitFieldSize: Option[C[Int]])
 
-final case class StructDefn[C[X]](
+final case class StructDefn[C[_]](
     name: Option[C[String]],
     body: Option[Seq[C[SuField[C]]]]) {
   // size: Int

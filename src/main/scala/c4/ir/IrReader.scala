@@ -151,7 +151,9 @@ class IrReader private (val warnings: ArrayBuffer[Message],
       }
 
       val (isRegister: Option[L[Unit]], baseTp: L[QType[L]]) = {
-        _extractDSS(newScope, dss, ld.loc).value match {
+        // pretend there is a declarator, so 'struct T' always
+        // refer to previously defined 'struct T'.
+        _extractDSS(newScope, dss, ld.loc, true).value match {
           case (Some(L(loc, Register)), lqtp) =>
             Some(L.unit(loc)) -> lqtp
           case (Some(L(loc, q)), _) =>
@@ -281,7 +283,9 @@ class IrReader private (val warnings: ArrayBuffer[Message],
         val tqs = ltqs.foldLeft(TypeQualifiers[L](None, None)) { (acc, lq) =>
           mergeTypeQualifiers(acc, lq)
         }
-        _toQType(newScope, ltss, lss.loc, tqs)
+        // pretend there is a declarator, so 'struct T' always
+        // refer to previously defined 'struct T'.
+        _toQType(newScope, ltss, lss.loc, tqs, true)
       }
 
       for ((ldOpt: Option[L[Declarator]],
@@ -421,7 +425,8 @@ class IrReader private (val warnings: ArrayBuffer[Message],
       scope: Scope,
       ltss: Seq[L[TypeSpecifier]],
       fallbackLoc: Loc,
-      qs: TypeQualifiers[L]
+      qs: TypeQualifiers[L],
+      hasDeclarator: Boolean
   ): L[QType[L]] = {
     val loc = ltss.map(_.loc) match {
       case Seq() =>
@@ -450,7 +455,7 @@ class IrReader private (val warnings: ArrayBuffer[Message],
       case Seq(Double)                                        => Q(T_double)
       case Seq(Long, Double)                                  => Q(T_fp80)
       case Seq(ss: StructSpecifier) =>
-        ??? // Q(_toIrStruct(scope, L(loc, ss))) // TODO: struct
+        Q(_toIrSue(scope, L(loc, ss), hasDeclarator))
       case Seq(us: UnionSpecifier) =>
         ??? // TODO: union
       case Seq(es: EnumSpecifier) =>
@@ -471,7 +476,8 @@ class IrReader private (val warnings: ArrayBuffer[Message],
   private def _extractDSS(
       scope: Scope,
       dss: Seq[L[DeclarationSpecifier]],
-      fallbackLoc: Loc
+      fallbackLoc: Loc,
+      hasDeclarator: Boolean
   ): L[(Option[L[StorageClassSpecifier]], L[QType[L]])] = {
     val storageClassAst: Seq[L[StorageClassSpecifier]] = dss.collect {
       case L(_, x: DeclarationSpecifierStorageClass) => x.scs
@@ -499,7 +505,9 @@ class IrReader private (val warnings: ArrayBuffer[Message],
       case Seq() => fallbackLoc
       case _ => LocRange.of(dss.head.loc, dss.last.loc)
     }
-    val lqtp = _toQType(scope, typeSpecifiersAst, fallbackLoc, typeQualifiers)
+    val lqtp = _toQType(
+      scope, typeSpecifiersAst, fallbackLoc, typeQualifiers, hasDeclarator)
+
     L(loc, storageClass -> lqtp)
   }
 
@@ -509,7 +517,9 @@ class IrReader private (val warnings: ArrayBuffer[Message],
       case Left(L(loc, fDef: FunctionDef)) =>
         // TODO: FunctionDef
       case Right(L(declLoc, decl: Declaration)) =>
-        val dssExt = _extractDSS(scope, decl.dss, declLoc)
+        val hasDeclarator =
+          decl.ids.getOrElse(Seq.empty).exists { _._2.isDefined }
+        val dssExt = _extractDSS(scope, decl.dss, declLoc, hasDeclarator)
         val scsOpt: Option[L[StorageClassSpecifier]] = dssExt.value._1
         val baseTp: L[QType[L]] = dssExt.value._2
 
