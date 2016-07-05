@@ -50,9 +50,11 @@ object IrReader {
     def this(scope: Scope) = this(Some(scope), None)
     def this(scope: Scope, x: Option[String]) = this(Some(scope), x)
 
-    val nextId: AtomicInteger = {
-      _outer.map(_.nextId).getOrElse(new AtomicInteger(1))
+    private val _nextId: AtomicInteger = {
+      _outer.map(_._nextId).getOrElse(new AtomicInteger(1))
     }
+
+    def nextId(): Int = _nextId.getAndAdd(1)
 
     // name spaces:
     // - label names
@@ -71,9 +73,18 @@ object IrReader {
     // - all other identifiers, called ordinary identifiers
     val nsOrdinary: mutable.Map[String, OrdinaryType.Value] = mutable.Map()
     val typedefs: mutable.Map[String, QType[L]] = mutable.Map()
+    // variables map does not overlap with rootFuncDefs.
+    val variables: mutable.Map[String, (Int, QType[cats.Id])] = mutable.Map()
 
     val outer: Option[Scope] = _outer
     val isFileScope: Boolean = _outer.isEmpty
+
+    // 'void f(void)' => in rootFuncDefs only
+    // 'void (*f)(void)' => in variables only
+    val rootFuncDefs: mutable.Map[String, L[FuncDefn[L]]] =
+      outer map { _.rootFuncDefs } getOrElse mutable.Map()
+    val basicBlocks: mutable.Map[Int, BasicBlock] =
+      outer map { _.basicBlocks } getOrElse mutable.Map()
 
     // for detecting nested redefinitions, like:
     //    struct T { struct T {int x;} tt; };
@@ -127,6 +138,18 @@ class IrReader private (val warnings: ArrayBuffer[Message],
     val fileScope = new Scope(None)
     for (ed <- root) {
       _visitExternalDecl(fileScope, ed)
+    }
+
+    for ((_, bb) <- fileScope.basicBlocks.iterator) {
+      println()
+      println(bb)
+      for (inst <- bb.getInsts) {
+        val s = inst match {
+          case Left((a, b)) => s"%$b = $a"
+          case Right(a) => a
+        }
+        println("  " + s)
+      }
     }
   }
 
@@ -217,7 +240,7 @@ class IrReader private (val warnings: ArrayBuffer[Message],
         x.params match {
           case None => ??? // TODO: empty params list
           case Some((ps: Seq[L[ParamDeclaration]], ellipsis: Option[Loc])) =>
-            val args = _extractFuncArgs(new Scope(scope), ps).map(selectFst2)
+            val args = _extractFuncArgs(new Scope(scope), ps)
             val funcTp: Type[L] = T_func(lqtp, args, ellipsis.map(L.of(_, ())))
             val lqFuncTp: L[QType[L]] =
               L(ldad.loc, QType(TypeQualifiers.None, L(ldad.loc, funcTp)))
@@ -252,8 +275,13 @@ class IrReader private (val warnings: ArrayBuffer[Message],
       case DirectDeclaratorArray(_, _) =>
         ??? // TODO: array
       case DirectDeclaratorFuncTypes(_ldd, paramTypes, ellipsis) =>
-        val tps = _extractFuncArgs(new Scope(scope), paramTypes).map(selectFst2)
+        val tps = _extractFuncArgs(new Scope(scope), paramTypes)
         val funcTp: Type[L] = T_func(lqtp, tps, ellipsis.map(L(_, ())))
+        val funcTpQL: L[QType[L]] =
+          L(ldd.loc, QType(TypeQualifiers.None, L(ldd.loc, funcTp)))
+        unpackDirectDeclarator(scope, funcTpQL, _ldd)
+      case DirectDeclaratorIdsList(_ldd, Seq()) =>
+        val funcTp: Type[L] = T_func_unspecified(lqtp)
         val funcTpQL: L[QType[L]] =
           L(ldd.loc, QType(TypeQualifiers.None, L(ldd.loc, funcTp)))
         unpackDirectDeclarator(scope, funcTpQL, _ldd)
@@ -393,10 +421,10 @@ class IrReader private (val warnings: ArrayBuffer[Message],
           case (true, Some((_, id))) =>
             SueType.ir(sueType, id)
           case _ =>
-            declInCurScope(nameLoc, sueType, scope.nextId.getAndAdd(1))
+            declInCurScope(nameLoc, sueType, scope.nextId())
         }
       case (None, false) =>
-        updateSueDefn(scope.nextId.getAndAdd(1))
+        updateSueDefn(scope.nextId)
       case (Some(nameLoc@L(_, name)), false) =>
         scope.nsSue.get(name) match {
           case Some((sueTp, id)) if sueTp != sueType =>
@@ -414,7 +442,7 @@ class IrReader private (val warnings: ArrayBuffer[Message],
             }
             updateSueDefn(id)
           case _ =>
-            val id = scope.nextId.getAndAdd(1)
+            val id = scope.nextId()
             declInCurScope(nameLoc, sueType, id)
             updateSueDefn(id)
         }
@@ -516,6 +544,88 @@ class IrReader private (val warnings: ArrayBuffer[Message],
     ed.value match {
       case Left(L(loc, fDef: FunctionDef)) =>
         // TODO: FunctionDef
+        val dssExt = _extractDSS(scope, fDef.dss, loc, true)
+        val scsOpt: Option[L[StorageClassSpecifier]] = dssExt.value._1
+        val linkage: L[Linkage.Value] = scsOpt match {
+          case None => L(loc, Linkage.External)
+          case Some(L(_loc, Static)) => L(_loc, Linkage.Internal)
+          case Some(L(_loc, Extern)) => L(_loc, Linkage.External)
+          case Some(L(_loc, scs)) =>
+            throw IllegalSourceException(
+              _loc, s"storage class $scs cannot be applied to functions")
+        }
+        val baseTp: L[QType[L]] = dssExt.value._2
+        val (tpRaw: L[QType[L]], id: L[String]) =
+          _unpackDeclarator(scope, baseTp, fDef.d)
+
+        // TODO:
+        // fDef.dl is only meaningful when the function's arguments' types
+        // are not specified; e.g. "int f(x, y)".
+
+        val (tp: L[QType[L]], args: Seq[(L[QType[L]], Option[L[String]])]) = {
+          tpRaw match {
+            case L(x, QType(y, L(z, w: T_func[L]))) =>
+              L(x, QType[L](y, L(z, w))) -> w.args.map(p => p._2 -> p._3)
+            case L(x, QType(y, L(z, w: T_func_unspecified[L]))) =>
+              L(x, QType[L](y, L(z, T_func[L](w.retTp, Seq(), None)))) -> Seq()
+            case _ =>
+              throw ProgrammingError()
+          }
+        }
+        val funcTp = tp.value.tp.asInstanceOf[L[T_func[L]]]
+
+        scope.nsOrdinary.put(id.value, OrdinaryType.Variable)
+        scope.rootFuncDefs.get(id.value) match {
+          case None =>
+            scope.rootFuncDefs.put(id.value,
+              L(loc, FuncDefn(linkage, funcTp, None)))
+          case Some(L(_loc, oldDefn: FuncDefn[L])) =>
+            val newLinkage: L[Linkage.Value] = {
+              oldDefn.linkage.value match {
+                case Linkage.External => linkage
+                case Linkage.Internal => oldDefn.linkage
+              }
+            }
+            // TODO: arguments' compatible types
+            if (oldDefn.entry.isDefined) {
+              throw IllegalSourceException(loc, s"redefinition of ${id.value}")
+            }
+            // TODO: update tp as well
+            scope.rootFuncDefs.put(id.value,
+              L(_loc, oldDefn.copy(linkage = newLinkage)))
+        }
+
+
+        val newScope = new Scope(scope)
+
+        val bb = new BasicBlock(newScope.nextId())
+        newScope.basicBlocks.put(bb.id, bb)
+        for ((tp: L[QType[L]], name: Option[L[String]]) <- args) {
+          name match {
+            case None => ()
+            case Some(L(_, nm)) =>
+              val deLocTp = QType.deLoc(tp.value)
+              val reg = newScope.nextId()
+              bb.addInst(Left(InstAlloca(deLocTp), reg))
+              bb.addInst(Right(InstStoreArg(nm, deLocTp, reg)))
+              newScope.nsOrdinary.put(nm, OrdinaryType.Variable)
+              newScope.variables.put(nm, reg -> deLocTp)
+          }
+        }
+
+        // ??? // TODO: generate the rest of bb
+
+        scope.rootFuncDefs.put(
+          id.value,
+          scope.rootFuncDefs(id.value).map {
+            _.copy(entry = Some(bb.id))
+          })
+
+        {
+          val f = scope.rootFuncDefs(id.value).value
+          println(s"${f.linkage.value} func ${id.value}: " +
+            s"${QType.deLoc(f.tp)} = ${f.entry}")
+        }
       case Right(L(declLoc, decl: Declaration)) =>
         val hasDeclarator =
           decl.ids.getOrElse(Seq.empty).exists { _._2.isDefined }
@@ -529,7 +639,8 @@ class IrReader private (val warnings: ArrayBuffer[Message],
             val t = _unpackDeclarator(scope, baseTp, ld)
             val (tp: L[QType[L]], id: L[String]) = t
             // TODO: tp, id, init
-            println(s"tp=<$tp>, id=<$id>, init=<$init>")
+            // TODO: for "int x(void)", update rootFuncDefs, not variables
+            // println(s"tp=<$tp>, id=<$id>, init=<$init>")
           }
         }
     }
