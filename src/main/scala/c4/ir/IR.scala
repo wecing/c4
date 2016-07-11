@@ -69,8 +69,7 @@ final case class T_ptr[C[_]](tp: C[QType[C]]) extends Type[C]
 
 ///// Qualified Type /////
 
-final case class QType[C[_]](qs: TypeQualifiers[C], tp: C[Type[C]]) {
-}
+final case class QType[C[_]](qs: TypeQualifiers[C], tp: C[Type[C]])
 
 final case class TypeQualifiers[+C[_]](
   isConst: Option[C[Unit]],
@@ -155,14 +154,25 @@ object QType {
     QType[Id](deLoc(qt.qs), deLoc(qt.tp))
 }
 
-sealed abstract class Instruction(hasRet: Boolean)
+sealed abstract class Instruction(hasRet: Boolean) {
+  def pretty: String
+}
 sealed abstract class InstructionWithRet(tp: Type[Id]) extends Instruction(true)
 sealed abstract class InstructionNoRet extends Instruction(false)
 
-final case class InstAlloca(tp: QType[Id])
-  extends InstructionWithRet(T_ptr[Id](tp))
-final case class InstStoreArg(argName: String, argTp: QType[Id], dest: Int)
-  extends InstructionNoRet
+final case class InstAlloca(tp: Type[Id])
+    extends InstructionWithRet(T_ptr[Id](QType[Id](TypeQualifiers.None, tp))) {
+  override def pretty = s"alloca $tp"
+}
+final case class InstStoreArg(argName: String, argTp: Type[Id], dst: Int)
+    extends InstructionNoRet {
+  override def pretty = s"storeArg $argTp '$argName' %$dst"
+}
+
+sealed trait JmpInst
+final case class InstBr(bbId: Int) extends InstructionNoRet with JmpInst {
+  override def pretty = s"br $bbId"
+}
 
 final class BasicBlock(val id: Int) {
   type Inst = Either[(InstructionWithRet, Int), InstructionNoRet]
@@ -171,7 +181,12 @@ final class BasicBlock(val id: Int) {
   def addInst(inst: Inst): this.type = { insts = insts :+ inst; this }
   def getInsts = insts
 
-  // TODO: br (jmp, if, switch)
+  // jmp (br, if, switch)
+  private var _jmpInst: Option[JmpInst] = None
+  def setJmp(j: JmpInst): Unit = {
+    _jmpInst = Some(j)
+  }
+  def getJmpInst = _jmpInst
 
   override def toString = s"BasicBlock($id)"
 }

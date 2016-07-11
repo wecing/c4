@@ -44,7 +44,7 @@ object IrReader {
   }
 
   private class Scope(
-      _outer: Option[Scope],
+      val _outer: Option[Scope],
       _curBeingDefinedSueName: Option[String] = None
   ) {
     def this(scope: Scope) = this(Some(scope), None)
@@ -58,6 +58,17 @@ object IrReader {
 
     // name spaces:
     // - label names
+    val labels: mutable.Map[String, Int] = _outer match {
+      // all scopes within the same function share the same <labels> map
+      // root: _outer = None
+      // funcBody: _outer._outer = None
+      case None => null
+      case Some(s) =>
+        s._outer match {
+          case None => mutable.Map[String, Int]()
+          case Some(ss) => ss.labels
+        }
+    }
     // - name of structures, unions, and enumerations
     val nsSue: mutable.Map[String, (SueType.Value, Int)] = mutable.Map()
     // lazy val nsSueOuterScopes: Map[String, (SueType.Value, Int)] = {
@@ -74,7 +85,8 @@ object IrReader {
     val nsOrdinary: mutable.Map[String, OrdinaryType.Value] = mutable.Map()
     val typedefs: mutable.Map[String, QType[L]] = mutable.Map()
     // variables map does not overlap with rootFuncDefs.
-    val variables: mutable.Map[String, (Int, QType[cats.Id])] = mutable.Map()
+    // T variables are saved in (T*) buffers.
+    val variables: mutable.Map[String, (Int, Type[cats.Id])] = mutable.Map()
 
     val outer: Option[Scope] = _outer
     val isFileScope: Boolean = _outer.isEmpty
@@ -141,12 +153,11 @@ class IrReader private (val warnings: ArrayBuffer[Message],
     }
 
     for ((_, bb) <- fileScope.basicBlocks.iterator) {
-      println()
-      println(bb)
+      println(s"\nBasicBlock(${bb.id})")
       for (inst <- bb.getInsts) {
         val s = inst match {
-          case Left((a, b)) => s"%$b = $a"
-          case Right(a) => a
+          case Left((a, b)) => s"%$b = ${a.pretty}"
+          case Right(a) => a.pretty
         }
         println("  " + s)
       }
@@ -501,6 +512,15 @@ class IrReader private (val warnings: ArrayBuffer[Message],
     }
   }
 
+  private def _genBlock(
+      newScope: Scope,
+      bb: BasicBlock,
+      retTp: L[Type[L]],
+      body: L[CompoundStmt]
+  ): BasicBlock = {
+    ??? // TODO
+  }
+
   private def _extractDSS(
       scope: Scope,
       dss: Seq[L[DeclarationSpecifier]],
@@ -606,20 +626,22 @@ class IrReader private (val warnings: ArrayBuffer[Message],
             case Some(L(_, nm)) =>
               val deLocTp = QType.deLoc(tp.value)
               val reg = newScope.nextId()
-              bb.addInst(Left(InstAlloca(deLocTp), reg))
-              bb.addInst(Right(InstStoreArg(nm, deLocTp, reg)))
+              // %5 = alloca i64
+              // storeArg i64 "x" %5
+              bb.addInst(Left(InstAlloca(deLocTp.tp) -> reg))
+              bb.addInst(Right(InstStoreArg(nm, deLocTp.tp, reg)))
               newScope.nsOrdinary.put(nm, OrdinaryType.Variable)
-              newScope.variables.put(nm, reg -> deLocTp)
+              newScope.variables.put(nm, reg -> deLocTp.tp)
           }
         }
 
-        // ??? // TODO: generate the rest of bb
+        // generate the rest of bb
+        _genBlock(newScope, bb, funcTp.value.retTp.value.tp, fDef.body)
 
         scope.rootFuncDefs.put(
           id.value,
-          scope.rootFuncDefs(id.value).map {
-            _.copy(entry = Some(bb.id))
-          })
+          scope.rootFuncDefs(id.value).map { _.copy(entry = Some(bb.id)) }
+        )
 
         {
           val f = scope.rootFuncDefs(id.value).value
