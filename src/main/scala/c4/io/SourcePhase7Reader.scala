@@ -1,6 +1,6 @@
 package c4.io
 
-import c4.ast.{CupSymbols => Sym}
+import c4.ast.{C4Symbols => Sym}
 import c4.messaging.{IllegalSourceException, Message, SimpleMessage}
 import c4.util.{Located, TextUtils}
 import c4.util.legacy.{Located => L}

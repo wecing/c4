@@ -2,7 +2,7 @@ package c4
 
 import java.io.FileNotFoundException
 
-import c4.ast.{AST, C4Scanner, CupParser}
+import c4.ast.{AST, C4Scanner, C4Parser}
 import c4.io.SourcePhase7Reader
 import c4.ir.IrReader
 import c4.messaging.{IllegalSourceException, Message}
@@ -20,7 +20,7 @@ object Main {
     try {
       val warnings: ArrayBuffer[Message] = ArrayBuffer.empty
       val reader = new SourcePhase7Reader(warnings, args(0))
-      val parser = new CupParser(new C4Scanner(reader))
+      val parser = new C4Parser(new C4Scanner(reader))
       val ast = parser.parse().value.asInstanceOf[AST.TranslationUnit]
       IrReader.fromAst(warnings, ast)
 

@@ -11,18 +11,18 @@ import scala.collection.mutable.ArrayBuffer
 class SourcePhase7ReaderTest extends FlatSpec with Matchers {
   it should "pass tcc's pp tests" in {
     // TODO: ## not yet fully implemented
-    // checkPP("/pp/01.c", "/pp/01.expect")
-    checkPP("/pp/02.c", "/pp/02.expect")
-    checkPP("/pp/03.c", "/pp/03.expect")
-    checkPP("/pp/04.c", "/pp/04.expect")
+    // checkPP("01.c", "01.expect")
+    checkPP("02.c", "02.expect")
+    checkPP("03.c", "03.expect")
+    checkPP("04.c", "04.expect")
     // TODO: ## not yet fully implemented
-    // checkPP("/pp/05.c", "/pp/05.expect")
-    checkPP("/pp/06.c", "/pp/06.expect")
-    checkPP("/pp/07.c", "/pp/07.expect")
-    checkPP("/pp/08.c", "/pp/08.expect")
+    // checkPP("05.c", "05.expect")
+    checkPP("06.c", "06.expect")
+    checkPP("07.c", "07.expect")
+    checkPP("08.c", "08.expect")
     // TODO: is "a##b##c" allowed in c89?
-    // checkPP("/pp/09.c", "/pp/09.expect")
-    checkPP("/pp/10.c", "/pp/10.expect")
+    // checkPP("09.c", "09.expect")
+    checkPP("10.c", "10.expect")
   }
 
   // TODO: more Phase7Reader specific tests here?
@@ -31,10 +31,12 @@ class SourcePhase7ReaderTest extends FlatSpec with Matchers {
     val srcWarnings: ArrayBuffer[Message] = ArrayBuffer.empty
     val expectedWarnings: ArrayBuffer[Message] = ArrayBuffer.empty
 
-    val srcUrl: URL = getClass.getResource(srcPath)
+    val pathPrefix = "/src/test/scala/c4/io/pp_test_data/"
+
+    val srcUrl: URL = getClass.getResource(pathPrefix + srcPath)
     val tempSrcPath: String = TestUtil.createTempFile(srcUrl)
 
-    val expUrl: URL = getClass.getResource(expectedPath)
+    val expUrl: URL = getClass.getResource(pathPrefix + expectedPath)
     val tempExpPath: String = TestUtil.createTempFile(expUrl)
 
     try {

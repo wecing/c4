@@ -29,13 +29,13 @@ class C4Scanner(val reader: SourcePhase7Reader) extends Scanner {
   @throws(classOf[java.lang.Exception])
   override def next_token(): Symbol = {
     reader.get() match {
-      case None => new Symbol(CupSymbols.EOF)
+      case None => new Symbol(C4Symbols.EOF)
       case Some(located) => located.value match {
         case tok: TokId =>
           if (isTypedefName(tok.id)) {
-            new Symbol(CupSymbols.TYPEDEF_NAME, located)
+            new Symbol(C4Symbols.TYPEDEF_NAME, located)
           } else {
-            new Symbol(CupSymbols.ID, located)
+            new Symbol(C4Symbols.ID, located)
           }
         case tok: TokInteger    => new Symbol(tok.cupSymbol, located)
         case tok: TokFloat      => new Symbol(tok.cupSymbol, located)

@@ -1,10 +1,3 @@
-/*
-  To generator parser, use:
-
-  java -jar src/main/resources/java-cup-11b.jar \
-       -parser CupParser -symbols CupSymbols -destdir src/main/java/c4/ast/ \
-       src/main/resources/parser.cup
-*/
 package c4.ast;
 
 import java.math.BigInteger;
@@ -27,7 +20,7 @@ parser code {:
   @Override public void syntax_error(Symbol cur_token) {
     String tokenRepr = "<unknown>";
     if (0 <= cur_token.sym) {
-      tokenRepr = CupSymbols.terminalNames[cur_token.sym];
+      tokenRepr = C4Symbols.terminalNames[cur_token.sym];
     }
     tokenRepr += ", " + cur_token.value;
 
