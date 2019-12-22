@@ -1,3 +1,11 @@
+# managed by https://github.com/johnynek/bazel-deps
+#
+# To regenerate //third_party, clone bazel-deps and run:
+#     bazel run :parse generate -- \
+#         --repo-root ${C4_DIR} \
+#         --sha-file third_party/workspace.bzl \
+#         --deps dependencies.yaml
+
 options:
   buildHeader: [ "load(\"@io_bazel_rules_scala//scala:scala_import.bzl\", \"scala_import\")",
     "load(\"@io_bazel_rules_scala//scala:scala.bzl\", \"scala_library\")" ]
