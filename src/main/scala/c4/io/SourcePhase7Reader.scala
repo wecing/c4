@@ -150,6 +150,9 @@ case object Tok_|= extends Tok(Sym.B_OR_ASSIGN)
 
 /**
  * Translation phase 5, 6, 7.
+ *
+ * C89 translation phase 7 includes parsing / code generation, but this class
+ * does not.
  */
 class SourcePhase7Reader(val warnings: ArrayBuffer[Message],
                          val fileName: String) {

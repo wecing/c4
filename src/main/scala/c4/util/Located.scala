@@ -2,6 +2,9 @@ package c4.util
 
 import cats._
 
+// TODO: this version of Located probably is still incorrect. how should we
+// handle different levels of #include chains and #define macros?
+
 final case class Located[+T](loc: Loc, value: T) {
   def map[P](f: (T => P)): Located[P] = Located(loc, f(value))
 
