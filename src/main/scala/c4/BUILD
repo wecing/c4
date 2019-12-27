@@ -4,6 +4,7 @@ scala_library(
     name = "lib",
     srcs = glob(["**/*.scala"]) + ["//src/main/resources:gen_parser"],
     deps = [
+        "//src/main/resources:ast_scala_proto",
         "//third_party/com/github/vbmacher:java_cup_runtime",
         "//third_party/org/typelevel:cats_core",
     ],
