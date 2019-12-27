@@ -42,7 +42,7 @@ private final class ProtoConverter {
   def _toList[T](m: mutable.Map[T, Int], fst: T): Seq[T] = {
     val reversed = for ((k, v) <- m) yield (v, k)
     val xs =
-      (1 to m.size + 1)
+      (1 to m.size)
         .foldRight(Seq.empty[T]) { (k, acc) => reversed(k) +: acc }
     fst +: xs
   }

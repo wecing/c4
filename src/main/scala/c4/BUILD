@@ -22,3 +22,14 @@ scala_binary(
     ],
     main_class = "c4.Main",
 )
+
+scala_binary(
+    name = "parser",
+    srcs = ["Parser.scala"],
+    deps = [
+        ":lib",
+        "//src/main/resources:ast_scala_proto",
+        "//third_party/com/github/vbmacher:java_cup_runtime",
+    ],
+    main_class = "c4.Parser",
+)
