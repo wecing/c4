@@ -14,16 +14,6 @@ scala_library(
 )
 
 scala_binary(
-    name = "main",
-    srcs = ["Main.scala"],
-    deps = [
-        ":lib",
-        "//third_party/com/github/vbmacher:java_cup_runtime",
-    ],
-    main_class = "c4.Main",
-)
-
-scala_binary(
     name = "parser",
     srcs = ["Parser.scala"],
     deps = [
