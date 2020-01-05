@@ -1,9 +1,9 @@
 # managed by https://github.com/johnynek/bazel-deps
 #
-# To regenerate //third_party, clone bazel-deps and run:
+# To regenerate //third_party/jvm, clone bazel-deps and run:
 #     bazel run :parse generate -- \
 #         --repo-root ${C4_DIR} \
-#         --sha-file third_party/workspace.bzl \
+#         --sha-file third_party/jvm/workspace.bzl \
 #         --deps dependencies.yaml
 
 options:
@@ -12,7 +12,7 @@ options:
     "load(\"@io_bazel_rules_scala//scala:scala.bzl\", \"scala_library\")" ]
   languages: [ "java", "scala:2.11" ]
   strictVisibility: false
-  thirdPartyDirectory: "third_party"
+  thirdPartyDirectory: "third_party/jvm"
 
 dependencies:
   com.github.vbmacher:

@@ -5,8 +5,8 @@ scala_library(
     srcs = glob(["**/*.scala"]) + ["//src/main/resources:gen_parser"],
     deps = [
         "//src/main/resources:ast_scala_proto",
-        "//third_party/com/github/vbmacher:java_cup_runtime",
-        "//third_party/org/typelevel:cats_core",
+        "//third_party/jvm/com/github/vbmacher:java_cup_runtime",
+        "//third_party/jvm/org/typelevel:cats_core",
     ],
     visibility = [
         "//src/test/scala:__subpackages__",
@@ -19,7 +19,7 @@ scala_binary(
     deps = [
         ":lib",
         "//src/main/resources:ast_scala_proto",
-        "//third_party/com/github/vbmacher:java_cup_runtime",
+        "//third_party/jvm/com/github/vbmacher:java_cup_runtime",
     ],
     main_class = "c4.Parser",
 )

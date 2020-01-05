@@ -43,5 +43,5 @@ load("@io_bazel_rules_proto//proto:repositories.bzl",
 rules_proto_dependencies()
 rules_proto_toolchains()
 
-load("//third_party:workspace.bzl", "maven_dependencies")
+load("//third_party/jvm:workspace.bzl", "maven_dependencies")
 maven_dependencies()
