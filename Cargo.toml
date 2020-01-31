@@ -1,0 +1,9 @@
+[package]
+name = "c4cc"
+version = "0.1.0"
+authors = ["Chenguang Wang <w3cing@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+llvm-sys = "90"
+protobuf = "2.10.1"

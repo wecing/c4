@@ -1,0 +1,1 @@
+set -x LLVM_SYS_90_PREFIX "/Users/w/.local/share/llvmenv_fake/llvm-local"
