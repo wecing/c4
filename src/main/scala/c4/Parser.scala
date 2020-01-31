@@ -41,14 +41,14 @@ object Parser {
       if (printText) {
         System.out.print(astProto.toProtoString)
       } else {
-        System.out.print(astProto.writeTo(System.out))
+        astProto.writeTo(System.out)
       }
     } catch {
       case e: IllegalSourceException =>
         System.err.println(s"error: ${e.msg}")
         System.exit(1)
       case e: FileNotFoundException =>
-        System.err.println(s"error: Cannot find file ${fileName.get}")
+        System.err.println(s"error: Cannot find file ${e.getMessage()}")
         System.exit(1)
     }
   }
