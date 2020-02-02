@@ -13,6 +13,16 @@ enum SueTagName {
 }
 
 #[derive(Debug)]
+enum Type {}
+
+#[derive(Debug)]
+struct QType {
+    is_const: bool,
+    is_volatile: bool,
+    tp: Type,
+}
+
+#[derive(Debug)]
 struct EnumType {}
 
 #[derive(Debug)]
@@ -74,6 +84,8 @@ struct Compiler<'a> {
     current_scope: Scope,
 }
 
+type L<'a, T> = (T, &'a ast::Loc);
+
 impl Compiler<'_> {
     fn visit(tu: ast::TranslationUnit) {
         let mut cc =
@@ -95,9 +107,72 @@ impl Compiler<'_> {
     }
 
     fn visit_declaration(&mut self, dl: &ast::Declaration) {
-        println!("=====");
-        println!("{:#?}", dl);
+        let storage_class_specifiers: Vec<L<ast::StorageClassSpecifier>> =
+            dl.get_dss().iter()
+                .filter(|ds| ds.has_scs())
+                .map(|ds| (ds.get_scs(), ds.get_loc()))
+                .collect();
+        let type_specifiers: Vec<L<&ast::TypeSpecifier>> =
+            dl.get_dss().iter()
+                .filter(|ds| ds.has_ts())
+                .map(|ds| (ds.get_ts(), ds.get_loc()))
+                .collect();
+        let type_qualifiers: Vec<L<ast::TypeQualifier>> =
+            dl.get_dss().iter()
+                .filter(|ds| ds.has_tq())
+                .map(|ds| (ds.get_tq(), ds.get_loc()))
+                .collect();
+
+        // 3.5.1: At most one storage-class specifier may be given in the
+        // declaration specifiers in a declaration.
+        if 1 < storage_class_specifiers.len() {
+            panic!("{}: More than one storage class specifier found",
+                   Compiler::format_loc(storage_class_specifiers[1].1));
+        }
+
+        let qualified_type: QType =
+            Compiler::qualify_type(
+                &type_qualifiers, Compiler::get_type(&type_specifiers));
+
+//        use ast::StorageClassSpecifier as SCS;
+//        if let &[(SCS::TYPEDEF, &loc)] = storage_class_specifiers {
+//
+//        }
+
         // TODO
+    }
+
+    fn get_type(tss: &Vec<L<&ast::TypeSpecifier>>) -> Type {
+        unimplemented!() // TODO
+    }
+
+    fn qualify_type(tqs: &Vec<L<ast::TypeQualifier>>, tp: Type) -> QType {
+        let mut qtype = QType { is_const: false, is_volatile: false, tp };
+        for &(q, loc) in tqs {
+            use ast::TypeQualifier as TQ;
+            let is_const = qtype.is_const && q == TQ::CONST;
+            let is_volatile = qtype.is_volatile && q == TQ::VOLATILE;
+
+            // 3.5.3: The same type qualifier shall not appear more than once in
+            // the same specifier list or qualifier list, either directly or via
+            // one or more typedef s.
+            if is_const == qtype.is_const && is_volatile == qtype.is_volatile {
+                panic!("{}: Duplicate '{}' type qualifier",
+                       Compiler::format_loc(loc),
+                       format!("{:?}", q).to_lowercase());
+            }
+
+            qtype.is_const = is_const;
+            qtype.is_volatile = is_volatile;
+        }
+        qtype
+    }
+
+    fn format_loc(loc: &ast::Loc) -> String {
+        loc.get_levels().get(0)
+            .map_or(
+                String::from("<unknown location>"),
+                |r| format!("{}:{}:{}", r.file_name, r.line_begin, r.col_begin))
     }
 }
 
