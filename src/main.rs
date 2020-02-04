@@ -7,13 +7,26 @@ mod ast;
 
 #[derive(Hash, Eq, PartialEq, Debug)]
 enum SueTagName {
-    STRUCT(String),
-    UNION(String),
-    ENUM(String),
+    Struct(String),
+    Union(String),
+    Enum(String),
 }
 
 #[derive(Debug)]
-enum Type {}
+enum Type {
+    Void,
+    Char,
+    UnsignedChar,
+    Short,
+    UnsignedShort,
+    Int,
+    UnsignedInt,
+    Long,
+    UnsignedLong,
+    Float,
+    Double,
+    // LongDouble,
+}
 
 #[derive(Debug)]
 struct QType {
@@ -31,9 +44,17 @@ enum SueType {
 }
 
 #[derive(Debug)]
+enum OrdinaryIdRef {
+    TypedefRef(Box<QType>),
+    EnumRef(Box<EnumType>),
+    // OtherRef(QType, LValue(String) | RValue(String))
+}
+
+#[derive(Debug)]
 struct Scope {
     outer_scope: Box<Option<Scope>>,
     sue_tag_names_ns: HashMap<SueTagName, SueType>,
+    ordinary_ids_ns: HashMap<String, OrdinaryIdRef>,
 }
 
 impl Scope {
@@ -41,6 +62,7 @@ impl Scope {
         Scope {
             outer_scope: Box::new(None),
             sue_tag_names_ns: HashMap::new(),
+            ordinary_ids_ns: HashMap::new(),
         }
     }
 
@@ -48,6 +70,7 @@ impl Scope {
         Scope {
             outer_scope: Box::new(Some(self)),
             sue_tag_names_ns: HashMap::new(),
+            ordinary_ids_ns: HashMap::new(),
         }
     }
 
@@ -67,6 +90,21 @@ impl Scope {
         loop {
             match s.outer_scope.as_ref() {
                 None => break s,
+                Some(outer) => s = outer,
+            }
+        }
+    }
+
+    fn lookup_ordinary_id(&self, name: &String)
+                          -> Option<(&OrdinaryIdRef, &Scope)> {
+        let mut s: &Scope = self;
+        loop {
+            let r = s.ordinary_ids_ns.get(name);
+            if r.is_some() {
+                break r.map(|r| (r, s))
+            }
+            match &*s.outer_scope {
+                None => break None,
                 Some(outer) => s = outer,
             }
         }
@@ -132,7 +170,7 @@ impl Compiler<'_> {
 
         let qualified_type: QType =
             Compiler::qualify_type(
-                &type_qualifiers, Compiler::get_type(&type_specifiers));
+                &type_qualifiers, self.get_type(&type_specifiers));
 
 //        use ast::StorageClassSpecifier as SCS;
 //        if let &[(SCS::TYPEDEF, &loc)] = storage_class_specifiers {
@@ -142,7 +180,72 @@ impl Compiler<'_> {
         // TODO
     }
 
-    fn get_type(tss: &Vec<L<&ast::TypeSpecifier>>) -> Type {
+    fn get_type(&mut self, tss: &Vec<L<&ast::TypeSpecifier>>) -> Type {
+        let cases: Vec<&ast::TypeSpecifier_oneof_s> =
+            tss.iter()
+                .flat_map(|(ts, loc)| ts.s.iter())
+                .collect();
+        use ast::TypeSpecifier_oneof_s as TS;
+        let tp: Type =
+            match cases.as_slice() {
+                [TS::void(_)] =>
+                    Type::Void,
+                [TS::char(_)] |
+                [TS::signed(_), TS::char(_)] =>
+                    Type::Char,
+                [TS::unsigned(_), TS::char(_)] =>
+                    Type::UnsignedChar,
+                [TS::short(_)] |
+                [TS::signed(_), TS::short(_)] |
+                [TS::short(_), TS::int(_)] |
+                [TS::signed(_), TS::short(_), TS::int(_)] =>
+                    Type::Short,
+                [TS::unsigned(_), TS::short(_)] |
+                [TS::unsigned(_), TS::short(_), TS::int(_)] =>
+                    Type::UnsignedShort,
+                [TS::int(_)] |
+                [TS::signed(_)] |
+                [TS::signed(_), TS::int(_)] |
+                [] =>
+                    Type::Int,
+                [TS::unsigned(_)] |
+                [TS::unsigned(_), TS::int(_)] =>
+                    Type::UnsignedInt,
+                [TS::long(_)] |
+                [TS::signed(_), TS::long(_)] |
+                [TS::long(_), TS::int(_)] |
+                [TS::signed(_), TS::long(_), TS::int(_)] =>
+                    Type::Long,
+                [TS::unsigned(_), TS::long(_)] |
+                [TS::unsigned(_), TS::long(_), TS::int(_)] =>
+                    Type::UnsignedLong,
+                [TS::float(_)] =>
+                    Type::Float,
+                [TS::double(_)] =>
+                    Type::Double,
+                [TS::long(_), TS::double(_)] =>
+                    Type::Double,
+                [TS::field_struct(s)] =>
+                    self.get_struct_type((s, tss[0].1)),
+                [TS::union(u)] =>
+                    self.get_union_type((u, tss[0].1)),
+                [TS::field_enum(e)] =>
+                    self.get_enum_type((e, tss[0].1)),
+                [TS::typedef_name(s)] =>
+                    unimplemented!() // TODO - could be a qtype?
+            };
+        unimplemented!() // TODO
+    }
+
+    fn get_struct_type(&mut self, s: L<&ast::TypeSpecifier_Struct>) -> Type {
+        unimplemented!() // TODO
+    }
+
+    fn get_union_type(&mut self, s: L<&ast::TypeSpecifier_Union>) -> Type {
+        unimplemented!() // TODO
+    }
+
+    fn get_enum_type(&mut self, s: L<&ast::TypeSpecifier_Enum>) -> Type {
         unimplemented!() // TODO
     }
 
