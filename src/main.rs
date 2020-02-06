@@ -12,7 +12,7 @@ enum SueTagName {
     Enum(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 enum Type {
     Void,
     Char,
@@ -28,19 +28,19 @@ enum Type {
     // LongDouble,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct QType {
     is_const: bool,
     is_volatile: bool,
     tp: Type,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct EnumType {}
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 enum SueType {
-    ENUM(Box<EnumType>),
+    ENUM(EnumType),
 }
 
 #[derive(Debug)]
@@ -101,7 +101,7 @@ impl Scope {
         loop {
             let r = s.ordinary_ids_ns.get(name);
             if r.is_some() {
-                break r.map(|r| (r, s))
+                break r.map(|r| (r, s));
             }
             match &*s.outer_scope {
                 None => break None,
@@ -180,59 +180,67 @@ impl Compiler<'_> {
         // TODO
     }
 
-    fn get_type(&mut self, tss: &Vec<L<&ast::TypeSpecifier>>) -> Type {
+    fn get_type(&mut self, tss: &Vec<L<&ast::TypeSpecifier>>) -> QType {
+        let q = |tp| QType {
+            is_const: false,
+            is_volatile: false,
+            tp,
+        };
         let cases: Vec<&ast::TypeSpecifier_oneof_s> =
             tss.iter()
                 .flat_map(|(ts, loc)| ts.s.iter())
                 .collect();
         use ast::TypeSpecifier_oneof_s as TS;
-        let tp: Type =
+        let tp: QType =
             match cases.as_slice() {
                 [TS::void(_)] =>
-                    Type::Void,
+                    q(Type::Void),
                 [TS::char(_)] |
                 [TS::signed(_), TS::char(_)] =>
-                    Type::Char,
+                    q(Type::Char),
                 [TS::unsigned(_), TS::char(_)] =>
-                    Type::UnsignedChar,
+                    q(Type::UnsignedChar),
                 [TS::short(_)] |
                 [TS::signed(_), TS::short(_)] |
                 [TS::short(_), TS::int(_)] |
                 [TS::signed(_), TS::short(_), TS::int(_)] =>
-                    Type::Short,
+                    q(Type::Short),
                 [TS::unsigned(_), TS::short(_)] |
                 [TS::unsigned(_), TS::short(_), TS::int(_)] =>
-                    Type::UnsignedShort,
+                    q(Type::UnsignedShort),
                 [TS::int(_)] |
                 [TS::signed(_)] |
                 [TS::signed(_), TS::int(_)] |
                 [] =>
-                    Type::Int,
+                    q(Type::Int),
                 [TS::unsigned(_)] |
                 [TS::unsigned(_), TS::int(_)] =>
-                    Type::UnsignedInt,
+                    q(Type::UnsignedInt),
                 [TS::long(_)] |
                 [TS::signed(_), TS::long(_)] |
                 [TS::long(_), TS::int(_)] |
                 [TS::signed(_), TS::long(_), TS::int(_)] =>
-                    Type::Long,
+                    q(Type::Long),
                 [TS::unsigned(_), TS::long(_)] |
                 [TS::unsigned(_), TS::long(_), TS::int(_)] =>
-                    Type::UnsignedLong,
+                    q(Type::UnsignedLong),
                 [TS::float(_)] =>
-                    Type::Float,
+                    q(Type::Float),
                 [TS::double(_)] =>
-                    Type::Double,
+                    q(Type::Double),
                 [TS::long(_), TS::double(_)] =>
-                    Type::Double,
+                    q(Type::Double),
                 [TS::field_struct(s)] =>
-                    self.get_struct_type((s, tss[0].1)),
+                    q(self.get_struct_type((s, tss[0].1))),
                 [TS::union(u)] =>
-                    self.get_union_type((u, tss[0].1)),
+                    q(self.get_union_type((u, tss[0].1))),
                 [TS::field_enum(e)] =>
-                    self.get_enum_type((e, tss[0].1)),
+                    q(self.get_enum_type((e, tss[0].1))),
                 [TS::typedef_name(s)] =>
-                    unimplemented!() // TODO - could be a qtype?
+                    self.get_typedef_type((s, tss[0].1)),
+                _ =>
+                    panic!("{}: Illegal type specifiers list",
+                           Compiler::format_loc(tss[0].1)),
             };
         unimplemented!() // TODO
     }
@@ -249,8 +257,23 @@ impl Compiler<'_> {
         unimplemented!() // TODO
     }
 
-    fn qualify_type(tqs: &Vec<L<ast::TypeQualifier>>, tp: Type) -> QType {
-        let mut qtype = QType { is_const: false, is_volatile: false, tp };
+    fn get_typedef_type(&mut self, id: L<&String>) -> QType {
+        // It is probably a programming error if this method really panics.
+        match self.current_scope.lookup_ordinary_id(id.0) {
+            None => // this error should have been captured by parser
+                panic!("{}: Undeclared identifier '{}'",
+                       Compiler::format_loc(id.1), id.0),
+            Some((OrdinaryIdRef::TypedefRef(qtype), _)) =>
+                **qtype,
+            Some(_) => // this error should also have been handled elsewhere
+                panic!("{}: Identifier '{}' is not a typedef name",
+                       Compiler::format_loc(id.1),
+                       id.0),
+        }
+    }
+
+    fn qualify_type(tqs: &Vec<L<ast::TypeQualifier>>,
+                    mut qtype: QType) -> QType {
         for &(q, loc) in tqs {
             use ast::TypeQualifier as TQ;
             let is_const = qtype.is_const && q == TQ::CONST;
