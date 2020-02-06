@@ -42,7 +42,7 @@ struct SuField {
 #[derive(Debug, Clone)]
 struct SuType {
     fields: Option<Vec<SuField>>,
-    uuid: u32, // identical struct/union types in different scopes are different types
+    uuid: u32, // identical su types in different scopes are different types
 }
 
 #[derive(Debug, Clone)]
@@ -204,7 +204,8 @@ impl Compiler<'_> {
         let has_declarator = !dl.get_ids().is_empty();
         let qualified_type: QType =
             Compiler::qualify_type(
-                &type_qualifiers, self.get_type(&type_specifiers, has_declarator));
+                &type_qualifiers,
+                self.get_type(&type_specifiers, has_declarator));
 
 //        use ast::StorageClassSpecifier as SCS;
 //        if let &[(SCS::TYPEDEF, &loc)] = storage_class_specifiers {
@@ -214,72 +215,84 @@ impl Compiler<'_> {
         // TODO
     }
 
-    fn get_type(&mut self, tss: &Vec<L<&ast::TypeSpecifier>>, has_declarator: bool) -> Type {
+    fn get_type(&mut self,
+                tss: &Vec<L<&ast::TypeSpecifier>>,
+                has_declarator: bool) -> QType {
+        let q = |tp| QType {
+            is_const: false,
+            is_volatile: false,
+            tp,
+        };
         let cases: Vec<&ast::TypeSpecifier_oneof_s> =
             tss.iter()
                 .flat_map(|(ts, loc)| ts.s.iter())
                 .collect();
         use ast::TypeSpecifier_oneof_s as TS;
-        let tp: Type =
+        let tp: QType =
             match cases.as_slice() {
                 [TS::void(_)] =>
-                    Type::Void,
+                    q(Type::Void),
                 [TS::char(_)] |
                 [TS::signed(_), TS::char(_)] =>
-                    Type::Char,
+                    q(Type::Char),
                 [TS::unsigned(_), TS::char(_)] =>
-                    Type::UnsignedChar,
+                    q(Type::UnsignedChar),
                 [TS::short(_)] |
                 [TS::signed(_), TS::short(_)] |
                 [TS::short(_), TS::int(_)] |
                 [TS::signed(_), TS::short(_), TS::int(_)] =>
-                    Type::Short,
+                    q(Type::Short),
                 [TS::unsigned(_), TS::short(_)] |
                 [TS::unsigned(_), TS::short(_), TS::int(_)] =>
-                    Type::UnsignedShort,
+                    q(Type::UnsignedShort),
                 [TS::int(_)] |
                 [TS::signed(_)] |
                 [TS::signed(_), TS::int(_)] |
                 [] =>
-                    Type::Int,
+                    q(Type::Int),
                 [TS::unsigned(_)] |
                 [TS::unsigned(_), TS::int(_)] =>
-                    Type::UnsignedInt,
+                    q(Type::UnsignedInt),
                 [TS::long(_)] |
                 [TS::signed(_), TS::long(_)] |
                 [TS::long(_), TS::int(_)] |
                 [TS::signed(_), TS::long(_), TS::int(_)] =>
-                    Type::Long,
+                    q(Type::Long),
                 [TS::unsigned(_), TS::long(_)] |
                 [TS::unsigned(_), TS::long(_), TS::int(_)] =>
-                    Type::UnsignedLong,
+                    q(Type::UnsignedLong),
                 [TS::float(_)] =>
-                    Type::Float,
+                    q(Type::Float),
                 [TS::double(_)] =>
-                    Type::Double,
+                    q(Type::Double),
                 [TS::long(_), TS::double(_)] =>
-                    Type::Double,
+                    q(Type::Double),
                 [TS::field_struct(s)] =>
-                    self.get_struct_type((s, tss[0].1), has_declarator),
+                    q(self.get_struct_type((s, tss[0].1), has_declarator)),
                 [TS::union(u)] =>
-                    self.get_union_type((u, tss[0].1), has_declarator),
+                    q(self.get_union_type((u, tss[0].1), has_declarator)),
                 [TS::field_enum(e)] =>
-                    self.get_enum_type((e, tss[0].1)),
+                    q(self.get_enum_type((e, tss[0].1))),
                 [TS::typedef_name(s)] =>
-                    unimplemented!(), // TODO - could be a qtype?
+                    self.get_typedef_type((s, tss[0].1)),
                 _ =>
-                    panic!(),
+                    panic!("{}: Illegal type specifiers list",
+                           Compiler::format_loc(tss[0].1)),
             };
         unimplemented!() // TODO
     }
 
-    fn get_struct_type(&mut self, s: L<&ast::TypeSpecifier_Struct>, has_declarator: bool) -> Type {
+    fn get_struct_type(&mut self,
+                       s: L<&ast::TypeSpecifier_Struct>,
+                       has_declarator: bool) -> Type {
         let name = (s.0.get_name(), s.0.get_name_loc());
         let bodies = s.0.get_bodies().iter().zip(s.0.get_body_locs()).collect();
         self.get_su_type(name, bodies, has_declarator, true)
     }
 
-    fn get_union_type(&mut self, s: L<&ast::TypeSpecifier_Union>, has_declarator: bool) -> Type {
+    fn get_union_type(&mut self,
+                      s: L<&ast::TypeSpecifier_Union>,
+                      has_declarator: bool) -> Type {
         let name = (s.0.get_name(), s.0.get_name_loc());
         let bodies = s.0.get_bodies().iter().zip(s.0.get_body_locs()).collect();
         self.get_su_type(name, bodies, has_declarator, false)
@@ -287,7 +300,8 @@ impl Compiler<'_> {
 
     fn get_su_type(&mut self,
                    name: L<&str>,
-                   bodies: Vec<L<&ast::StructDeclaration>>, // `struct S {}` is illegal syntax
+                   // `struct S {}` is illegal syntax
+                   bodies: Vec<L<&ast::StructDeclaration>>,
                    has_declarator: bool,
                    is_struct: bool) -> Type {
         // parser should reject this syntax
@@ -295,8 +309,10 @@ impl Compiler<'_> {
             panic!("{}: struct/union tag and body cannot both be empty",
                    Compiler::format_loc(name.1))
         }
-        // refer to previously defined type of given name; do not re-define. e.g. `struct S s;`
-        let ref_only = !name.0.is_empty() && bodies.is_empty() && has_declarator;
+        // refer to previously defined type of given name; do not re-define.
+        // e.g. `struct S s;`
+        let ref_only =
+            !name.0.is_empty() && bodies.is_empty() && has_declarator;
 
         match self.current_scope.lookup_sue_type(name.0) {
             None if ref_only =>
@@ -309,7 +325,8 @@ impl Compiler<'_> {
             Some((SueType::Union(su_type), _)) if !is_struct && ref_only =>
                 Type::Union(Box::new(*su_type.clone())),
             _ if ref_only =>
-                panic!("{}: '%s' defined as wrong kind of tag", Compiler::format_loc(name.1)),
+                panic!("{}: '%s' defined as wrong kind of tag",
+                       Compiler::format_loc(name.1)),
             _ => unimplemented!(), // TODO: def su; name could be empty; check same scope defs
         }
     }
@@ -318,8 +335,23 @@ impl Compiler<'_> {
         unimplemented!() // TODO
     }
 
-    fn qualify_type(tqs: &Vec<L<ast::TypeQualifier>>, tp: Type) -> QType {
-        let mut qtype = QType { is_const: false, is_volatile: false, tp };
+    fn get_typedef_type(&mut self, id: L<&String>) -> QType {
+        // It is probably a programming error if this method really panics.
+        match self.current_scope.lookup_ordinary_id(id.0) {
+            None => // this error should have been captured by parser
+                panic!("{}: Undeclared identifier '{}'",
+                       Compiler::format_loc(id.1), id.0),
+            Some((OrdinaryIdRef::TypedefRef(qtype), _)) =>
+                *qtype.clone(),
+            Some(_) => // this error should also have been handled elsewhere
+                panic!("{}: Identifier '{}' is not a typedef name",
+                       Compiler::format_loc(id.1),
+                       id.0),
+        }
+    }
+
+    fn qualify_type(tqs: &Vec<L<ast::TypeQualifier>>,
+                    mut qtype: QType) -> QType {
         for &(q, loc) in tqs {
             use ast::TypeQualifier as TQ;
             let is_const = qtype.is_const && q == TQ::CONST;
