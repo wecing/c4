@@ -2,17 +2,11 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::io;
 use std::mem;
+use std::ptr;
 
 mod ast;
 
-#[derive(Hash, Eq, PartialEq, Debug)]
-enum SueTagName {
-    Struct(String),
-    Union(String),
-    Enum(String),
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Type {
     Void,
     Char,
@@ -26,21 +20,46 @@ enum Type {
     Float,
     Double,
     // LongDouble,
+    Struct(Box<SuType>),
+    Union(Box<SuType>),
+    Enum(Box<EnumType>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct QType {
     is_const: bool,
     is_volatile: bool,
     tp: Type,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+struct SuField {
+    name: Option<String>,
+    tp: QType,
+    bit_field_size: Option<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct SuType {
+    fields: Option<Vec<SuField>>,
+    uuid: u32, // identical struct/union types in different scopes are different types
+}
+
+#[derive(Debug, Clone)]
 struct EnumType {}
 
 #[derive(Debug)]
+struct Scope {
+    outer_scope: Box<Option<Scope>>,
+    sue_tag_names_ns: HashMap<String, SueType>,
+    ordinary_ids_ns: HashMap<String, OrdinaryIdRef>,
+}
+
+#[derive(Debug)]
 enum SueType {
-    ENUM(Box<EnumType>),
+    Struct(Box<SuType>),
+    Union(Box<SuType>),
+    Enum(Box<EnumType>),
 }
 
 #[derive(Debug)]
@@ -48,13 +67,6 @@ enum OrdinaryIdRef {
     TypedefRef(Box<QType>),
     EnumRef(Box<EnumType>),
     // OtherRef(QType, LValue(String) | RValue(String))
-}
-
-#[derive(Debug)]
-struct Scope {
-    outer_scope: Box<Option<Scope>>,
-    sue_tag_names_ns: HashMap<SueTagName, SueType>,
-    ordinary_ids_ns: HashMap<String, OrdinaryIdRef>,
 }
 
 impl Scope {
@@ -95,19 +107,38 @@ impl Scope {
         }
     }
 
-    fn lookup_ordinary_id(&self, name: &String)
+    fn lookup_ordinary_id(&self, name: &str)
                           -> Option<(&OrdinaryIdRef, &Scope)> {
         let mut s: &Scope = self;
         loop {
             let r = s.ordinary_ids_ns.get(name);
             if r.is_some() {
-                break r.map(|r| (r, s))
+                break r.map(|r| (r, s));
             }
             match &*s.outer_scope {
                 None => break None,
                 Some(outer) => s = outer,
             }
         }
+    }
+
+    fn lookup_sue_type(&self, tag: &str) -> Option<(&SueType, &Scope)> {
+        let mut s: &Scope = self;
+        loop {
+            let r = s.sue_tag_names_ns.get(tag);
+            if r.is_some() {
+                break r.map(|r| (r, s));
+            }
+            match &*s.outer_scope {
+                None => break None,
+                Some(outer) => s = outer,
+            }
+        }
+    }
+
+    fn same_as(&self, other: &Scope) -> bool {
+        // this works since Scope is neither Copy nor Clone
+        ptr::eq(self, other)
     }
 }
 
@@ -120,6 +151,7 @@ impl Drop for Scope {
 struct Compiler<'a> {
     translation_unit: &'a ast::TranslationUnit,
     current_scope: Scope,
+    next_uuid: i32,
 }
 
 type L<'a, T> = (T, &'a ast::Loc);
@@ -130,6 +162,7 @@ impl Compiler<'_> {
             Compiler {
                 translation_unit: &tu,
                 current_scope: Scope::new(),
+                next_uuid: 100,
             };
         for ed in tu.eds.iter() {
             if ed.has_fd() {
@@ -168,9 +201,10 @@ impl Compiler<'_> {
                    Compiler::format_loc(storage_class_specifiers[1].1));
         }
 
+        let has_declarator = !dl.get_ids().is_empty();
         let qualified_type: QType =
             Compiler::qualify_type(
-                &type_qualifiers, self.get_type(&type_specifiers));
+                &type_qualifiers, self.get_type(&type_specifiers, has_declarator));
 
 //        use ast::StorageClassSpecifier as SCS;
 //        if let &[(SCS::TYPEDEF, &loc)] = storage_class_specifiers {
@@ -180,7 +214,7 @@ impl Compiler<'_> {
         // TODO
     }
 
-    fn get_type(&mut self, tss: &Vec<L<&ast::TypeSpecifier>>) -> Type {
+    fn get_type(&mut self, tss: &Vec<L<&ast::TypeSpecifier>>, has_declarator: bool) -> Type {
         let cases: Vec<&ast::TypeSpecifier_oneof_s> =
             tss.iter()
                 .flat_map(|(ts, loc)| ts.s.iter())
@@ -226,23 +260,58 @@ impl Compiler<'_> {
                 [TS::long(_), TS::double(_)] =>
                     Type::Double,
                 [TS::field_struct(s)] =>
-                    self.get_struct_type((s, tss[0].1)),
+                    self.get_struct_type((s, tss[0].1), has_declarator),
                 [TS::union(u)] =>
-                    self.get_union_type((u, tss[0].1)),
+                    self.get_union_type((u, tss[0].1), has_declarator),
                 [TS::field_enum(e)] =>
                     self.get_enum_type((e, tss[0].1)),
                 [TS::typedef_name(s)] =>
-                    unimplemented!() // TODO - could be a qtype?
+                    unimplemented!(), // TODO - could be a qtype?
+                _ =>
+                    panic!(),
             };
         unimplemented!() // TODO
     }
 
-    fn get_struct_type(&mut self, s: L<&ast::TypeSpecifier_Struct>) -> Type {
-        unimplemented!() // TODO
+    fn get_struct_type(&mut self, s: L<&ast::TypeSpecifier_Struct>, has_declarator: bool) -> Type {
+        let name = (s.0.get_name(), s.0.get_name_loc());
+        let bodies = s.0.get_bodies().iter().zip(s.0.get_body_locs()).collect();
+        self.get_su_type(name, bodies, has_declarator, true)
     }
 
-    fn get_union_type(&mut self, s: L<&ast::TypeSpecifier_Union>) -> Type {
-        unimplemented!() // TODO
+    fn get_union_type(&mut self, s: L<&ast::TypeSpecifier_Union>, has_declarator: bool) -> Type {
+        let name = (s.0.get_name(), s.0.get_name_loc());
+        let bodies = s.0.get_bodies().iter().zip(s.0.get_body_locs()).collect();
+        self.get_su_type(name, bodies, has_declarator, false)
+    }
+
+    fn get_su_type(&mut self,
+                   name: L<&str>,
+                   bodies: Vec<L<&ast::StructDeclaration>>, // `struct S {}` is illegal syntax
+                   has_declarator: bool,
+                   is_struct: bool) -> Type {
+        // parser should reject this syntax
+        if name.0.is_empty() && bodies.is_empty() {
+            panic!("{}: struct/union tag and body cannot both be empty",
+                   Compiler::format_loc(name.1))
+        }
+        // refer to previously defined type of given name; do not re-define. e.g. `struct S s;`
+        let ref_only = !name.0.is_empty() && bodies.is_empty() && has_declarator;
+
+        match self.current_scope.lookup_sue_type(name.0) {
+            None if ref_only =>
+                panic!("{}: {} {} not defined",
+                       Compiler::format_loc(name.1),
+                       if is_struct { "struct" } else { "union" },
+                       name.0),
+            Some((SueType::Struct(su_type), _)) if is_struct && ref_only =>
+                Type::Struct(Box::new(*su_type.clone())),
+            Some((SueType::Union(su_type), _)) if !is_struct && ref_only =>
+                Type::Union(Box::new(*su_type.clone())),
+            _ if ref_only =>
+                panic!("{}: '%s' defined as wrong kind of tag", Compiler::format_loc(name.1)),
+            _ => unimplemented!(), // TODO: def su; name could be empty; check same scope defs
+        }
     }
 
     fn get_enum_type(&mut self, s: L<&ast::TypeSpecifier_Enum>) -> Type {
