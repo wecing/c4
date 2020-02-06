@@ -304,29 +304,36 @@ impl Compiler<'_> {
                    bodies: Vec<L<&ast::StructDeclaration>>,
                    has_declarator: bool,
                    is_struct: bool) -> Type {
-        // parser should reject this syntax
-        if name.0.is_empty() && bodies.is_empty() {
-            panic!("{}: struct/union tag and body cannot both be empty",
-                   Compiler::format_loc(name.1))
-        }
-        // refer to previously defined type of given name; do not re-define.
-        // e.g. `struct S s;`
-        let ref_only =
-            !name.0.is_empty() && bodies.is_empty() && has_declarator;
+        // this case is invalid:
+        //      struct S {...};
+        //      { struct S; sizeof(struct S); }
+        // since the inner `struct S` statement declares a new `struct S` type.
+        //
+        // but this one is valid:
+        //      struct S {...};
+        //      { struct S s; sizeof(struct S); }
+        // because a body-less struct/union type specifier followed by
+        // declarator is a reference, instead of declaration... except when
+        // there is nothing to refer to. i.e. this case is also valid:
+        //      struct S *sp;
+        let try_ref = bodies.is_empty() && has_declarator;
 
         match self.current_scope.lookup_sue_type(name.0) {
-            None if ref_only =>
-                panic!("{}: {} {} not defined",
-                       Compiler::format_loc(name.1),
-                       if is_struct { "struct" } else { "union" },
-                       name.0),
-            Some((SueType::Struct(su_type), _)) if is_struct && ref_only =>
+            _ if name.0.is_empty() && bodies.is_empty() =>
+                // parser should reject this syntax
+                panic!("{}: struct/union tag and body cannot both be empty",
+                       Compiler::format_loc(name.1)),
+            Some(_) if name.0.is_empty() => // programming error
+                panic!("empty tag found in Scope.sue_tag_names_ns"),
+
+            Some((SueType::Struct(su_type), _)) if is_struct && try_ref =>
                 Type::Struct(Box::new(*su_type.clone())),
-            Some((SueType::Union(su_type), _)) if !is_struct && ref_only =>
+            Some((SueType::Union(su_type), _)) if !is_struct && try_ref =>
                 Type::Union(Box::new(*su_type.clone())),
-            _ if ref_only =>
+            Some(_) if try_ref =>
                 panic!("{}: '%s' defined as wrong kind of tag",
                        Compiler::format_loc(name.1)),
+
             _ => unimplemented!(), // TODO: def su; name could be empty; check same scope defs
         }
     }
