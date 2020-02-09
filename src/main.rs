@@ -151,7 +151,7 @@ impl Drop for Scope {
 struct Compiler<'a> {
     translation_unit: &'a ast::TranslationUnit,
     current_scope: Scope,
-    next_uuid: i32,
+    next_uuid: u32,
 }
 
 type L<'a, T> = (T, &'a ast::Loc);
@@ -302,7 +302,7 @@ impl Compiler<'_> {
                    name: L<&str>,
                    // `struct S {}` is illegal syntax
                    bodies: Vec<L<&ast::StructDeclaration>>,
-                   has_declarator: bool,
+                   has_declarator: bool, // has declarator or within a sizeof()
                    is_struct: bool) -> Type {
         // this case is invalid:
         //      struct S {...};
@@ -319,22 +319,97 @@ impl Compiler<'_> {
         let try_ref = bodies.is_empty() && has_declarator;
 
         match self.current_scope.lookup_sue_type(name.0) {
+            // sanity checks
+            //
+            // parser should reject this syntax
             _ if name.0.is_empty() && bodies.is_empty() =>
-                // parser should reject this syntax
                 panic!("{}: struct/union tag and body cannot both be empty",
                        Compiler::format_loc(name.1)),
             Some(_) if name.0.is_empty() => // programming error
                 panic!("empty tag found in Scope.sue_tag_names_ns"),
 
+            // type reference
             Some((SueType::Struct(su_type), _)) if is_struct && try_ref =>
                 Type::Struct(Box::new(*su_type.clone())),
             Some((SueType::Union(su_type), _)) if !is_struct && try_ref =>
                 Type::Union(Box::new(*su_type.clone())),
             Some(_) if try_ref =>
-                panic!("{}: '%s' defined as wrong kind of tag",
-                       Compiler::format_loc(name.1)),
+                panic!("{}: '{}' defined as wrong kind of tag",
+                       Compiler::format_loc(name.1), name.0),
 
-            _ => unimplemented!(), // TODO: def su; name could be empty; check same scope defs
+            // type definition - check for possible redefinition errors
+            Some((SueType::Struct(su_type), scope))
+            if (!is_struct || !bodies.is_empty() && su_type.fields.is_some())
+                && self.current_scope.same_as(scope) =>
+                panic!("{}: redefinition of '{}'",
+                       Compiler::format_loc(name.1), name.0),
+            Some((SueType::Union(su_type), scope))
+            if (is_struct || !bodies.is_empty() && su_type.fields.is_some())
+                && self.current_scope.same_as(scope) =>
+                panic!("{}: redefinition of '{}'",
+                       Compiler::format_loc(name.1), name.0),
+            Some((SueType::Enum(_), scope))
+            if self.current_scope.same_as(scope) =>
+                panic!("{}: redefinition of '{}'",
+                       Compiler::format_loc(name.1), name.0),
+
+            // type reference - another special case:
+            //      struct S {...};
+            //      struct S;
+            Some((SueType::Struct(su_type), scope))
+            if self.current_scope.same_as(scope) =>
+                Type::Struct(Box::new(*su_type.clone())),
+            Some((SueType::Union(su_type), scope))
+            if self.current_scope.same_as(scope) =>
+                Type::Union(Box::new(*su_type.clone())),
+
+            // type definition
+            _ => {
+                let mut su_type = SuType {
+                    fields: None,
+                    uuid: self.get_next_uuid(),
+                };
+                let tag_name =
+                    if name.0.is_empty() {
+                        format!("tag.{}", su_type.uuid)
+                    } else {
+                        String::from(name.0)
+                    };
+
+                let sue_type =
+                    if is_struct {
+                        SueType::Struct(Box::new(su_type.clone()))
+                    } else {
+                        SueType::Union(Box::new(su_type.clone()))
+                    };
+                self.current_scope.sue_tag_names_ns.insert(
+                    tag_name.clone(),
+                    sue_type);
+                // TODO: IR: emit opaque type
+
+                if !bodies.is_empty() {
+                    let f = |&b| self.get_su_field(b);
+                    su_type.fields = Some(bodies.iter().flat_map(f).collect());
+
+                    let sue_type =
+                        if is_struct {
+                            SueType::Struct(Box::new(su_type.clone()))
+                        } else {
+                            SueType::Union(Box::new(su_type.clone()))
+                        };
+                    self.current_scope.sue_tag_names_ns.insert(
+                        tag_name,
+                        sue_type);
+
+                    // TODO: IR: update type
+                }
+
+                if is_struct {
+                    Type::Struct(Box::new(su_type))
+                } else {
+                    Type::Union(Box::new(su_type))
+                }
+            }
         }
     }
 
@@ -355,6 +430,63 @@ impl Compiler<'_> {
                        Compiler::format_loc(id.1),
                        id.0),
         }
+    }
+
+    fn get_su_field(&mut self,
+                    sd: L<&ast::StructDeclaration>)
+                    -> Vec<SuField> {
+        let type_specifiers: Vec<L<&ast::TypeSpecifier>> =
+            sd.0.get_sp_qls().iter()
+                .filter(|spql| spql.has_sp())
+                .map(|spql| (spql.get_sp(), spql.get_loc()))
+                .collect();
+        let type_qualifiers: Vec<L<ast::TypeQualifier>> =
+            sd.0.get_sp_qls().iter()
+                .filter(|spql| spql.has_ql())
+                .map(|spql| (spql.get_ql(), spql.get_loc()))
+                .collect();
+
+        let qualified_type: QType =
+            Compiler::qualify_type(
+                &type_qualifiers,
+                self.get_type(&type_specifiers, true));
+
+        let r: Vec<SuField> =
+            sd.0.ds.iter()
+                .map(|decl| {
+                    let (tp, field_name) =
+                        if decl.get_d().get_dd_idx() != 0 {
+                            self.unwrap_declarator(
+                                qualified_type.clone(),
+                                (decl.get_d(), decl.get_d_loc()))
+                        } else {
+                            (qualified_type.clone(), String::from(""))
+                        };
+                    let field_name_opt =
+                        if field_name.is_empty() {
+                            None
+                        } else {
+                            Some(field_name)
+                        };
+                    let bit_field_size =
+                        if decl.get_e() != 0 {
+                            let t: Option<u8> = unimplemented!(); // TODO
+                            t
+                        } else {
+                            None
+                        };
+                    SuField {
+                        name: field_name_opt,
+                        tp,
+                        bit_field_size,
+                    }
+                })
+                .collect();
+        r
+    }
+
+    fn unwrap_declarator(&mut self, tp: QType, d: L<&ast::Declarator>) -> (QType, String) {
+        unimplemented!() // TODO
     }
 
     fn qualify_type(tqs: &Vec<L<ast::TypeQualifier>>,
@@ -384,6 +516,12 @@ impl Compiler<'_> {
             .map_or(
                 String::from("<unknown location>"),
                 |r| format!("{}:{}:{}", r.file_name, r.line_begin, r.col_begin))
+    }
+
+    fn get_next_uuid(&mut self) -> u32 {
+        let r = self.next_uuid;
+        self.next_uuid += 1;
+        r
     }
 }
 
