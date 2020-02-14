@@ -148,10 +148,36 @@ impl Drop for Scope {
     }
 }
 
+#[cfg(feature = "llvm-sys")]
+struct LLVMBuilder {
+    builder: llvm_sys::prelude::LLVMBuilderRef,
+}
+
+#[cfg(not(feature = "llvm-sys"))]
+struct LLVMBuilder {}
+
+#[cfg(feature = "llvm-sys")]
+impl LLVMBuilder {
+    fn new() -> LLVMBuilder {
+        LLVMBuilder {
+            builder: unsafe { llvm_sys::core::LLVMCreateBuilder() },
+        }
+    }
+}
+
+#[cfg(not(feature = "llvm-sys"))]
+impl LLVMBuilder {
+    fn new() -> LLVMBuilder {
+        LLVMBuilder {}
+    }
+}
+
 struct Compiler<'a> {
     translation_unit: &'a ast::TranslationUnit,
     current_scope: Scope,
     next_uuid: u32,
+
+    llvm_builder: LLVMBuilder,
 }
 
 type L<'a, T> = (T, &'a ast::Loc);
@@ -163,6 +189,7 @@ impl Compiler<'_> {
                 translation_unit: &tu,
                 current_scope: Scope::new(),
                 next_uuid: 100,
+                llvm_builder: LLVMBuilder::new(),
             };
         for ed in tu.eds.iter() {
             if ed.has_fd() {
