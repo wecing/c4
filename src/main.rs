@@ -3,6 +3,7 @@ use std::error::Error;
 use std::io;
 use std::mem;
 use std::ptr;
+use std::ffi::CString;
 
 mod ast;
 
@@ -148,35 +149,88 @@ impl Drop for Scope {
     }
 }
 
-#[cfg(feature = "llvm-sys")]
-struct LLVMBuilder {
-    builder: llvm_sys::prelude::LLVMBuilderRef,
+trait IRBuilder {
+    fn emit_opaque_struct_type(&mut self, name: &String);
+
+    // struct and union in C are both mapped bo struct in IR. for C unions the
+    // generated struct must be packed with u8 so it could have a size.
+    // `fields` is supposed to be non-empty.
+    fn update_struct_type(
+        &mut self, name: &String, fields: &Vec<SuField>, is_union: bool);
 }
 
-#[cfg(not(feature = "llvm-sys"))]
-struct LLVMBuilder {}
+struct DummyIRBuilder {}
+
+impl DummyIRBuilder {
+    fn new() -> DummyIRBuilder {
+        DummyIRBuilder {}
+    }
+}
+
+impl IRBuilder for DummyIRBuilder {
+    fn emit_opaque_struct_type(&mut self, name: &String) {}
+
+    fn update_struct_type(
+        &mut self, name: &String, fields: &Vec<SuField>, is_union: bool) {}
+}
 
 #[cfg(feature = "llvm-sys")]
-impl LLVMBuilder {
-    fn new() -> LLVMBuilder {
-        LLVMBuilder {
-            builder: unsafe { llvm_sys::core::LLVMCreateBuilder() },
+struct LLVMBuilderImpl {
+    context: llvm_sys::prelude::LLVMContextRef,
+    module: llvm_sys::prelude::LLVMModuleRef,
+}
+
+#[cfg(feature = "llvm-sys")]
+impl LLVMBuilderImpl {
+    fn new() -> LLVMBuilderImpl {
+        unsafe {
+            let context = llvm_sys::core::LLVMContextCreate();
+            let module_name = CString::new("c4").unwrap();
+            let module =
+                llvm_sys::core::LLVMModuleCreateWithNameInContext(
+                    module_name.as_ptr(), context);
+            LLVMBuilderImpl { context, module }
         }
     }
 }
 
-#[cfg(not(feature = "llvm-sys"))]
-impl LLVMBuilder {
-    fn new() -> LLVMBuilder {
-        LLVMBuilder {}
+#[cfg(feature = "llvm-sys")]
+impl IRBuilder for LLVMBuilderImpl {
+    fn emit_opaque_struct_type(&mut self, name: &String) {
+        unsafe {
+            let n = CString::new(name.clone()).unwrap();
+            llvm_sys::core::LLVMStructCreateNamed(self.context, n.as_ptr());
+        }
+    }
+
+    fn update_struct_type(&mut self,
+                          name: &String,
+                          fields: &Vec<SuField>,
+                          is_union: bool) {
+        // TODO: implement this
+        unsafe {
+            let name_cstr = CString::new(name.clone()).unwrap();
+            let tp =
+                llvm_sys::core::LLVMGetTypeByName(
+                    self.module, name_cstr.as_ptr());
+        }
     }
 }
+
+#[cfg(feature = "llvm-sys")]
+type LLVMBuilder = LLVMBuilderImpl;
+
+#[cfg(not(feature = "llvm-sys"))]
+type LLVMBuilder = DummyIRBuilder;
+
+type C4IRBuilder = DummyIRBuilder; // TODO: implement our own IR
 
 struct Compiler<'a> {
     translation_unit: &'a ast::TranslationUnit,
     current_scope: Scope,
     next_uuid: u32,
 
+    c4ir_builder: C4IRBuilder,
     llvm_builder: LLVMBuilder,
 }
 
@@ -189,6 +243,7 @@ impl Compiler<'_> {
                 translation_unit: &tu,
                 current_scope: Scope::new(),
                 next_uuid: 100,
+                c4ir_builder: C4IRBuilder::new(),
                 llvm_builder: LLVMBuilder::new(),
             };
         for ed in tu.eds.iter() {
@@ -402,6 +457,12 @@ impl Compiler<'_> {
                     } else {
                         String::from(name.0)
                     };
+                let ir_type_name =
+                    if name.0.is_empty() {
+                        tag_name.clone()
+                    } else {
+                        format!("{}.{}", name.0, su_type.uuid)
+                    };
 
                 let sue_type =
                     if is_struct {
@@ -412,7 +473,9 @@ impl Compiler<'_> {
                 self.current_scope.sue_tag_names_ns.insert(
                     tag_name.clone(),
                     sue_type);
-                // TODO: IR: emit opaque type
+
+                self.c4ir_builder.emit_opaque_struct_type(&ir_type_name);
+                self.llvm_builder.emit_opaque_struct_type(&ir_type_name);
 
                 if !bodies.is_empty() {
                     let f = |&b| self.get_su_field(b);
@@ -428,7 +491,14 @@ impl Compiler<'_> {
                         tag_name,
                         sue_type);
 
-                    // TODO: IR: update type
+                    self.c4ir_builder.update_struct_type(
+                        &ir_type_name,
+                        su_type.fields.as_ref().unwrap(),
+                        !is_struct);
+                    self.llvm_builder.update_struct_type(
+                        &ir_type_name,
+                        su_type.fields.as_ref().unwrap(),
+                        !is_struct);
                 }
 
                 if is_struct {
@@ -512,6 +582,7 @@ impl Compiler<'_> {
         r
     }
 
+    // TODO: caller/callee check type completeness?
     fn unwrap_declarator(&mut self, tp: QType, d: L<&ast::Declarator>) -> (QType, String) {
         unimplemented!() // TODO
     }
