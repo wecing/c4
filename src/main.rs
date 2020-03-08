@@ -4,6 +4,7 @@ use std::io;
 use std::mem;
 use std::ptr;
 use std::ffi::CString;
+use std::convert::TryInto;
 
 mod ast;
 
@@ -24,6 +25,8 @@ enum Type {
     Struct(Box<SuType>),
     Union(Box<SuType>),
     Enum(Box<EnumType>),
+    Pointer(Box<QType>),
+    Array(Box<QType>, Option<u32>),
 }
 
 #[derive(Debug, Clone)]
@@ -207,12 +210,12 @@ impl IRBuilder for LLVMBuilderImpl {
                           name: &String,
                           fields: &Vec<SuField>,
                           is_union: bool) {
-        // TODO: implement this
         unsafe {
             let name_cstr = CString::new(name.clone()).unwrap();
             let tp =
                 llvm_sys::core::LLVMGetTypeByName(
                     self.module, name_cstr.as_ptr());
+            unimplemented!() // TODO: implement this
         }
     }
 }
@@ -583,8 +586,58 @@ impl Compiler<'_> {
     }
 
     // TODO: caller/callee check type completeness?
-    fn unwrap_declarator(&mut self, tp: QType, d: L<&ast::Declarator>) -> (QType, String) {
-        unimplemented!() // TODO
+    fn unwrap_declarator(&self,
+                         mut tp: QType,
+                         d: L<&ast::Declarator>) -> (QType, String) {
+        tp = self.unwrap_pointer(tp, d.0.ptr_idx);
+        self.unwrap_direct_declarator(tp, d.0.dd_idx)
+    }
+
+    fn unwrap_direct_declarator(&self,
+                                mut tp: QType,
+                                dd_idx_i32: i32) -> (QType, String) {
+        let dd_idx: usize = dd_idx_i32.try_into().unwrap();
+        let dd = &self.translation_unit.direct_declarators[dd_idx];
+        use ast::DirectDeclarator_oneof_dd as DD;
+        match dd.dd.as_ref().unwrap() {
+            DD::id(id) =>
+                (tp, id.id.clone()),
+            DD::d(d) =>
+                self.unwrap_declarator(tp, (d.get_d(), d.get_loc())),
+            DD::array(array) => {
+                let size: Option<u32> = unimplemented!(); // TODO
+                tp = QType {
+                    is_const: false,
+                    is_volatile: false,
+                    tp: Type::Array(Box::new(tp.clone()), size),
+                };
+                self.unwrap_direct_declarator(tp, array.size_idx)
+            }
+            DD::ft(ft) =>
+                unimplemented!(), // TODO
+            DD::ids_list(ids_list) =>
+                unimplemented!(), // TODO
+        }
+    }
+
+    fn unwrap_pointer(&self, mut tp: QType, ptr_idx_i32: i32) -> QType {
+        let mut ptr_idx: usize = ptr_idx_i32.try_into().unwrap();
+        while ptr_idx != 0 {
+            let pointer = &self.translation_unit.pointers[ptr_idx];
+            let type_qualifiers: Vec<L<ast::TypeQualifier>> =
+                pointer.get_qs().iter()
+                    .map(|q| q.clone())
+                    .zip(pointer.get_q_locs())
+                    .collect();
+            tp = QType {
+                is_const: false,
+                is_volatile: false,
+                tp: Type::Pointer(Box::new(tp.clone())),
+            };
+            tp = Compiler::qualify_type(&type_qualifiers, tp);
+            ptr_idx = pointer.ptr_idx.try_into().unwrap();
+        }
+        tp
     }
 
     fn qualify_type(tqs: &Vec<L<ast::TypeQualifier>>,
