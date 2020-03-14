@@ -27,6 +27,21 @@ enum Type {
     Enum(Box<EnumType>),
     Pointer(Box<QType>),
     Array(Box<QType>, Option<u32>),
+    Function(Box<QType>, Option<FuncParams>),
+}
+
+#[derive(Debug, Clone)]
+enum FuncParams {
+    Typed(Vec<TypedFuncParam>, bool),
+    // bool: is_varargs
+    Names(Vec<String>),
+}
+
+#[derive(Debug, Clone)]
+struct TypedFuncParam {
+    is_register: bool,
+    tp: QType,
+    name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +67,7 @@ struct SuType {
 #[derive(Debug, Clone)]
 struct EnumType {}
 
-#[derive(Debug)]
+#[derive(Debug)] // no copy, no clone
 struct Scope {
     outer_scope: Box<Option<Scope>>,
     sue_tag_names_ns: HashMap<String, SueType>,
@@ -79,21 +94,6 @@ impl Scope {
             outer_scope: Box::new(None),
             sue_tag_names_ns: HashMap::new(),
             ordinary_ids_ns: HashMap::new(),
-        }
-    }
-
-    fn enter(self) -> Scope {
-        Scope {
-            outer_scope: Box::new(Some(self)),
-            sue_tag_names_ns: HashMap::new(),
-            ordinary_ids_ns: HashMap::new(),
-        }
-    }
-
-    fn leave(mut self) -> Scope {
-        match *mem::replace(&mut self.outer_scope, Box::new(None)) {
-            None => panic!("Cannot leave file scope {:?}", self),
-            Some(s) => s
         }
     }
 
@@ -263,34 +263,9 @@ impl Compiler<'_> {
     }
 
     fn visit_declaration(&mut self, dl: &ast::Declaration) {
-        let storage_class_specifiers: Vec<L<ast::StorageClassSpecifier>> =
-            dl.get_dss().iter()
-                .filter(|ds| ds.has_scs())
-                .map(|ds| (ds.get_scs(), ds.get_loc()))
-                .collect();
-        let type_specifiers: Vec<L<&ast::TypeSpecifier>> =
-            dl.get_dss().iter()
-                .filter(|ds| ds.has_ts())
-                .map(|ds| (ds.get_ts(), ds.get_loc()))
-                .collect();
-        let type_qualifiers: Vec<L<ast::TypeQualifier>> =
-            dl.get_dss().iter()
-                .filter(|ds| ds.has_tq())
-                .map(|ds| (ds.get_tq(), ds.get_loc()))
-                .collect();
-
-        // 3.5.1: At most one storage-class specifier may be given in the
-        // declaration specifiers in a declaration.
-        if 1 < storage_class_specifiers.len() {
-            panic!("{}: More than one storage class specifier found",
-                   Compiler::format_loc(storage_class_specifiers[1].1));
-        }
-
-        let has_declarator = !dl.get_ids().is_empty();
-        let qualified_type: QType =
-            Compiler::qualify_type(
-                &type_qualifiers,
-                self.get_type(&type_specifiers, has_declarator));
+        let (storage_class_specifier, qualified_type) =
+            self.visit_declaration_specifiers(
+                dl.get_dss(), !dl.get_ids().is_empty());
 
 //        use ast::StorageClassSpecifier as SCS;
 //        if let &[(SCS::TYPEDEF, &loc)] = storage_class_specifiers {
@@ -298,6 +273,43 @@ impl Compiler<'_> {
 //        }
 
         // TODO
+    }
+
+    fn visit_declaration_specifiers<'a>(
+        &mut self,
+        dss: &'a [ast::DeclarationSpecifier],
+        has_declarator: bool,
+    ) -> (L<'a, ast::StorageClassSpecifier>, QType) {
+        let storage_class_specifiers: Vec<L<ast::StorageClassSpecifier>> =
+            dss.into_iter()
+                .filter(|ds| ds.has_scs())
+                .map(|ds| (ds.get_scs(), ds.get_loc()))
+                .collect();
+        let type_specifiers: Vec<L<&ast::TypeSpecifier>> =
+            dss.into_iter()
+                .filter(|ds| ds.has_ts())
+                .map(|ds| (ds.get_ts(), ds.get_loc()))
+                .collect();
+        let type_qualifiers: Vec<L<ast::TypeQualifier>> =
+            dss.into_iter()
+                .filter(|ds| ds.has_tq())
+                .map(|ds| (ds.get_tq(), ds.get_loc()))
+                .collect();
+
+        // 3.5.1: At most one storage-class specifier may be given in the
+        // declaration specifiers in a declaration.
+        // 3.5.4.3: The storage-class specifier in the declaration specifiers...
+        if 1 < storage_class_specifiers.len() {
+            panic!("{}: More than one storage class specifier found",
+                   Compiler::format_loc(storage_class_specifiers[1].1));
+        }
+
+        let qualified_type: QType =
+            Compiler::qualify_type(
+                &type_qualifiers,
+                self.get_type(&type_specifiers, has_declarator));
+
+        (storage_class_specifiers[0], qualified_type)
     }
 
     fn get_type(&mut self,
@@ -586,14 +598,14 @@ impl Compiler<'_> {
     }
 
     // TODO: caller/callee check type completeness?
-    fn unwrap_declarator(&self,
+    fn unwrap_declarator(&mut self,
                          mut tp: QType,
                          d: L<&ast::Declarator>) -> (QType, String) {
         tp = self.unwrap_pointer(tp, d.0.ptr_idx);
         self.unwrap_direct_declarator(tp, d.0.dd_idx)
     }
 
-    fn unwrap_direct_declarator(&self,
+    fn unwrap_direct_declarator(&mut self,
                                 mut tp: QType,
                                 dd_idx_i32: i32) -> (QType, String) {
         let dd_idx: usize = dd_idx_i32.try_into().unwrap();
@@ -613,10 +625,32 @@ impl Compiler<'_> {
                 };
                 self.unwrap_direct_declarator(tp, array.size_idx)
             }
-            DD::ft(ft) =>
-                unimplemented!(), // TODO
-            DD::ids_list(ids_list) =>
-                unimplemented!(), // TODO
+            DD::ft(ft) => {
+                self.enter_scope();
+                let params =
+                    FuncParams::Typed(
+                        ft.pds.iter()
+                            .zip(ft.get_pd_locs())
+                            .map(|pd| self.get_typed_func_param(pd))
+                            .collect(),
+                        ft.has_ellipsis);
+                self.leave_scope();
+                tp = QType {
+                    is_const: false,
+                    is_volatile: false,
+                    tp: Type::Function(Box::new(tp.clone()), Some(params)),
+                };
+                self.unwrap_direct_declarator(tp, ft.dd_idx)
+            }
+            DD::ids_list(ids_list) => {
+                let names = FuncParams::Names(ids_list.ids.clone().into_vec());
+                tp = QType {
+                    is_const: false,
+                    is_volatile: false,
+                    tp: Type::Function(Box::new(tp.clone()), Some(names)),
+                };
+                self.unwrap_direct_declarator(tp, ids_list.dd_idx)
+            }
         }
     }
 
@@ -638,6 +672,19 @@ impl Compiler<'_> {
             ptr_idx = pointer.ptr_idx.try_into().unwrap();
         }
         tp
+    }
+
+    fn get_typed_func_param(&mut self,
+                            pd: L<&ast::ParamDeclaration>) -> TypedFuncParam {
+        use ast::ParamDeclaration_oneof_pd as PD;
+        match pd.0.pd.as_ref().unwrap() {
+            PD::name(named) =>
+                unimplemented!(), // TODO
+            PD::type_only(type_only) =>
+                unimplemented!(), // TODO
+            PD::type_only_simple(type_only_simple) =>
+                unimplemented!(), // TODO
+        }
     }
 
     fn qualify_type(tqs: &Vec<L<ast::TypeQualifier>>,
@@ -667,6 +714,20 @@ impl Compiler<'_> {
             .map_or(
                 String::from("<unknown location>"),
                 |r| format!("{}:{}:{}", r.file_name, r.line_begin, r.col_begin))
+    }
+
+    fn enter_scope(&mut self) {
+        let old_scope = mem::replace(&mut self.current_scope, Scope::new());
+        self.current_scope.outer_scope = Box::new(Some(old_scope));
+    }
+
+    fn leave_scope(&mut self) {
+        let outer_scope =
+            mem::replace(&mut self.current_scope.outer_scope, Box::new(None));
+        match *outer_scope {
+            None => panic!("Cannot leave file scope {:?}", self.current_scope),
+            Some(s) => self.current_scope = s,
+        }
     }
 
     fn get_next_uuid(&mut self) -> u32 {
