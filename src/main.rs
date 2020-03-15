@@ -278,9 +278,9 @@ impl Compiler<'_> {
     fn visit_declaration_specifiers<'a>(
         &mut self,
         dss: &'a [ast::DeclarationSpecifier],
-        has_declarator: bool,
-    ) -> (L<'a, ast::StorageClassSpecifier>, QType) {
-        let storage_class_specifiers: Vec<L<ast::StorageClassSpecifier>> =
+        size_required: bool,
+    ) -> (Option<L<'a, ast::StorageClassSpecifier>>, QType) {
+        let mut storage_class_specifiers: Vec<L<ast::StorageClassSpecifier>> =
             dss.into_iter()
                 .filter(|ds| ds.has_scs())
                 .map(|ds| (ds.get_scs(), ds.get_loc()))
@@ -307,14 +307,14 @@ impl Compiler<'_> {
         let qualified_type: QType =
             Compiler::qualify_type(
                 &type_qualifiers,
-                self.get_type(&type_specifiers, has_declarator));
+                self.get_type(&type_specifiers, size_required));
 
-        (storage_class_specifiers[0], qualified_type)
+        (storage_class_specifiers.pop(), qualified_type)
     }
 
     fn get_type(&mut self,
                 tss: &Vec<L<&ast::TypeSpecifier>>,
-                has_declarator: bool) -> QType {
+                size_required: bool) -> QType {
         let q = |tp| QType {
             is_const: false,
             is_volatile: false,
@@ -325,81 +325,79 @@ impl Compiler<'_> {
                 .flat_map(|(ts, loc)| ts.s.iter())
                 .collect();
         use ast::TypeSpecifier_oneof_s as TS;
-        let tp: QType =
-            match cases.as_slice() {
-                [TS::void(_)] =>
-                    q(Type::Void),
-                [TS::char(_)] |
-                [TS::signed(_), TS::char(_)] =>
-                    q(Type::Char),
-                [TS::unsigned(_), TS::char(_)] =>
-                    q(Type::UnsignedChar),
-                [TS::short(_)] |
-                [TS::signed(_), TS::short(_)] |
-                [TS::short(_), TS::int(_)] |
-                [TS::signed(_), TS::short(_), TS::int(_)] =>
-                    q(Type::Short),
-                [TS::unsigned(_), TS::short(_)] |
-                [TS::unsigned(_), TS::short(_), TS::int(_)] =>
-                    q(Type::UnsignedShort),
-                [TS::int(_)] |
-                [TS::signed(_)] |
-                [TS::signed(_), TS::int(_)] |
-                [] =>
-                    q(Type::Int),
-                [TS::unsigned(_)] |
-                [TS::unsigned(_), TS::int(_)] =>
-                    q(Type::UnsignedInt),
-                [TS::long(_)] |
-                [TS::signed(_), TS::long(_)] |
-                [TS::long(_), TS::int(_)] |
-                [TS::signed(_), TS::long(_), TS::int(_)] =>
-                    q(Type::Long),
-                [TS::unsigned(_), TS::long(_)] |
-                [TS::unsigned(_), TS::long(_), TS::int(_)] =>
-                    q(Type::UnsignedLong),
-                [TS::float(_)] =>
-                    q(Type::Float),
-                [TS::double(_)] =>
-                    q(Type::Double),
-                [TS::long(_), TS::double(_)] =>
-                    q(Type::Double),
-                [TS::field_struct(s)] =>
-                    q(self.get_struct_type((s, tss[0].1), has_declarator)),
-                [TS::union(u)] =>
-                    q(self.get_union_type((u, tss[0].1), has_declarator)),
-                [TS::field_enum(e)] =>
-                    q(self.get_enum_type((e, tss[0].1))),
-                [TS::typedef_name(s)] =>
-                    self.get_typedef_type((s, tss[0].1)),
-                _ =>
-                    panic!("{}: Illegal type specifiers list",
-                           Compiler::format_loc(tss[0].1)),
-            };
-        unimplemented!() // TODO
+        match cases.as_slice() {
+            [TS::void(_)] =>
+                q(Type::Void),
+            [TS::char(_)] |
+            [TS::signed(_), TS::char(_)] =>
+                q(Type::Char),
+            [TS::unsigned(_), TS::char(_)] =>
+                q(Type::UnsignedChar),
+            [TS::short(_)] |
+            [TS::signed(_), TS::short(_)] |
+            [TS::short(_), TS::int(_)] |
+            [TS::signed(_), TS::short(_), TS::int(_)] =>
+                q(Type::Short),
+            [TS::unsigned(_), TS::short(_)] |
+            [TS::unsigned(_), TS::short(_), TS::int(_)] =>
+                q(Type::UnsignedShort),
+            [TS::int(_)] |
+            [TS::signed(_)] |
+            [TS::signed(_), TS::int(_)] |
+            [] =>
+                q(Type::Int),
+            [TS::unsigned(_)] |
+            [TS::unsigned(_), TS::int(_)] =>
+                q(Type::UnsignedInt),
+            [TS::long(_)] |
+            [TS::signed(_), TS::long(_)] |
+            [TS::long(_), TS::int(_)] |
+            [TS::signed(_), TS::long(_), TS::int(_)] =>
+                q(Type::Long),
+            [TS::unsigned(_), TS::long(_)] |
+            [TS::unsigned(_), TS::long(_), TS::int(_)] =>
+                q(Type::UnsignedLong),
+            [TS::float(_)] =>
+                q(Type::Float),
+            [TS::double(_)] =>
+                q(Type::Double),
+            [TS::long(_), TS::double(_)] =>
+                q(Type::Double),
+            [TS::field_struct(s)] =>
+                q(self.get_struct_type((s, tss[0].1), size_required)),
+            [TS::union(u)] =>
+                q(self.get_union_type((u, tss[0].1), size_required)),
+            [TS::field_enum(e)] =>
+                q(self.get_enum_type((e, tss[0].1))),
+            [TS::typedef_name(s)] =>
+                self.get_typedef_type((s, tss[0].1)),
+            _ =>
+                panic!("{}: Illegal type specifiers list",
+                       Compiler::format_loc(tss[0].1)),
+        }
     }
 
     fn get_struct_type(&mut self,
                        s: L<&ast::TypeSpecifier_Struct>,
-                       has_declarator: bool) -> Type {
+                       size_required: bool) -> Type {
         let name = (s.0.get_name(), s.0.get_name_loc());
         let bodies = s.0.get_bodies().iter().zip(s.0.get_body_locs()).collect();
-        self.get_su_type(name, bodies, has_declarator, true)
+        self.get_su_type(name, bodies, size_required, true)
     }
 
     fn get_union_type(&mut self,
                       s: L<&ast::TypeSpecifier_Union>,
-                      has_declarator: bool) -> Type {
+                      size_required: bool) -> Type {
         let name = (s.0.get_name(), s.0.get_name_loc());
         let bodies = s.0.get_bodies().iter().zip(s.0.get_body_locs()).collect();
-        self.get_su_type(name, bodies, has_declarator, false)
+        self.get_su_type(name, bodies, size_required, false)
     }
 
     fn get_su_type(&mut self,
                    name: L<&str>,
                    // `struct S {}` is illegal syntax
                    bodies: Vec<L<&ast::StructDeclaration>>,
-                   has_declarator: bool, // has declarator or within a sizeof()
+                   size_required: bool,
                    is_struct: bool) -> Type {
         // this case is invalid:
         //      struct S {...};
@@ -413,7 +411,7 @@ impl Compiler<'_> {
         // declarator is a reference, instead of declaration... except when
         // there is nothing to refer to. i.e. this case is also valid:
         //      struct S *sp;
-        let try_ref = bodies.is_empty() && has_declarator;
+        let try_ref = bodies.is_empty() && size_required;
 
         match self.current_scope.lookup_sue_type(name.0) {
             // sanity checks
@@ -545,8 +543,7 @@ impl Compiler<'_> {
     }
 
     fn get_su_field(&mut self,
-                    sd: L<&ast::StructDeclaration>)
-                    -> Vec<SuField> {
+                    sd: L<&ast::StructDeclaration>) -> Vec<SuField> {
         let type_specifiers: Vec<L<&ast::TypeSpecifier>> =
             sd.0.get_sp_qls().iter()
                 .filter(|spql| spql.has_sp())
@@ -621,24 +618,19 @@ impl Compiler<'_> {
                 tp = QType {
                     is_const: false,
                     is_volatile: false,
-                    tp: Type::Array(Box::new(tp.clone()), size),
+                    tp: Type::Array(Box::new(tp), size),
                 };
-                self.unwrap_direct_declarator(tp, array.size_idx)
+                self.unwrap_direct_declarator(tp, array.dd_idx)
             }
             DD::ft(ft) => {
-                self.enter_scope();
-                let params =
-                    FuncParams::Typed(
-                        ft.pds.iter()
-                            .zip(ft.get_pd_locs())
-                            .map(|pd| self.get_typed_func_param(pd))
-                            .collect(),
-                        ft.has_ellipsis);
-                self.leave_scope();
+                let pds = ft.get_pds().iter().zip(ft.get_pd_locs()).collect();
+                // TODO: do not hard code `is_function_definition`
+                let func_params_opt =
+                    self.get_typed_func_params(pds, ft.has_ellipsis, false);
                 tp = QType {
                     is_const: false,
                     is_volatile: false,
-                    tp: Type::Function(Box::new(tp.clone()), Some(params)),
+                    tp: Type::Function(Box::new(tp), func_params_opt),
                 };
                 self.unwrap_direct_declarator(tp, ft.dd_idx)
             }
@@ -647,9 +639,52 @@ impl Compiler<'_> {
                 tp = QType {
                     is_const: false,
                     is_volatile: false,
-                    tp: Type::Function(Box::new(tp.clone()), Some(names)),
+                    tp: Type::Function(Box::new(tp), Some(names)),
                 };
                 self.unwrap_direct_declarator(tp, ids_list.dd_idx)
+            }
+        }
+    }
+
+    fn unwrap_abstract_declarator(&mut self,
+                                  mut tp: QType,
+                                  ad: L<&ast::AbstractDeclarator>) -> QType {
+        tp = self.unwrap_pointer(tp, ad.0.ptr_idx);
+        self.unwrap_direct_abstract_declarator(tp, ad.0.dad_idx)
+    }
+
+    fn unwrap_direct_abstract_declarator(&mut self,
+                                         mut tp: QType,
+                                         dad_idx_i32: i32) -> QType {
+        let dad_idx: usize = dad_idx_i32.try_into().unwrap();
+        let dad = &self.translation_unit.direct_abstract_declarators[dad_idx];
+        use ast::DirectAbstractDeclarator_oneof_dad as DAD;
+        match dad.dad.as_ref().unwrap() {
+            DAD::simple(simple) =>
+                self.unwrap_abstract_declarator(
+                    tp, (simple.get_ad(), simple.get_ad_loc())),
+            DAD::array(array) => {
+                let size: Option<u32> = unimplemented!(); // TODO
+                tp = QType {
+                    is_const: false,
+                    is_volatile: false,
+                    tp: Type::Array(Box::new(tp), size),
+                };
+                self.unwrap_direct_abstract_declarator(tp, array.dad_idx)
+            }
+            DAD::func(func) => {
+                let pds =
+                    func.get_pds().iter()
+                        .zip(func.get_pd_locs())
+                        .collect();
+                let func_params_opt =
+                    self.get_typed_func_params(pds, func.has_ellipsis, false);
+                tp = QType {
+                    is_const: false,
+                    is_volatile: false,
+                    tp: Type::Function(Box::new(tp), func_params_opt),
+                };
+                self.unwrap_direct_abstract_declarator(tp, func.dad_idx)
             }
         }
     }
@@ -674,16 +709,86 @@ impl Compiler<'_> {
         tp
     }
 
+    fn get_typed_func_params(&mut self,
+                             pds: Vec<L<&ast::ParamDeclaration>>,
+                             has_ellipsis: bool,
+                             is_function_definition: bool) -> Option<FuncParams> {
+        self.enter_scope();
+        let v: Vec<TypedFuncParam> =
+            pds.into_iter()
+                .map(|pd| self.get_typed_func_param(pd, is_function_definition))
+                .collect();
+        // TODO: do not leave scope if is_function_definition
+        self.leave_scope();
+        let is_void =
+            |p: &TypedFuncParam|
+                match p {
+                    TypedFuncParam {
+                        is_register: false,
+                        tp: QType {
+                            is_volatile: false,
+                            is_const: false,
+                            tp: Type::Void,
+                        },
+                        name: None,
+                    } => true,
+                    _ => false,
+                };
+        // TODO: does C89 allow type-only params in function definitions?
+        match v.as_slice() {
+            // 3.5.4.3: An empty list in a function declarator that...
+            // - is part of a function definition:
+            //   > specifies that the function has no parameters.
+            // - is not part of a function definition:
+            //   > specifies that no information about the number or types of
+            //     the parameters is supplied.
+            [] if !is_function_definition => None,
+            [] => Some(FuncParams::Typed(vec!(), false)),
+            // "int f(void) {...}"
+            [p] if is_void(p) && !has_ellipsis =>
+                Some(FuncParams::Typed(vec!(), false)),
+            _ => Some(FuncParams::Typed(v, has_ellipsis)),
+        }
+    }
+
     fn get_typed_func_param(&mut self,
-                            pd: L<&ast::ParamDeclaration>) -> TypedFuncParam {
+                            pd: L<&ast::ParamDeclaration>,
+                            size_required: bool) -> TypedFuncParam {
+        let mut get_is_register_qtype =
+            |dss| {
+                let (scs_opt, qtype) =
+                    self.visit_declaration_specifiers(dss, false);
+                use ast::StorageClassSpecifier as SCS;
+                match scs_opt {
+                    None => (false, qtype),
+                    Some((SCS::REGISTER, _)) => (true, qtype),
+                    Some((_, scs_loc)) =>
+                        panic!("{}: Invalid storage class specifier \
+                            in function declarator",
+                               Compiler::format_loc(scs_loc)),
+                }
+            };
         use ast::ParamDeclaration_oneof_pd as PD;
         match pd.0.pd.as_ref().unwrap() {
-            PD::name(named) =>
-                unimplemented!(), // TODO
-            PD::type_only(type_only) =>
-                unimplemented!(), // TODO
-            PD::type_only_simple(type_only_simple) =>
-                unimplemented!(), // TODO
+            PD::name(named) => {
+                let (is_register, tp) =
+                    get_is_register_qtype(named.get_dss());
+                let d = (named.get_d(), named.get_d_loc());
+                let (tp, name) = self.unwrap_declarator(tp, d);
+                TypedFuncParam { is_register, tp, name: Some(name) }
+            }
+            PD::type_only(type_only) => {
+                let (is_register, tp) =
+                    get_is_register_qtype(type_only.get_dss());
+                let ad = (type_only.get_ad(), type_only.get_ad_loc());
+                let tp = self.unwrap_abstract_declarator(tp, ad);
+                TypedFuncParam { is_register, tp, name: None }
+            }
+            PD::type_only_simple(type_only_simple) => {
+                let (is_register, tp) =
+                    get_is_register_qtype(type_only_simple.get_dss());
+                TypedFuncParam { is_register, tp, name: None }
+            }
         }
     }
 
