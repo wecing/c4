@@ -207,6 +207,95 @@ impl LLVMBuilderImpl {
             LLVMBuilderImpl { context, module }
         }
     }
+
+    fn get_llvm_type(&self, tp: &Type) -> llvm_sys::prelude::LLVMTypeRef {
+        unsafe {
+            match tp {
+                Type::Void => {
+                    llvm_sys::core::LLVMVoidTypeInContext(self.context)
+                }
+                Type::Char | Type::UnsignedChar => {
+                    llvm_sys::core::LLVMInt8TypeInContext(self.context)
+                }
+                Type::Short | Type::UnsignedShort => {
+                    llvm_sys::core::LLVMInt16TypeInContext(self.context)
+                }
+                Type::Int | Type::UnsignedInt => {
+                    llvm_sys::core::LLVMInt32TypeInContext(self.context)
+                }
+                Type::Long | Type::UnsignedLong => {
+                    llvm_sys::core::LLVMInt64TypeInContext(self.context)
+                }
+                Type::Float => {
+                    llvm_sys::core::LLVMFloatTypeInContext(self.context)
+                }
+                Type::Double => {
+                    llvm_sys::core::LLVMDoubleTypeInContext(self.context)
+                }
+                Type::Struct(su) | Type::Union(su) => {
+                    let type_name =
+                        CString::new(format!("$.{}", su.uuid)).unwrap();
+                    llvm_sys::core::LLVMGetTypeByName(
+                        self.module,
+                        type_name.as_ptr(),
+                    )
+                }
+                Type::Enum(_) => {
+                    llvm_sys::core::LLVMInt32TypeInContext(self.context)
+                }
+                Type::Pointer(tp) => llvm_sys::core::LLVMPointerType(
+                    self.get_llvm_type(&tp.tp),
+                    0,
+                ),
+                Type::Array(tp, sz) => {
+                    if sz.is_none() {
+                        panic!("get_llvm_type() invoked with incomplete array type");
+                    }
+                    llvm_sys::core::LLVMArrayType(
+                        self.get_llvm_type(&tp.tp),
+                        sz.unwrap(),
+                    )
+                }
+                Type::Function(tp, params_opt) => {
+                    let return_type = self.get_llvm_type(&tp.tp);
+                    match params_opt {
+                        None => llvm_sys::core::LLVMFunctionType(
+                            return_type,
+                            ptr::null_mut(),
+                            0,
+                            true as i32,
+                        ),
+                        Some(FuncParams::Typed(params, is_vararg)) => {
+                            let mut args: Vec<llvm_sys::prelude::LLVMTypeRef> =
+                                params
+                                    .iter()
+                                    .map(|p| self.get_llvm_type(&p.tp.tp))
+                                    .collect();
+                            llvm_sys::core::LLVMFunctionType(
+                                return_type,
+                                args.as_mut_ptr(),
+                                args.len() as u32,
+                                *is_vararg as i32,
+                            )
+                        }
+                        Some(FuncParams::Names(params)) => {
+                            let mut args: Vec<llvm_sys::prelude::LLVMTypeRef> =
+                                params
+                                    .iter()
+                                    .map(|_| self.get_llvm_type(&Type::Int))
+                                    .collect();
+                            llvm_sys::core::LLVMFunctionType(
+                                return_type,
+                                args.as_mut_ptr(),
+                                args.len() as u32,
+                                false as i32,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -230,7 +319,17 @@ impl IRBuilder for LLVMBuilderImpl {
                 self.module,
                 name_cstr.as_ptr(),
             );
-            unimplemented!() // TODO: implement this
+            let mut element_types: Vec<llvm_sys::prelude::LLVMTypeRef> = fields
+                .iter()
+                .map(|su_field| self.get_llvm_type(&su_field.tp.tp))
+                .collect();
+            // TODO: need to verify struct has size (& alignment)
+            llvm_sys::core::LLVMStructSetBody(
+                tp,
+                element_types.as_mut_ptr(),
+                element_types.len() as u32,
+                false as i32,
+            )
         }
     }
 }
@@ -511,15 +610,11 @@ impl Compiler<'_> {
                     uuid: self.get_next_uuid(),
                 };
                 let tag_name = if name.0.is_empty() {
-                    format!("tag.{}", su_type.uuid)
+                    format!("$.{}", su_type.uuid)
                 } else {
                     String::from(name.0)
                 };
-                let ir_type_name = if name.0.is_empty() {
-                    tag_name.clone()
-                } else {
-                    format!("{}.{}", name.0, su_type.uuid)
-                };
+                let ir_type_name = format!("$.{}", su_type.uuid);
 
                 let sue_type = if is_struct {
                     SueType::Struct(Box::new(su_type.clone()))
