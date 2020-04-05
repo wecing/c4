@@ -382,12 +382,30 @@ impl Compiler<'_> {
                 !dl.get_ids().is_empty(),
             );
 
-        //        use ast::StorageClassSpecifier as SCS;
-        //        if let &[(SCS::TYPEDEF, &loc)] = storage_class_specifiers {
-        //
-        //        }
+        let scs = storage_class_specifier.map(|(scs, _)| scs);
 
-        // TODO
+        use ast::StorageClassSpecifier as SCS;
+        if scs == Some(SCS::TYPEDEF) {
+            dl.ids.iter().for_each(|id| {
+                let (tp, name) = self.unwrap_declarator(
+                    qualified_type.clone(),
+                    (id.get_d(), id.get_d_loc()),
+                );
+                let old_value = self.current_scope.ordinary_ids_ns.insert(
+                    name.clone(),
+                    OrdinaryIdRef::TypedefRef(Box::new(tp)),
+                );
+                if old_value.is_some() {
+                    panic!(
+                        "{}: Redefinition of typedef {}",
+                        Compiler::format_loc(id.get_d_loc()),
+                        name
+                    );
+                }
+            });
+        } else {
+            // TODO
+        }
     }
 
     fn visit_declaration_specifiers<'a>(
