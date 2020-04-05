@@ -373,6 +373,7 @@ impl Compiler<'_> {
 
     fn visit_function_def(&mut self, fd: &ast::FunctionDef) {
         // TODO
+        // self.leave_scope();
     }
 
     fn visit_declaration(&mut self, dl: &ast::Declaration) {
@@ -390,6 +391,7 @@ impl Compiler<'_> {
                 let (tp, name) = self.unwrap_declarator(
                     qualified_type.clone(),
                     (id.get_d(), id.get_d_loc()),
+                    false,
                 );
                 let old_value = self.current_scope.ordinary_ids_ns.insert(
                     name.clone(),
@@ -736,6 +738,7 @@ impl Compiler<'_> {
                         self.unwrap_declarator(
                             qualified_type.clone(),
                             (decl.get_d(), decl.get_d_loc()),
+                            false,
                         )
                     } else {
                         (qualified_type.clone(), String::from(""))
@@ -766,22 +769,26 @@ impl Compiler<'_> {
         &mut self,
         mut tp: QType,
         d: L<&ast::Declarator>,
+        is_function_definition: bool,
     ) -> (QType, String) {
         tp = self.unwrap_pointer(tp, d.0.ptr_idx);
-        self.unwrap_direct_declarator(tp, d.0.dd_idx)
+        self.unwrap_direct_declarator(tp, d.0.dd_idx, is_function_definition)
     }
 
     fn unwrap_direct_declarator(
         &mut self,
         mut tp: QType,
         dd_idx_i32: i32,
+        is_function_definition: bool,
     ) -> (QType, String) {
         let dd_idx: usize = dd_idx_i32.try_into().unwrap();
         let dd = &self.translation_unit.direct_declarators[dd_idx];
         use ast::DirectDeclarator_oneof_dd as DD;
         match dd.dd.as_ref().unwrap() {
             DD::id(id) => (tp, id.id.clone()),
-            DD::d(d) => self.unwrap_declarator(tp, (d.get_d(), d.get_loc())),
+            DD::d(d) => {
+                self.unwrap_declarator(tp, (d.get_d(), d.get_loc()), false)
+            }
             DD::array(array) => {
                 let size: Option<u32> = unimplemented!(); // TODO
                 tp = QType {
@@ -789,19 +796,21 @@ impl Compiler<'_> {
                     is_volatile: false,
                     tp: Type::Array(Box::new(tp), size),
                 };
-                self.unwrap_direct_declarator(tp, array.dd_idx)
+                self.unwrap_direct_declarator(tp, array.dd_idx, false)
             }
             DD::ft(ft) => {
                 let pds = ft.get_pds().iter().zip(ft.get_pd_locs()).collect();
-                // TODO: do not hard code `is_function_definition`
-                let func_params_opt =
-                    self.get_typed_func_params(pds, ft.has_ellipsis, false);
+                let func_params_opt = self.get_typed_func_params(
+                    pds,
+                    ft.has_ellipsis,
+                    is_function_definition,
+                );
                 tp = QType {
                     is_const: false,
                     is_volatile: false,
                     tp: Type::Function(Box::new(tp), func_params_opt),
                 };
-                self.unwrap_direct_declarator(tp, ft.dd_idx)
+                self.unwrap_direct_declarator(tp, ft.dd_idx, false)
             }
             DD::ids_list(ids_list) => {
                 let names = FuncParams::Names(ids_list.ids.clone().into_vec());
@@ -810,7 +819,7 @@ impl Compiler<'_> {
                     is_volatile: false,
                     tp: Type::Function(Box::new(tp), Some(names)),
                 };
-                self.unwrap_direct_declarator(tp, ids_list.dd_idx)
+                self.unwrap_direct_declarator(tp, ids_list.dd_idx, false)
             }
         }
     }
@@ -893,8 +902,9 @@ impl Compiler<'_> {
             .into_iter()
             .map(|pd| self.get_typed_func_param(pd, is_function_definition))
             .collect();
-        // TODO: do not leave scope if is_function_definition
-        self.leave_scope();
+        if !is_function_definition {
+            self.leave_scope();
+        } // otherwise: let visit_function_def close the scope
         let is_void = |p: &TypedFuncParam| match p {
             TypedFuncParam {
                 is_register: false,
@@ -950,7 +960,7 @@ impl Compiler<'_> {
             PD::name(named) => {
                 let (is_register, tp) = get_is_register_qtype(named.get_dss());
                 let d = (named.get_d(), named.get_d_loc());
-                let (tp, name) = self.unwrap_declarator(tp, d);
+                let (tp, name) = self.unwrap_declarator(tp, d, false);
                 TypedFuncParam {
                     is_register,
                     tp,
