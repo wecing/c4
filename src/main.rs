@@ -1,3 +1,4 @@
+use protobuf::ProtobufEnum;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::error::Error;
@@ -81,11 +82,20 @@ enum SueType {
     Enum(Box<EnumType>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum Linkage {
+    EXTERNAL,
+    INTERNAL,
+    NONE,
+}
+
+#[derive(Debug, Clone)]
 enum OrdinaryIdRef {
     TypedefRef(Box<QType>),
     EnumRef(Box<EnumType>),
-    // OtherRef(QType, LValue(String) | RValue(String))
+    // ObjFnRef(ir_id, tp, is_lvalue, linkage, is_defined)
+    // for lvalues, the IR id refers to a pointer to `tp`.
+    ObjFnRef(String, QType, bool, Linkage, bool),
 }
 
 impl Scope {
@@ -99,16 +109,6 @@ impl Scope {
 
     fn is_file_scope(&self) -> bool {
         self.outer_scope.is_none()
-    }
-
-    fn get_file_scope(&self) -> &Scope {
-        let mut s: &Scope = self;
-        loop {
-            match s.outer_scope.as_ref() {
-                None => break s,
-                Some(outer) => s = outer,
-            }
-        }
     }
 
     fn lookup_ordinary_id(
@@ -372,8 +372,15 @@ impl Compiler<'_> {
     }
 
     fn visit_function_def(&mut self, fd: &ast::FunctionDef) {
-        // TODO
-        // self.leave_scope();
+        let (scs, rtp) = self.visit_declaration_specifiers(fd.get_dss(), true);
+        // unwrap_declarator(is_function_definition=true) enters a new scope
+        // without leaving it at the end.
+        let (ftp, fname) =
+            self.unwrap_declarator(rtp, (fd.get_d(), fd.get_d_loc()), true);
+        self.add_declaration(&fname, &scs, ftp, true, fd.get_d_loc());
+        // TODO: code gen
+        // TODO: rest logic
+        self.leave_scope();
     }
 
     fn visit_declaration(&mut self, dl: &ast::Declaration) {
@@ -406,10 +413,14 @@ impl Compiler<'_> {
                 }
             });
         } else {
+            // TODO: code gen: external/internal/none, initializer
             // TODO
         }
     }
 
+    // TODO: `size_required` is a bad choice of name. either rename it to
+    //       something like `has_declarator`, or ensure the struct is defined
+    //       in get_su_type().
     fn visit_declaration_specifiers<'a>(
         &mut self,
         dss: &'a [ast::DeclarationSpecifier],
@@ -900,7 +911,7 @@ impl Compiler<'_> {
         self.enter_scope();
         let v: Vec<TypedFuncParam> = pds
             .into_iter()
-            .map(|pd| self.get_typed_func_param(pd, is_function_definition))
+            .map(|pd| self.get_typed_func_param(pd))
             .collect();
         if !is_function_definition {
             self.leave_scope();
@@ -939,11 +950,9 @@ impl Compiler<'_> {
     fn get_typed_func_param(
         &mut self,
         pd: L<&ast::ParamDeclaration>,
-        size_required: bool,
     ) -> TypedFuncParam {
         let mut get_is_register_qtype = |dss| {
-            let (scs_opt, qtype) =
-                self.visit_declaration_specifiers(dss, false);
+            let (scs_opt, qtype) = self.visit_declaration_specifiers(dss, true);
             use ast::StorageClassSpecifier as SCS;
             match scs_opt {
                 None => (false, qtype),
@@ -988,6 +997,148 @@ impl Compiler<'_> {
                 }
             }
         }
+    }
+
+    fn add_declaration(
+        &mut self,
+        id: &String,
+        l_scs: &Option<L<ast::StorageClassSpecifier>>,
+        new_tp: QType,
+        pick_outer_scope: bool,
+        loc: &ast::Loc,
+    ) {
+        use ast::StorageClassSpecifier as SCS;
+        let scs: Option<SCS> = match l_scs {
+            None => None,
+            Some((SCS::EXTERN, _)) => Some(SCS::EXTERN),
+            Some((SCS::STATIC, _)) => Some(SCS::STATIC),
+            Some((other_scs, loc)) => panic!(
+                "{}: Illegal storage class specifier {}",
+                Compiler::format_loc(loc),
+                other_scs.descriptor().name()
+            ),
+        };
+        let next_uuid = self.get_next_uuid();
+        let mut scope: &mut Scope = &mut self.current_scope;
+        if pick_outer_scope {
+            match scope.outer_scope.as_mut() {
+                Some(s) => scope = s,
+                _ => panic!("programming error"),
+            }
+        }
+        let is_func = match new_tp.tp {
+            Type::Function(_, _) => true,
+            _ => false,
+        };
+
+        let insert_decl =
+            |scope: &mut Scope,
+             linkage_fn: fn(Option<(&Scope, Linkage)>) -> Linkage|
+             -> String {
+                match scope.lookup_ordinary_id(id.as_str()) {
+                    Some((
+                        OrdinaryIdRef::ObjFnRef(
+                            ir_id,
+                            old_tp,
+                            _,
+                            old_linkage,
+                            is_defined,
+                        ),
+                        old_scope,
+                    )) => {
+                        let linkage =
+                            linkage_fn(Some((old_scope, old_linkage.clone())));
+                        // 3.1.2.6: For an identifier with external or internal
+                        // linkage declared in the same scope as another
+                        // declaration for that identifier, the type of the
+                        // identifier becomes the composite type.
+                        let tp = if old_scope.same_as(scope)
+                            && linkage != Linkage::NONE
+                        {
+                            Compiler::get_composite_type(old_tp, &new_tp)
+                        } else if old_scope.same_as(scope) {
+                            // 3.1.2.2: Identifiers with no linkage denote
+                            // unique entities.
+                            panic!(
+                                "{}: Redefinition of identifier {}",
+                                Compiler::format_loc(loc),
+                                id
+                            );
+                        } else {
+                            new_tp.clone()
+                        };
+                        let new_ref = OrdinaryIdRef::ObjFnRef(
+                            ir_id.clone(),
+                            tp,
+                            true,
+                            linkage,
+                            *is_defined,
+                        );
+                        let ir_id_clone = ir_id.clone();
+                        scope.ordinary_ids_ns.insert(id.clone(), new_ref);
+                        ir_id_clone
+                    }
+                    Some((_, old_scope)) if old_scope.same_as(scope) => panic!(
+                        "{}: Redeclaration of '{}' as different kind of symbol",
+                        Compiler::format_loc(loc),
+                        id
+                    ),
+                    _ => {
+                        let linkage = linkage_fn(None);
+                        let ir_id = if linkage == Linkage::EXTERNAL {
+                            id.clone()
+                        } else {
+                            format!("${}.{}", id, next_uuid)
+                        };
+                        scope.ordinary_ids_ns.insert(
+                            id.clone(),
+                            OrdinaryIdRef::ObjFnRef(
+                                ir_id.clone(),
+                                new_tp.clone(),
+                                true,
+                                linkage,
+                                false,
+                            ),
+                        );
+                        ir_id
+                    }
+                }
+            };
+
+        if scope.is_file_scope() && scs == Some(SCS::STATIC) {
+            // 3.1.2.2: If the declaration of an identifier for an object or a
+            // function has file scope and contains the storage-class specifier
+            // static, the identifier has internal linkage.
+            insert_decl(scope, |_| Linkage::INTERNAL);
+        } else if scs == Some(SCS::EXTERN) || (is_func && scs.is_none()) {
+            // 3.1.2.2: If the declaration of an identifier for an object or a
+            // function contains the storage-class specifier extern, the
+            // identifier has the same linkage as any visible declaration of the
+            // identifier with file scope. If there is no visible declaration
+            // with file scope, the identifier has external linkage.
+            //
+            // If the declaration of an identifier for a function has no
+            // storage-class specifier, its linkage is determined exactly as if
+            // it were declared with the storage-class specifier extern.
+            insert_decl(scope, |scope_linkage| match scope_linkage {
+                Some((scope, linkage)) if scope.is_file_scope() => linkage,
+                _ => Linkage::EXTERNAL,
+            });
+        } else if !is_func && scope.is_file_scope() && scs.is_none() {
+            // 3.2.2.2: If the declaration of an identifier for an object has
+            // file scope and no storage-class specifier, its linkage is
+            // external.
+            insert_decl(scope, |_| Linkage::EXTERNAL);
+        } else {
+            // TODO: 3.1.2.4: An object declared with external or internal
+            //       linkage, or with the storage-class specifier static has
+            //       static storage duration
+            insert_decl(scope, |_| Linkage::NONE);
+        }
+    }
+
+    fn get_composite_type(left: &QType, right: &QType) -> QType {
+        unimplemented!() // TODO
     }
 
     fn qualify_type(
