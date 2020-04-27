@@ -759,9 +759,8 @@ impl Compiler<'_> {
                     } else {
                         Some(field_name)
                     };
-                    let bit_field_size = if decl.get_e() != 0 {
-                        let t: Option<u8> = unimplemented!(); // TODO
-                        t
+                    let bit_field_size: Option<u8> = if decl.get_e() != 0 {
+                        unimplemented!(); // TODO
                     } else {
                         None
                     };
@@ -1055,7 +1054,7 @@ impl Compiler<'_> {
                         let tp = if old_scope.same_as(scope)
                             && linkage != Linkage::NONE
                         {
-                            Compiler::get_composite_type(old_tp, &new_tp)
+                            Compiler::get_composite_type(old_tp, &new_tp, loc)
                         } else if old_scope.same_as(scope) {
                             // 3.1.2.2: Identifiers with no linkage denote
                             // unique entities.
@@ -1137,8 +1136,105 @@ impl Compiler<'_> {
         }
     }
 
-    fn get_composite_type(left: &QType, right: &QType) -> QType {
-        unimplemented!() // TODO
+    fn get_composite_type(old: &QType, new: &QType, loc: &ast::Loc) -> QType {
+        macro_rules! incompatible_panic {
+            () => {
+                panic!(
+                    "{}: Type incompatible with previous declaration",
+                    Compiler::format_loc(loc)
+                )
+            };
+        };
+
+        // 3.5.3: For two qualified types to be compatible, both shall have the
+        // identically qualified version of a compatible type; the order of type
+        // qualifiers within a list of specifiers or qualifiers does not affect
+        // the specified type.
+        if old.is_const != new.is_const || old.is_volatile != new.is_volatile {
+            incompatible_panic!();
+        }
+
+        let tp = match (&old.tp, &new.tp) {
+            (Type::Void, Type::Void) => Type::Void,
+            (Type::Char, Type::Char) => Type::Char,
+            (Type::UnsignedChar, Type::UnsignedChar) => Type::UnsignedChar,
+            (Type::Short, Type::Short) => Type::Short,
+            (Type::UnsignedShort, Type::UnsignedShort) => Type::UnsignedShort,
+            (Type::Int, Type::Int) => Type::Int,
+            (Type::UnsignedInt, Type::UnsignedInt) => Type::UnsignedInt,
+            (Type::Long, Type::Long) => Type::Long,
+            (Type::UnsignedLong, Type::UnsignedLong) => Type::UnsignedLong,
+            (Type::Float, Type::Float) => Type::Float,
+            (Type::Double, Type::Double) => Type::Double,
+            // 3.1.2.6: Two structure, union, or enumeration types declared in
+            // separate translation units are compatible if they have the same
+            // number of members, the same member names, and compatible member
+            // types;
+            //
+            // for two structures, the members shall be in the same order;
+            // for two enumerations, the members shall have the same values.
+            //
+            // For an identifier with external or internal linkage declared in
+            // the same scope as another declaration for that identifier, the
+            // type of the identifier becomes the composite type.
+            ////////////////////////////////////////////////////////////////////
+            // However, in practice, clang rejects codes like:
+            //
+            //     extern struct {int n;} x;
+            //     extern struct {int n;} x;
+            //
+            // and:
+            //
+            //     void f(struct {int n;} x);
+            //     void f(struct {int n;} x);
+            //
+            // But codes like this are accepted:
+            //
+            //     extern int x[];
+            //     extern int x[16];
+            //
+            // The reason clang gives, is that the two struct types are
+            // different. Seems like clang is actually not compliant to the spec
+            // in this case, but here we choose to mimic clang's behavior.
+            (Type::Struct(tp_left), Type::Struct(tp_right))
+            | (Type::Union(tp_left), Type::Union(tp_right)) => {
+                match (&tp_left.fields, &tp_right.fields) {
+                    (Some(fields_left), Some(fields_right)) => {
+                        if tp_left.uuid != tp_right.uuid {
+                            incompatible_panic!();
+                        }
+                        new.tp.clone()
+                    }
+                    (Some(_), None) => old.tp.clone(),
+                    _ => new.tp.clone(),
+                }
+            }
+            (Type::Enum(tp_left), Type::Enum(tp_right)) => {
+                unimplemented!() // TODO
+            }
+            (Type::Pointer(tp_left), Type::Pointer(tp_right)) => {
+                unimplemented!() // TODO
+            }
+            (
+                Type::Array(tp_left, sz_left),
+                Type::Array(tp_right, sz_right),
+            ) => {
+                unimplemented!() // TODO
+            }
+            (
+                Type::Function(tp_left, params_left),
+                Type::Function(tp_right, params_right),
+            ) => {
+                unimplemented!() // TODO
+            }
+            _ => incompatible_panic!(),
+        };
+
+        QType {
+            is_const: new.is_const,
+            is_volatile: new.is_volatile,
+            tp,
+        }
     }
 
     fn qualify_type(
