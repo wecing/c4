@@ -1293,7 +1293,36 @@ impl Compiler<'_> {
                             .collect();
                         Some(FuncParams::Typed(tps, is_varargs_left))
                     }
-                    _ => unimplemented!(), // TODO
+                    (
+                        Some(FuncParams::Typed(tps, is_varargs)),
+                        Some(FuncParams::Names(names)),
+                    )
+                    | (
+                        Some(FuncParams::Names(names)),
+                        Some(FuncParams::Typed(tps, is_varargs)),
+                    ) => {
+                        // 3.5.4.3: If one type has a parameter type list and
+                        // the other type is specified by a function definition
+                        // that contains a (possibly empty) identifier list,
+                        // both shall agree in the number of parameters, and the
+                        // type of each prototype parameter shall be compatible
+                        // with the type that results from the application of
+                        // the default argument promotions to the type of the
+                        // corresponding identifier.
+                        //
+                        // 3.1.2.6: If only one type is a function type with a
+                        // parameter type list (a function prototype), the
+                        // composite type is a function prototype with the
+                        // parameter type list.
+                        if tps.len() != names.len() {
+                            incompatible_panic!(
+                                "number of params does not match"
+                            )
+                        }
+                        Some(FuncParams::Typed(tps, is_varargs))
+                    }
+                    (Some(x), _) | (_, Some(x)) => Some(x),
+                    (None, None) => None,
                 };
                 Type::Function(Box::new(rtp), params)
             }
