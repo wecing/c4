@@ -33,8 +33,7 @@ enum Type {
 
 #[derive(Debug, Clone)]
 enum FuncParams {
-    Typed(Vec<TypedFuncParam>, bool),
-    // bool: is_varargs
+    Typed(Vec<TypedFuncParam>, bool), // bool: is_varargs
     Names(Vec<String>),
 }
 
@@ -1144,6 +1143,13 @@ impl Compiler<'_> {
                     Compiler::format_loc(loc)
                 )
             };
+            ($msg:expr) => {
+                panic!(
+                    "{}: Type incompatible with previous declaration; {}",
+                    Compiler::format_loc(loc),
+                    $msg
+                )
+            };
         };
 
         // 3.5.3: For two qualified types to be compatible, both shall have the
@@ -1212,20 +1218,84 @@ impl Compiler<'_> {
             (Type::Enum(tp_left), Type::Enum(tp_right)) => {
                 unimplemented!() // TODO
             }
-            (Type::Pointer(tp_left), Type::Pointer(tp_right)) => {
-                unimplemented!() // TODO
-            }
+            (Type::Pointer(tp_left), Type::Pointer(tp_right)) => Type::Pointer(
+                Box::new(Compiler::get_composite_type(tp_left, tp_right, loc)),
+            ),
             (
                 Type::Array(tp_left, sz_left),
                 Type::Array(tp_right, sz_right),
             ) => {
-                unimplemented!() // TODO
+                let elem_tp =
+                    Compiler::get_composite_type(tp_left, tp_right, loc);
+                let sz = match (sz_left, sz_right) {
+                    (Some(s1), Some(s2)) if s1 == s2 => Some(*s1),
+                    (Some(_), Some(_)) => {
+                        incompatible_panic!("different array sizes")
+                    }
+                    (None, _) => *sz_right,
+                    _ => *sz_left,
+                };
+                Type::Array(Box::new(elem_tp), sz)
             }
             (
-                Type::Function(tp_left, params_left),
-                Type::Function(tp_right, params_right),
+                Type::Function(rtp_left, params_left),
+                Type::Function(rtp_right, params_right),
             ) => {
-                unimplemented!() // TODO
+                // 3.5.4.3: For two function types to be compatible, both shall
+                // specify compatible return types.
+                let rtp =
+                    Compiler::get_composite_type(rtp_left, rtp_right, loc);
+                let params_left = Compiler::sanitize_param_types(params_left);
+                let params_right = Compiler::sanitize_param_types(params_right);
+                let params = match (params_left, params_right) {
+                    (
+                        Some(FuncParams::Typed(tps_left, is_varargs_left)),
+                        Some(FuncParams::Typed(tps_right, is_varargs_right)),
+                    ) => {
+                        // 3.5.4.3: Moreover, the parameter type lists, if both
+                        // are present, shall agree in the number of parameters
+                        // and in use of the ellipsis terminator; corresponding
+                        // parameters shall have compatible types.
+                        //
+                        // 3.1.2.6: If both types have parameter type lists, the
+                        // type of each parameter in the composite parameter
+                        // type list is the composite type of the corresponding
+                        // parameters.
+                        if tps_left.len() != tps_right.len() {
+                            incompatible_panic!("different number of params")
+                        }
+                        if is_varargs_left != is_varargs_right {
+                            incompatible_panic!("different varargs usage")
+                        }
+                        let tps: Vec<TypedFuncParam> = tps_left
+                            .iter()
+                            .zip(tps_right)
+                            .map(|(tp_left, tp_right)| {
+                                if tp_left.is_register != tp_right.is_register {
+                                    incompatible_panic!(
+                                        "different 'register' usage"
+                                    )
+                                }
+                                let name = tp_right
+                                    .name
+                                    .clone()
+                                    .or(tp_left.name.clone());
+                                TypedFuncParam {
+                                    is_register: tp_left.is_register,
+                                    tp: Compiler::get_composite_type(
+                                        &tp_left.tp,
+                                        &tp_right.tp,
+                                        loc,
+                                    ),
+                                    name,
+                                }
+                            })
+                            .collect();
+                        Some(FuncParams::Typed(tps, is_varargs_left))
+                    }
+                    _ => unimplemented!(), // TODO
+                };
+                Type::Function(Box::new(rtp), params)
             }
             _ => incompatible_panic!(),
         };
@@ -1234,6 +1304,42 @@ impl Compiler<'_> {
             is_const: new.is_const,
             is_volatile: new.is_volatile,
             tp,
+        }
+    }
+
+    // 3.5.4.3: For each parameter declared with function or array type, its
+    // type for these comparisons is the one that results from conversion to a
+    // pointer type, as in 3.7.1; For each parameter declared with qualified
+    // type, its type for these comparisons is the unqualified version of its
+    // declared type.
+    fn sanitize_param_types(params: &Option<FuncParams>) -> Option<FuncParams> {
+        let q = |tp: Type| QType {
+            is_const: false,
+            is_volatile: false,
+            tp,
+        };
+        match params {
+            Some(FuncParams::Typed(tps, is_varargs)) => {
+                Some(FuncParams::Typed(
+                    tps.iter()
+                        .map(|tp| TypedFuncParam {
+                            is_register: tp.is_register,
+                            tp: q(match &tp.tp.tp {
+                                Type::Array(elem_tp, _) => {
+                                    Type::Pointer(elem_tp.clone())
+                                }
+                                Type::Function(_, _) => {
+                                    Type::Pointer(Box::new(q(tp.tp.tp.clone())))
+                                }
+                                x => x.clone(),
+                            }),
+                            name: tp.name.clone(),
+                        })
+                        .collect(),
+                    *is_varargs,
+                ))
+            }
+            x => x.clone(),
         }
     }
 
