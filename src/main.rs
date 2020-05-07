@@ -376,6 +376,115 @@ impl Compiler<'_> {
         // without leaving it at the end.
         let (ftp, fname) =
             self.unwrap_declarator(rtp, (fd.get_d(), fd.get_d_loc()), true);
+        let (ftp_nq, typed_func_params) = match &ftp.tp {
+            Type::Function(rtp, None) => (
+                Type::Function(
+                    rtp.clone(),
+                    Some(FuncParams::Typed(vec![], false)),
+                ),
+                vec![],
+            ),
+            Type::Function(_, Some(FuncParams::Typed(params, _))) => {
+                // 3.7.1: If the declarator includes a parameter type list, the
+                // declaration of each parameter shall include an identifier. No
+                // declaration list shall follow.
+                params.into_iter().for_each(|p| {
+                    if p.name.is_none() {
+                        panic!(
+                            "{}: Parameter name missing",
+                            Compiler::format_loc(fd.get_d_loc())
+                        )
+                    }
+                });
+                if !fd.get_dls().is_empty() {
+                    let msg =
+                        "Function declaration lists shall not be used \
+                         when parameters are typed in function declarator";
+                    panic!("{}: {}", Compiler::format_loc(fd.get_d_loc()), msg)
+                }
+                (ftp.tp.clone(), params.clone())
+            }
+            Type::Function(rtp, Some(FuncParams::Names(names))) => {
+                // 3.7.1: The declarator in a function definition specifies the
+                // name of the function being defined and the identifiers of its
+                // parameters... If the declarator includes an identifier list,
+                // the types of the parameters may be declared in a following
+                // declaration list. Any parameter that is not declared has type
+                // int.
+                let mut decls = HashMap::new();
+                // populate `decls`
+                fd.get_dls().into_iter().zip(fd.get_dl_locs()).for_each(
+                    |(decl, decl_loc)| {
+                        use ast::StorageClassSpecifier as SCS;
+                        let (param_scs, param_base_tp) = self
+                            .visit_declaration_specifiers(decl.get_dss(), true);
+                        if param_scs.is_some()
+                            && param_scs.map(|(s, _)| s) != Some(SCS::REGISTER)
+                        {
+                            panic!(
+                                "{}: Illegal storage class specifier",
+                                Compiler::format_loc(decl_loc)
+                            )
+                        }
+                        decl.get_ids().into_iter().for_each(|id| {
+                            if id.init_idx != 0 {
+                                panic!(
+                                    "{}: Unexpected initializer",
+                                    Compiler::format_loc(id.get_d_loc())
+                                )
+                            }
+                            let (param_tp, param_name) = self
+                                .unwrap_declarator(
+                                    param_base_tp.clone(),
+                                    (id.get_d(), id.get_d_loc()),
+                                    false, // it's a param decl, not a func def
+                                );
+                            if decls.contains_key(&param_name) {
+                                panic!(
+                                    "{}: Redefinition of '{}'",
+                                    Compiler::format_loc(id.get_d_loc()),
+                                    param_name
+                                )
+                            }
+                            decls.insert(param_name, param_tp);
+                        })
+                    },
+                );
+                let params: Vec<TypedFuncParam> = names
+                    .into_iter()
+                    .map(|name| {
+                        TypedFuncParam {
+                            is_register: false, // register info is chopped :(
+                            tp: decls.get(name).map_or_else(
+                                || QType {
+                                    is_const: false,
+                                    is_volatile: false,
+                                    tp: Type::Int,
+                                },
+                                |tp| tp.clone(),
+                            ),
+                            name: Some(name.clone()),
+                        }
+                    })
+                    .collect();
+                (
+                    Type::Function(
+                        rtp.clone(),
+                        Some(FuncParams::Typed(params.clone(), false)),
+                    ),
+                    params,
+                )
+            }
+            _ => unreachable!(),
+        };
+        let ftp = QType {
+            is_const: false,
+            is_volatile: false,
+            tp: ftp_nq,
+        };
+        // `ftp.tp` is now guaranteed to be a
+        // Type::Function(..., Some(FuncParams::Typed(...)));
+        // `TypedFuncParam.name` is guaranteed to be non-empty.
         self.add_declaration(&fname, &scs, ftp, true, fd.get_d_loc());
         // TODO: code gen
         // TODO: rest logic
@@ -1031,8 +1140,7 @@ impl Compiler<'_> {
 
         let insert_decl =
             |scope: &mut Scope,
-             linkage_fn: fn(Option<(&Scope, Linkage)>) -> Linkage|
-             -> String {
+             linkage_fn: fn(Option<(&Scope, Linkage)>) -> Linkage| {
                 match scope.lookup_ordinary_id(id.as_str()) {
                     Some((
                         OrdinaryIdRef::ObjFnRef(
@@ -1072,9 +1180,7 @@ impl Compiler<'_> {
                             linkage,
                             *is_defined,
                         );
-                        let ir_id_clone = ir_id.clone();
                         scope.ordinary_ids_ns.insert(id.clone(), new_ref);
-                        ir_id_clone
                     }
                     Some((_, old_scope)) if old_scope.same_as(scope) => panic!(
                         "{}: Redeclaration of '{}' as different kind of symbol",
@@ -1098,7 +1204,6 @@ impl Compiler<'_> {
                                 false,
                             ),
                         );
-                        ir_id
                     }
                 }
             };
@@ -1245,6 +1350,19 @@ impl Compiler<'_> {
                 // specify compatible return types.
                 let rtp =
                     Compiler::get_composite_type(rtp_left, rtp_right, loc);
+                // 3.7.1: The return type of a function shall be void or an
+                // object type other than array.
+                match rtp.tp {
+                    Type::Array(_, _) => panic!(
+                        "{}: Function cannot return array types",
+                        Compiler::format_loc(loc)
+                    ),
+                    Type::Function(_, _) => panic!(
+                        "{}: Function cannot return function types",
+                        Compiler::format_loc(loc)
+                    ),
+                    _ => {}
+                }
                 let params_left = Compiler::sanitize_param_types(params_left);
                 let params_right = Compiler::sanitize_param_types(params_right);
                 let params = match (params_left, params_right) {
