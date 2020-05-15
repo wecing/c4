@@ -1,5 +1,5 @@
 use protobuf::ProtobufEnum;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::error::Error;
 use std::ffi::CString;
@@ -412,15 +412,16 @@ impl Compiler<'_> {
                 // declaration list. Any parameter that is not declared has type
                 // int.
                 let mut decls = HashMap::new();
+                let mut is_register_decls = HashSet::new();
                 // populate `decls`
                 fd.get_dls().into_iter().zip(fd.get_dl_locs()).for_each(
                     |(decl, decl_loc)| {
                         use ast::StorageClassSpecifier as SCS;
                         let (param_scs, param_base_tp) = self
                             .visit_declaration_specifiers(decl.get_dss(), true);
-                        if param_scs.is_some()
-                            && param_scs.map(|(s, _)| s) != Some(SCS::REGISTER)
-                        {
+                        let param_is_register =
+                            param_scs.map(|(s, _)| s) == Some(SCS::REGISTER);
+                        if param_scs.is_some() && !param_is_register {
                             panic!(
                                 "{}: Illegal storage class specifier",
                                 Compiler::format_loc(decl_loc)
@@ -446,25 +447,26 @@ impl Compiler<'_> {
                                     param_name
                                 )
                             }
+                            if param_is_register {
+                                is_register_decls.insert(param_name.clone());
+                            }
                             decls.insert(param_name, param_tp);
                         })
                     },
                 );
                 let params: Vec<TypedFuncParam> = names
                     .into_iter()
-                    .map(|name| {
-                        TypedFuncParam {
-                            is_register: false, // register info is chopped :(
-                            tp: decls.get(name).map_or_else(
-                                || QType {
-                                    is_const: false,
-                                    is_volatile: false,
-                                    tp: Type::Int,
-                                },
-                                |tp| tp.clone(),
-                            ),
-                            name: Some(name.clone()),
-                        }
+                    .map(|name| TypedFuncParam {
+                        is_register: is_register_decls.contains(name),
+                        tp: decls.get(name).map_or_else(
+                            || QType {
+                                is_const: false,
+                                is_volatile: false,
+                                tp: Type::Int,
+                            },
+                            |tp| tp.clone(),
+                        ),
+                        name: Some(name.clone()),
                     })
                     .collect();
                 (
