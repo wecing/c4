@@ -81,7 +81,7 @@ enum SueType {
     Enum(Box<EnumType>),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum Linkage {
     EXTERNAL,
     INTERNAL,
@@ -165,6 +165,8 @@ trait IRBuilder {
         fields: &Vec<SuField>,
         is_union: bool,
     );
+
+    fn create_function(&mut self, name: &String, tp: &QType, linkage: Linkage);
 }
 
 struct DummyIRBuilder {}
@@ -176,13 +178,21 @@ impl DummyIRBuilder {
 }
 
 impl IRBuilder for DummyIRBuilder {
-    fn emit_opaque_struct_type(&mut self, name: &String) {}
+    fn emit_opaque_struct_type(&mut self, _name: &String) {}
 
     fn update_struct_type(
         &mut self,
-        name: &String,
-        fields: &Vec<SuField>,
-        is_union: bool,
+        _name: &String,
+        _fields: &Vec<SuField>,
+        _is_union: bool,
+    ) {
+    }
+
+    fn create_function(
+        &mut self,
+        _name: &String,
+        _tp: &QType,
+        _linkage: Linkage,
     ) {
     }
 }
@@ -312,6 +322,8 @@ impl IRBuilder for LLVMBuilderImpl {
         fields: &Vec<SuField>,
         is_union: bool,
     ) {
+        // TODO: should emit multiple structs when is_union=true
+        //       (same for emit_opaque_struct_type)
         unsafe {
             let name_cstr = CString::new(name.clone()).unwrap();
             let tp = llvm_sys::core::LLVMGetTypeByName(
@@ -330,6 +342,10 @@ impl IRBuilder for LLVMBuilderImpl {
                 false as i32,
             )
         }
+    }
+
+    fn create_function(&mut self, name: &String, tp: &QType, linkage: Linkage) {
+        // TODO
     }
 }
 
@@ -487,7 +503,29 @@ impl Compiler<'_> {
         // `ftp.tp` is now guaranteed to be a
         // Type::Function(..., Some(FuncParams::Typed(...)));
         // `TypedFuncParam.name` is guaranteed to be non-empty.
-        self.add_declaration(&fname, &scs, ftp, true, fd.get_d_loc());
+        self.add_declaration(&fname, &scs, ftp.clone(), true, fd.get_d_loc());
+        typed_func_params.iter().for_each(|param| {
+            let param_scs = if param.is_register {
+                Some((ast::StorageClassSpecifier::REGISTER, fd.get_d_loc()))
+            } else {
+                None
+            };
+            self.add_declaration(
+                &param.name.clone().unwrap(),
+                &param_scs,
+                param.tp.clone(),
+                false,
+                fd.get_d_loc(),
+            );
+        });
+        let linkage = match self.current_scope.ordinary_ids_ns.get(&fname) {
+            Some(OrdinaryIdRef::ObjFnRef(_, _, _, linkage, _)) => {
+                linkage.clone()
+            }
+            _ => unreachable!(),
+        };
+        self.c4ir_builder.create_function(&fname, &ftp, linkage);
+        self.llvm_builder.create_function(&fname, &ftp, linkage);
         // TODO: code gen
         // TODO: rest logic
         self.leave_scope();
@@ -581,7 +619,7 @@ impl Compiler<'_> {
             tp,
         };
         let cases: Vec<&ast::TypeSpecifier_oneof_s> =
-            tss.iter().flat_map(|(ts, loc)| ts.s.iter()).collect();
+            tss.iter().flat_map(|(ts, _)| ts.s.iter()).collect();
         use ast::TypeSpecifier_oneof_s as TS;
         match cases.as_slice() {
             [TS::void(_)] => q(Type::Void),
@@ -1312,7 +1350,7 @@ impl Compiler<'_> {
             (Type::Struct(tp_left), Type::Struct(tp_right))
             | (Type::Union(tp_left), Type::Union(tp_right)) => {
                 match (&tp_left.fields, &tp_right.fields) {
-                    (Some(fields_left), Some(fields_right)) => {
+                    (Some(_), Some(_)) => {
                         if tp_left.uuid != tp_right.uuid {
                             incompatible_panic!();
                         }
