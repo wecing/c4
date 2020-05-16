@@ -166,7 +166,13 @@ trait IRBuilder {
         is_union: bool,
     );
 
-    fn create_function(&mut self, name: &String, tp: &QType, linkage: Linkage);
+    fn create_function(
+        &mut self,
+        name: &String,
+        tp: &QType,
+        linkage: Linkage,
+        param_ir_ids: &Vec<String>,
+    );
 }
 
 struct DummyIRBuilder {}
@@ -193,6 +199,7 @@ impl IRBuilder for DummyIRBuilder {
         _name: &String,
         _tp: &QType,
         _linkage: Linkage,
+        _param_ir_ids: &Vec<String>,
     ) {
     }
 }
@@ -344,8 +351,41 @@ impl IRBuilder for LLVMBuilderImpl {
         }
     }
 
-    fn create_function(&mut self, name: &String, tp: &QType, linkage: Linkage) {
-        // TODO
+    fn create_function(
+        &mut self,
+        name: &String,
+        tp: &QType,
+        linkage: Linkage,
+        param_ir_ids: &Vec<String>,
+    ) {
+        let llvm_tp = self.get_llvm_type(&tp.tp);
+        let c_func_name = CString::new(name.clone()).unwrap();
+        let llvm_func = unsafe {
+            llvm_sys::core::LLVMAddFunction(
+                self.module,
+                c_func_name.as_ptr(),
+                llvm_tp,
+            )
+        };
+        let llvm_linkage = if linkage == Linkage::INTERNAL {
+            llvm_sys::LLVMLinkage::LLVMInternalLinkage
+        } else {
+            llvm_sys::LLVMLinkage::LLVMExternalLinkage
+        };
+        unsafe {
+            llvm_sys::core::LLVMSetLinkage(llvm_func, llvm_linkage);
+
+            let mut llvm_param = llvm_sys::core::LLVMGetFirstParam(llvm_func);
+            param_ir_ids.into_iter().for_each(|ir_id| {
+                let c_ir_id = CString::new(ir_id.clone()).unwrap();
+                llvm_sys::core::LLVMSetValueName2(
+                    llvm_param,
+                    c_ir_id.as_ptr(),
+                    ir_id.len(),
+                );
+                llvm_param = llvm_sys::core::LLVMGetNextParam(llvm_param);
+            });
+        }
     }
 }
 
@@ -524,9 +564,21 @@ impl Compiler<'_> {
             }
             _ => unreachable!(),
         };
-        self.c4ir_builder.create_function(&fname, &ftp, linkage);
-        self.llvm_builder.create_function(&fname, &ftp, linkage);
-        // TODO: code gen
+        let param_ir_ids = typed_func_params
+            .into_iter()
+            .map(|p| p.name.unwrap())
+            .map(|name| match self.current_scope.ordinary_ids_ns.get(&name) {
+                Some(OrdinaryIdRef::ObjFnRef(ir_id, _, _, _, _)) => {
+                    ir_id.clone()
+                }
+                _ => unreachable!(),
+            })
+            .collect();
+        self.c4ir_builder
+            .create_function(&fname, &ftp, linkage, &param_ir_ids);
+        self.llvm_builder
+            .create_function(&fname, &ftp, linkage, &param_ir_ids);
+        // TODO: code gen prep: basic blocks, etc
         // TODO: rest logic
         self.leave_scope();
     }
