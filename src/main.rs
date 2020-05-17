@@ -159,21 +159,21 @@ struct BasicBlock {
 }
 
 trait IRBuilder {
-    fn emit_opaque_struct_type(&mut self, name: &String);
+    fn emit_opaque_struct_type(&mut self, name: &str);
 
     // struct and union in C are both mapped bo struct in IR. for C unions the
     // generated struct must be packed with u8 so it could have a size.
     // `fields` is supposed to be non-empty.
     fn update_struct_type(
         &mut self,
-        name: &String,
+        name: &str,
         fields: &Vec<SuField>,
         is_union: bool,
     );
 
     fn create_function(
         &mut self,
-        name: &String,
+        name: &str,
         tp: &QType,
         linkage: Linkage,
         param_ir_ids: &Vec<String>,
@@ -194,11 +194,11 @@ impl DummyIRBuilder {
 }
 
 impl IRBuilder for DummyIRBuilder {
-    fn emit_opaque_struct_type(&mut self, _name: &String) {}
+    fn emit_opaque_struct_type(&mut self, _name: &str) {}
 
     fn update_struct_type(
         &mut self,
-        _name: &String,
+        _name: &str,
         _fields: &Vec<SuField>,
         _is_union: bool,
     ) {
@@ -206,7 +206,7 @@ impl IRBuilder for DummyIRBuilder {
 
     fn create_function(
         &mut self,
-        _name: &String,
+        _name: &str,
         _tp: &QType,
         _linkage: Linkage,
         _param_ir_ids: &Vec<String>,
@@ -343,23 +343,23 @@ impl LLVMBuilderImpl {
 
 #[cfg(feature = "llvm-sys")]
 impl IRBuilder for LLVMBuilderImpl {
-    fn emit_opaque_struct_type(&mut self, name: &String) {
+    fn emit_opaque_struct_type(&mut self, name: &str) {
         unsafe {
-            let n = CString::new(name.clone()).unwrap();
+            let n = CString::new(name).unwrap();
             llvm_sys::core::LLVMStructCreateNamed(self.context, n.as_ptr());
         }
     }
 
     fn update_struct_type(
         &mut self,
-        name: &String,
+        name: &str,
         fields: &Vec<SuField>,
         is_union: bool,
     ) {
         // TODO: should emit multiple structs when is_union=true
         //       (same for emit_opaque_struct_type)
         unsafe {
-            let name_cstr = CString::new(name.clone()).unwrap();
+            let name_cstr = CString::new(name).unwrap();
             let tp = llvm_sys::core::LLVMGetTypeByName(
                 self.module,
                 name_cstr.as_ptr(),
@@ -380,13 +380,13 @@ impl IRBuilder for LLVMBuilderImpl {
 
     fn create_function(
         &mut self,
-        name: &String,
+        name: &str,
         tp: &QType,
         linkage: Linkage,
         param_ir_ids: &Vec<String>,
     ) {
         let llvm_tp = self.get_llvm_type(&tp.tp);
-        let c_func_name = CString::new(name.clone()).unwrap();
+        let c_func_name = CString::new(name).unwrap();
         let llvm_func = unsafe {
             llvm_sys::core::LLVMAddFunction(
                 self.module,
@@ -956,7 +956,7 @@ impl Compiler<'_> {
         unimplemented!() // TODO
     }
 
-    fn get_typedef_type(&mut self, id: L<&String>) -> QType {
+    fn get_typedef_type(&mut self, id: L<&str>) -> QType {
         // It is probably a programming error if this method really panics.
         match self.current_scope.lookup_ordinary_id(id.0) {
             None =>
@@ -1259,7 +1259,7 @@ impl Compiler<'_> {
 
     fn add_declaration(
         &mut self,
-        id: &String,
+        id: &str,
         l_scs: &Option<L<ast::StorageClassSpecifier>>,
         new_tp: QType,
         pick_outer_scope: bool,
@@ -1292,7 +1292,7 @@ impl Compiler<'_> {
         let insert_decl =
             |scope: &mut Scope,
              linkage_fn: fn(Option<(&Scope, Linkage)>) -> Linkage| {
-                match scope.lookup_ordinary_id(id.as_str()) {
+                match scope.lookup_ordinary_id(id) {
                     Some((
                         OrdinaryIdRef::ObjFnRef(
                             ir_id,
@@ -1331,7 +1331,7 @@ impl Compiler<'_> {
                             linkage,
                             *is_defined,
                         );
-                        scope.ordinary_ids_ns.insert(id.clone(), new_ref);
+                        scope.ordinary_ids_ns.insert(String::from(id), new_ref);
                     }
                     Some((_, old_scope)) if old_scope.same_as(scope) => panic!(
                         "{}: Redeclaration of '{}' as different kind of symbol",
@@ -1341,12 +1341,12 @@ impl Compiler<'_> {
                     _ => {
                         let linkage = linkage_fn(None);
                         let ir_id = if linkage == Linkage::EXTERNAL {
-                            id.clone()
+                            String::from(id)
                         } else {
                             format!("${}.{}", id, next_uuid)
                         };
                         scope.ordinary_ids_ns.insert(
-                            id.clone(),
+                            String::from(id),
                             OrdinaryIdRef::ObjFnRef(
                                 ir_id.clone(),
                                 new_tp.clone(),
