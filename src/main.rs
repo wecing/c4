@@ -153,6 +153,11 @@ impl Drop for Scope {
     }
 }
 
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+struct BasicBlock {
+    id: String,
+}
+
 trait IRBuilder {
     fn emit_opaque_struct_type(&mut self, name: &String);
 
@@ -173,6 +178,11 @@ trait IRBuilder {
         linkage: Linkage,
         param_ir_ids: &Vec<String>,
     );
+
+    // create a new basic block in the last created function.
+    fn create_basic_block(&mut self, name: &str) -> BasicBlock;
+
+    fn set_current_basic_block(&mut self, bb: &BasicBlock);
 }
 
 struct DummyIRBuilder {}
@@ -202,12 +212,22 @@ impl IRBuilder for DummyIRBuilder {
         _param_ir_ids: &Vec<String>,
     ) {
     }
+
+    fn create_basic_block(&mut self, _name: &str) -> BasicBlock {
+        BasicBlock { id: String::new() }
+    }
+
+    fn set_current_basic_block(&mut self, _bb: &BasicBlock) {}
 }
 
 #[cfg(feature = "llvm-sys")]
 struct LLVMBuilderImpl {
     context: llvm_sys::prelude::LLVMContextRef,
     module: llvm_sys::prelude::LLVMModuleRef,
+    builder: llvm_sys::prelude::LLVMBuilderRef,
+
+    current_function: llvm_sys::prelude::LLVMValueRef,
+    basic_blocks: HashMap<BasicBlock, llvm_sys::prelude::LLVMBasicBlockRef>,
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -220,7 +240,14 @@ impl LLVMBuilderImpl {
                 module_name.as_ptr(),
                 context,
             );
-            LLVMBuilderImpl { context, module }
+            let builder = llvm_sys::core::LLVMCreateBuilderInContext(context);
+            LLVMBuilderImpl {
+                context,
+                module,
+                builder,
+                current_function: ptr::null_mut(),
+                basic_blocks: HashMap::new(),
+            }
         }
     }
 
@@ -385,6 +412,33 @@ impl IRBuilder for LLVMBuilderImpl {
                 );
                 llvm_param = llvm_sys::core::LLVMGetNextParam(llvm_param);
             });
+
+            llvm_sys::core::LLVMClearInsertionPosition(self.builder);
+        }
+        self.current_function = llvm_func;
+        self.basic_blocks.clear();
+    }
+
+    fn create_basic_block(&mut self, name: &str) -> BasicBlock {
+        let bb_ref = BasicBlock {
+            id: String::from(name),
+        };
+        let name = CString::new(name).unwrap();
+        let bb = unsafe {
+            llvm_sys::core::LLVMAppendBasicBlockInContext(
+                self.context,
+                self.current_function,
+                name.as_ptr(),
+            )
+        };
+        self.basic_blocks.insert(bb_ref.clone(), bb);
+        bb_ref
+    }
+
+    fn set_current_basic_block(&mut self, bb_ref: &BasicBlock) {
+        let bb = *self.basic_blocks.get(bb_ref).unwrap();
+        unsafe {
+            llvm_sys::core::LLVMPositionBuilderAtEnd(self.builder, bb);
         }
     }
 }
@@ -578,7 +632,12 @@ impl Compiler<'_> {
             .create_function(&fname, &ftp, linkage, &param_ir_ids);
         self.llvm_builder
             .create_function(&fname, &ftp, linkage, &param_ir_ids);
-        // TODO: code gen prep: basic blocks, etc
+
+        let entry_bb_id = format!("$entry.{}", self.get_next_uuid());
+        let c4ir_entry_bb = self.c4ir_builder.create_basic_block(&entry_bb_id);
+        self.c4ir_builder.set_current_basic_block(&c4ir_entry_bb);
+        let llvm_entry_bb = self.llvm_builder.create_basic_block(&entry_bb_id);
+        self.llvm_builder.set_current_basic_block(&llvm_entry_bb);
         // TODO: rest logic
         self.leave_scope();
     }
