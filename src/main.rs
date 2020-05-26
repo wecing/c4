@@ -92,9 +92,9 @@ enum Linkage {
 enum OrdinaryIdRef {
     TypedefRef(Box<QType>),
     EnumRef(Box<EnumType>),
-    // ObjFnRef(ir_id, tp, is_lvalue, linkage, is_defined)
-    // for lvalues, the IR id refers to a pointer to `tp`.
-    ObjFnRef(String, QType, bool, Linkage, bool),
+    // ObjFnRef(ir_id, tp, linkage, is_defined)
+    // since it's a lvalue, the IR id refers to a pointer to `tp`.
+    ObjFnRef(String, QType, Linkage, bool),
 }
 
 #[derive(Debug, Clone)]
@@ -655,18 +655,14 @@ impl Compiler<'_> {
             );
         });
         let linkage = match self.current_scope.ordinary_ids_ns.get(&fname) {
-            Some(OrdinaryIdRef::ObjFnRef(_, _, _, linkage, _)) => {
-                linkage.clone()
-            }
+            Some(OrdinaryIdRef::ObjFnRef(_, _, linkage, _)) => linkage.clone(),
             _ => unreachable!(),
         };
         let param_ir_ids = typed_func_params
             .into_iter()
             .map(|p| p.name.unwrap())
             .map(|name| match self.current_scope.ordinary_ids_ns.get(&name) {
-                Some(OrdinaryIdRef::ObjFnRef(ir_id, _, _, _, _)) => {
-                    ir_id.clone()
-                }
+                Some(OrdinaryIdRef::ObjFnRef(ir_id, _, _, _)) => ir_id.clone(),
                 _ => unreachable!(),
             })
             .collect();
@@ -748,7 +744,6 @@ impl Compiler<'_> {
                     OrdinaryIdRef::ObjFnRef(
                         ir_id,
                         qtype,
-                        _,
                         linkage,
                         is_defined,
                     ) => (ir_id.clone(), qtype.clone(), *linkage, *is_defined),
@@ -781,7 +776,6 @@ impl Compiler<'_> {
                         OrdinaryIdRef::ObjFnRef(
                             ir_id.clone(),
                             qtype.clone(),
-                            true, // is_lvalue
                             linkage,
                             true, // is_defined
                         ),
@@ -879,13 +873,53 @@ impl Compiler<'_> {
         }
     }
 
+    // fold_constant=false could be used for type-inference only scenarios, e.g.
+    // sizeof(1/0); the 2nd return value could be None if fold_constant=false,
+    // or emit_ir=false but the expression is not a constant.
     fn visit_expr(
         &mut self,
         e: L<&ast::Expr>,
         fold_constant: bool,
         emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
-        unimplemented!() // TODO
+        if e.0.e.is_none() {
+            panic!(
+                "{}: Invalid AST input; Expr.e is missing",
+                Compiler::format_loc(e.1)
+            )
+        }
+        match e.0.e.as_ref().unwrap() {
+            ast::Expr_oneof_e::id(id) => {
+                match self.current_scope.lookup_ordinary_id(id) {
+                    None => panic!(
+                        "{}: Undefined variable '{}'",
+                        Compiler::format_loc(e.1),
+                        id
+                    ),
+                    Some((OrdinaryIdRef::TypedefRef(_), _)) => panic!(
+                        "{}: Unexpected type name '{}' in expression",
+                        Compiler::format_loc(e.1),
+                        id
+                    ),
+                    Some((OrdinaryIdRef::EnumRef(_), _)) => {
+                        unimplemented!() // TODO: support enums
+                    }
+                    Some((
+                        OrdinaryIdRef::ObjFnRef(ir_id, tp, linkage, _),
+                        _,
+                    )) => {
+                        if fold_constant {
+                            (tp.clone(), None)
+                        } else {
+                            let v =
+                                ConstantOrIrValue::IrValue(ir_id.clone(), true);
+                            (tp.clone(), Some(v))
+                        }
+                    }
+                }
+            }
+            _ => unimplemented!(), // TODO
+        }
     }
 
     fn get_type(
@@ -1466,7 +1500,6 @@ impl Compiler<'_> {
                         OrdinaryIdRef::ObjFnRef(
                             ir_id,
                             old_tp,
-                            _,
                             old_linkage,
                             is_defined,
                         ),
@@ -1496,7 +1529,6 @@ impl Compiler<'_> {
                         let new_ref = OrdinaryIdRef::ObjFnRef(
                             ir_id.clone(),
                             tp,
-                            true,
                             linkage,
                             *is_defined,
                         );
@@ -1519,7 +1551,6 @@ impl Compiler<'_> {
                             OrdinaryIdRef::ObjFnRef(
                                 ir_id.clone(),
                                 new_tp.clone(),
-                                true,
                                 linkage,
                                 false,
                             ),
