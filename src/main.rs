@@ -97,6 +97,18 @@ enum OrdinaryIdRef {
     ObjFnRef(String, QType, bool, Linkage, bool),
 }
 
+#[derive(Debug, Clone)]
+enum ConstantOrIrValue {
+    // TODO - constant
+    IrValue(String, bool), // ir_id, is_lvalue
+}
+
+#[derive(Debug, Clone)]
+enum Initializer {
+    Expr(QType, ConstantOrIrValue),
+    Struct(Vec<Initializer>),
+}
+
 impl Scope {
     fn new() -> Scope {
         Scope {
@@ -183,6 +195,15 @@ trait IRBuilder {
     fn create_basic_block(&mut self, name: &str) -> BasicBlock;
 
     fn set_current_basic_block(&mut self, bb: &BasicBlock);
+
+    fn create_definition(
+        &mut self,
+        is_global: bool,
+        name: &str,
+        tp: &QType,
+        linkage: Linkage,
+        init: &Option<Initializer>,
+    );
 }
 
 struct DummyIRBuilder {}
@@ -218,6 +239,16 @@ impl IRBuilder for DummyIRBuilder {
     }
 
     fn set_current_basic_block(&mut self, _bb: &BasicBlock) {}
+
+    fn create_definition(
+        &mut self,
+        _is_global: bool,
+        _name: &str,
+        _tp: &QType,
+        _linkage: Linkage,
+        _init: &Option<Initializer>,
+    ) {
+    }
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -441,6 +472,17 @@ impl IRBuilder for LLVMBuilderImpl {
             llvm_sys::core::LLVMPositionBuilderAtEnd(self.builder, bb);
         }
     }
+
+    fn create_definition(
+        &mut self,
+        is_global: bool,
+        name: &str,
+        tp: &QType,
+        linkage: Linkage,
+        init: &Option<Initializer>,
+    ) {
+        unimplemented!() // TODO
+    }
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -638,7 +680,22 @@ impl Compiler<'_> {
         self.c4ir_builder.set_current_basic_block(&c4ir_entry_bb);
         let llvm_entry_bb = self.llvm_builder.create_basic_block(&entry_bb_id);
         self.llvm_builder.set_current_basic_block(&llvm_entry_bb);
-        // TODO: rest logic
+
+        fd.get_body()
+            .get_dls()
+            .into_iter()
+            .for_each(|dl| self.visit_declaration(dl));
+        fd.get_body()
+            .get_stmt_idxes()
+            .into_iter()
+            .map(|idx_i32| {
+                let idx: usize = (*idx_i32).try_into().unwrap();
+                &self.translation_unit.statements[idx]
+            })
+            .for_each(|stmt| {
+                unimplemented!() // TODO
+            });
+
         self.leave_scope();
     }
 
@@ -672,8 +729,74 @@ impl Compiler<'_> {
                 }
             });
         } else {
-            // TODO: code gen: external/internal/none, initializer
-            // TODO
+            dl.get_ids().into_iter().for_each(|id| {
+                let (qtype, name) = self.unwrap_declarator(
+                    qualified_type.clone(),
+                    (id.get_d(), id.get_d_loc()),
+                    false,
+                );
+                self.add_declaration(
+                    &name,
+                    &storage_class_specifier,
+                    qtype,
+                    false,
+                    id.get_d_loc(),
+                );
+                let id_ref =
+                    self.current_scope.ordinary_ids_ns.get(&name).unwrap();
+                let (ir_id, qtype, linkage, is_defined) = match id_ref {
+                    OrdinaryIdRef::ObjFnRef(
+                        ir_id,
+                        qtype,
+                        _,
+                        linkage,
+                        is_defined,
+                    ) => (ir_id.clone(), qtype.clone(), *linkage, *is_defined),
+                    _ => unreachable!(),
+                };
+
+                // 3.1.2.4: An object declared with external or internal
+                // linkage, or with the storage-class specifier static has
+                // static storage duration
+                let is_global = self.current_scope.outer_scope.is_none()
+                    || scs == Some(SCS::STATIC);
+
+                let init = if id.init_idx == 0 {
+                    Option::None
+                } else if is_defined {
+                    // covers internal linkage global redefinitions, e.g.:
+                    //
+                    // static int a = 0;
+                    // static int a = 0;
+                    //
+                    // rest cases should have been checked by add_declaration().
+                    panic!(
+                        "{}: Redefinition of '{}'",
+                        Compiler::format_loc(id.get_init_loc()),
+                        name
+                    )
+                } else {
+                    self.current_scope.ordinary_ids_ns.insert(
+                        name,
+                        OrdinaryIdRef::ObjFnRef(
+                            ir_id.clone(),
+                            qtype.clone(),
+                            true, // is_lvalue
+                            linkage,
+                            true, // is_defined
+                        ),
+                    );
+                    Some(self.visit_initializer(id.init_idx))
+                    // TODO: check if `init` is compatible with `qtype`
+                };
+
+                self.c4ir_builder.create_definition(
+                    is_global, &ir_id, &qtype, linkage, &init,
+                );
+                self.llvm_builder.create_definition(
+                    is_global, &ir_id, &qtype, linkage, &init,
+                );
+            });
         }
     }
 
@@ -717,6 +840,52 @@ impl Compiler<'_> {
         );
 
         (storage_class_specifiers.pop(), qualified_type)
+    }
+
+    fn visit_initializer(&mut self, init_idx_i32: i32) -> Initializer {
+        let is_global_decl = self.current_scope.outer_scope.is_none();
+        let init_idx: usize = init_idx_i32.try_into().unwrap();
+        let init = &self.translation_unit.initializers[init_idx];
+        match &init.init {
+            Some(ast::Initializer_oneof_init::expr(expr)) => {
+                let e_idx: usize = expr.e.try_into().unwrap();
+                let e = &self.translation_unit.exprs[e_idx];
+                let (qtype, result) = self.visit_expr(
+                    (e, expr.get_e_loc()),
+                    true,
+                    !is_global_decl,
+                );
+                match result {
+                    None => panic!(
+                        "{}: Global definition initializer must evaluate to \
+                         constants",
+                        Compiler::format_loc(expr.get_e_loc())
+                    ),
+                    Some(r) => Initializer::Expr(qtype, r),
+                }
+            }
+            Some(ast::Initializer_oneof_init::field_struct(st)) => {
+                Initializer::Struct(
+                    st.inits
+                        .iter()
+                        .map(|idx| self.visit_initializer(*idx))
+                        .collect(),
+                )
+            }
+            None => panic!(
+                "Invalid AST input: initializer #{} is empty",
+                init_idx_i32
+            ),
+        }
+    }
+
+    fn visit_expr(
+        &mut self,
+        e: L<&ast::Expr>,
+        fold_constant: bool,
+        emit_ir: bool,
+    ) -> (QType, Option<ConstantOrIrValue>) {
+        unimplemented!() // TODO
     }
 
     fn get_type(
@@ -1384,9 +1553,6 @@ impl Compiler<'_> {
             // external.
             insert_decl(scope, |_| Linkage::EXTERNAL);
         } else {
-            // TODO: 3.1.2.4: An object declared with external or internal
-            //       linkage, or with the storage-class specifier static has
-            //       static storage duration
             insert_decl(scope, |_| Linkage::NONE);
         }
     }
