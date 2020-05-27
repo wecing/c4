@@ -119,6 +119,8 @@ enum ConstantOrIrValue {
     U64(u64),
     Float(f32),
     Double(f64),
+    Str(String),
+    WideStr(String),
     // TODO: addr + offset
     IrValue(String, bool), // ir_id, is_lvalue
 }
@@ -978,6 +980,20 @@ impl Compiler<'_> {
             ast::Expr_oneof_e::wide_char(wc) => (
                 QType::from(Type::Short),
                 Some(ConstantOrIrValue::I16(*wc as i16)),
+            ),
+            ast::Expr_oneof_e::string(str) => (
+                QType::from(Type::Array(
+                    Box::new(QType::from(Type::Char)),
+                    Some(str.len() as u32 + 1),
+                )),
+                Some(ConstantOrIrValue::Str(str.clone())),
+            ),
+            ast::Expr_oneof_e::wide_string(ws) => (
+                QType::from(Type::Array(
+                    Box::new(QType::from(Type::Short)),
+                    Some(ws.len() as u32 + 1),
+                )),
+                Some(ConstantOrIrValue::WideStr(ws.clone())),
             ),
             _ => unimplemented!(), // TODO
         }
