@@ -117,6 +117,8 @@ enum ConstantOrIrValue {
     U32(u32),
     I64(i64),
     U64(u64),
+    Float(f32),
+    Double(f64),
     // TODO: addr + offset
     IrValue(String, bool), // ir_id, is_lvalue
 }
@@ -962,6 +964,21 @@ impl Compiler<'_> {
                     Some(ConstantOrIrValue::U64(int.n as u64)),
                 ),
             },
+            ast::Expr_oneof_e::float(f) => {
+                (QType::from(Type::Float), Some(ConstantOrIrValue::Float(*f)))
+            }
+            ast::Expr_oneof_e::double(d) => (
+                QType::from(Type::Double),
+                Some(ConstantOrIrValue::Double(*d)),
+            ),
+            ast::Expr_oneof_e::char(c) => (
+                QType::from(Type::Char),
+                Some(ConstantOrIrValue::I8(*c as i8)),
+            ),
+            ast::Expr_oneof_e::wide_char(wc) => (
+                QType::from(Type::Short),
+                Some(ConstantOrIrValue::I16(*wc as i16)),
+            ),
             _ => unimplemented!(), // TODO
         }
     }
