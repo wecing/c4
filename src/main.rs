@@ -51,6 +51,16 @@ struct QType {
     tp: Type,
 }
 
+impl QType {
+    fn from(tp: Type) -> QType {
+        QType {
+            is_const: false,
+            is_volatile: false,
+            tp,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SuField {
     name: Option<String>,
@@ -99,7 +109,15 @@ enum OrdinaryIdRef {
 
 #[derive(Debug, Clone)]
 enum ConstantOrIrValue {
-    // TODO - constant
+    I8(i8),
+    U8(u8),
+    I16(i16),
+    U16(u16),
+    I32(i32),
+    U32(u32),
+    I64(i64),
+    U64(u64),
+    // TODO: addr + offset
     IrValue(String, bool), // ir_id, is_lvalue
 }
 
@@ -611,11 +629,7 @@ impl Compiler<'_> {
                     .map(|name| TypedFuncParam {
                         is_register: is_register_decls.contains(name),
                         tp: decls.get(name).map_or_else(
-                            || QType {
-                                is_const: false,
-                                is_volatile: false,
-                                tp: Type::Int,
-                            },
+                            || QType::from(Type::Int),
                             |tp| tp.clone(),
                         ),
                         name: Some(name.clone()),
@@ -631,11 +645,7 @@ impl Compiler<'_> {
             }
             _ => unreachable!(),
         };
-        let ftp = QType {
-            is_const: false,
-            is_volatile: false,
-            tp: ftp_nq,
-        };
+        let ftp = QType::from(ftp_nq);
         // `ftp.tp` is now guaranteed to be a
         // Type::Function(..., Some(FuncParams::Typed(...)));
         // `TypedFuncParam.name` is guaranteed to be non-empty.
@@ -909,7 +919,7 @@ impl Compiler<'_> {
                         _,
                     )) => {
                         if fold_constant {
-                            (tp.clone(), None)
+                            (tp.clone(), None) // not a constant expr
                         } else {
                             let v =
                                 ConstantOrIrValue::IrValue(ir_id.clone(), true);
@@ -918,6 +928,40 @@ impl Compiler<'_> {
                     }
                 }
             }
+            ast::Expr_oneof_e::integer(int) => match (int.signed, int.size) {
+                (true, ast::Expr_Integer_Size::INT8) => (
+                    QType::from(Type::Char),
+                    Some(ConstantOrIrValue::I8(int.n as i8)),
+                ),
+                (false, ast::Expr_Integer_Size::INT8) => (
+                    QType::from(Type::UnsignedChar),
+                    Some(ConstantOrIrValue::U8(int.n as u8)),
+                ),
+                (true, ast::Expr_Integer_Size::INT16) => (
+                    QType::from(Type::Short),
+                    Some(ConstantOrIrValue::I16(int.n as i16)),
+                ),
+                (false, ast::Expr_Integer_Size::INT16) => (
+                    QType::from(Type::UnsignedShort),
+                    Some(ConstantOrIrValue::U16(int.n as u16)),
+                ),
+                (true, ast::Expr_Integer_Size::INT32) => (
+                    QType::from(Type::Int),
+                    Some(ConstantOrIrValue::I32(int.n as i32)),
+                ),
+                (false, ast::Expr_Integer_Size::INT32) => (
+                    QType::from(Type::UnsignedInt),
+                    Some(ConstantOrIrValue::U32(int.n as u32)),
+                ),
+                (true, ast::Expr_Integer_Size::INT64) => (
+                    QType::from(Type::Long),
+                    Some(ConstantOrIrValue::I64(int.n as i64)),
+                ),
+                (false, ast::Expr_Integer_Size::INT64) => (
+                    QType::from(Type::UnsignedLong),
+                    Some(ConstantOrIrValue::U64(int.n as u64)),
+                ),
+            },
             _ => unimplemented!(), // TODO
         }
     }
@@ -927,11 +971,7 @@ impl Compiler<'_> {
         tss: &Vec<L<&ast::TypeSpecifier>>,
         size_required: bool,
     ) -> QType {
-        let q = |tp| QType {
-            is_const: false,
-            is_volatile: false,
-            tp,
-        };
+        let q = QType::from;
         let cases: Vec<&ast::TypeSpecifier_oneof_s> =
             tss.iter().flat_map(|(ts, _)| ts.s.iter()).collect();
         use ast::TypeSpecifier_oneof_s as TS;
@@ -1263,11 +1303,7 @@ impl Compiler<'_> {
             }
             DD::array(array) => {
                 let size: Option<u32> = unimplemented!(); // TODO
-                tp = QType {
-                    is_const: false,
-                    is_volatile: false,
-                    tp: Type::Array(Box::new(tp), size),
-                };
+                tp = QType::from(Type::Array(Box::new(tp), size));
                 self.unwrap_direct_declarator(tp, array.dd_idx, false)
             }
             DD::ft(ft) => {
@@ -1277,20 +1313,12 @@ impl Compiler<'_> {
                     ft.has_ellipsis,
                     is_function_definition,
                 );
-                tp = QType {
-                    is_const: false,
-                    is_volatile: false,
-                    tp: Type::Function(Box::new(tp), func_params_opt),
-                };
+                tp = QType::from(Type::Function(Box::new(tp), func_params_opt));
                 self.unwrap_direct_declarator(tp, ft.dd_idx, false)
             }
             DD::ids_list(ids_list) => {
                 let names = FuncParams::Names(ids_list.ids.clone().into_vec());
-                tp = QType {
-                    is_const: false,
-                    is_volatile: false,
-                    tp: Type::Function(Box::new(tp), Some(names)),
-                };
+                tp = QType::from(Type::Function(Box::new(tp), Some(names)));
                 self.unwrap_direct_declarator(tp, ids_list.dd_idx, false)
             }
         }
@@ -1320,11 +1348,7 @@ impl Compiler<'_> {
             ),
             DAD::array(array) => {
                 let size: Option<u32> = unimplemented!(); // TODO
-                tp = QType {
-                    is_const: false,
-                    is_volatile: false,
-                    tp: Type::Array(Box::new(tp), size),
-                };
+                tp = QType::from(Type::Array(Box::new(tp), size));
                 self.unwrap_direct_abstract_declarator(tp, array.dad_idx)
             }
             DAD::func(func) => {
@@ -1332,11 +1356,7 @@ impl Compiler<'_> {
                     func.get_pds().iter().zip(func.get_pd_locs()).collect();
                 let func_params_opt =
                     self.get_typed_func_params(pds, func.has_ellipsis, false);
-                tp = QType {
-                    is_const: false,
-                    is_volatile: false,
-                    tp: Type::Function(Box::new(tp), func_params_opt),
-                };
+                tp = QType::from(Type::Function(Box::new(tp), func_params_opt));
                 self.unwrap_direct_abstract_declarator(tp, func.dad_idx)
             }
         }
@@ -1352,11 +1372,7 @@ impl Compiler<'_> {
                 .map(|q| q.clone())
                 .zip(pointer.get_q_locs())
                 .collect();
-            tp = QType {
-                is_const: false,
-                is_volatile: false,
-                tp: Type::Pointer(Box::new(tp.clone())),
-            };
+            tp = QType::from(Type::Pointer(Box::new(tp.clone())));
             tp = Compiler::qualify_type(&type_qualifiers, tp);
             ptr_idx = pointer.ptr_idx.try_into().unwrap();
         }
@@ -1382,8 +1398,8 @@ impl Compiler<'_> {
                 is_register: false,
                 tp:
                     QType {
-                        is_volatile: false,
                         is_const: false,
+                        is_volatile: false,
                         tp: Type::Void,
                     },
                 name: None,
@@ -1808,11 +1824,7 @@ impl Compiler<'_> {
     // type, its type for these comparisons is the unqualified version of its
     // declared type.
     fn sanitize_param_types(params: &Option<FuncParams>) -> Option<FuncParams> {
-        let q = |tp: Type| QType {
-            is_const: false,
-            is_volatile: false,
-            tp,
-        };
+        let q = QType::from;
         match params {
             Some(FuncParams::Typed(tps, is_varargs)) => {
                 Some(FuncParams::Typed(
