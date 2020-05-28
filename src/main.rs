@@ -24,7 +24,10 @@ enum Type {
     // LongDouble,
     Struct(Box<SuType>),
     Union(Box<SuType>),
+
+    #[allow(dead_code)]
     Enum(Box<EnumType>),
+
     Pointer(Box<QType>),
     Array(Box<QType>, Option<u32>),
     Function(Box<QType>, Option<FuncParams>),
@@ -87,6 +90,8 @@ struct Scope {
 enum SueType {
     Struct(Box<SuType>),
     Union(Box<SuType>),
+
+    #[allow(dead_code)]
     Enum(Box<EnumType>),
 }
 
@@ -100,7 +105,10 @@ enum Linkage {
 #[derive(Debug, Clone)]
 enum OrdinaryIdRef {
     TypedefRef(Box<QType>),
+
+    #[allow(dead_code)]
     EnumRef(Box<EnumType>),
+
     // ObjFnRef(ir_id, tp, linkage, is_defined)
     // since it's a lvalue, the IR id refers to a pointer to `tp`.
     ObjFnRef(String, QType, Linkage, bool),
@@ -118,7 +126,7 @@ enum ConstantOrIrValue {
     U64(u64),
     Float(f32),
     Double(f64),
-    // Address may be used as other integral types, e.g. U64, I32.
+    // Addresses may only be used together with pointer or array types.
     //
     // Unlike IrValue, the ir_id of Address could be looked up in
     // Compiler::global_constants and is guaranteed to exist.
@@ -412,7 +420,7 @@ impl IRBuilder for LLVMBuilderImpl {
         &mut self,
         name: &str,
         fields: &Vec<SuField>,
-        is_union: bool,
+        _is_union: bool,
     ) {
         // TODO: should emit multiple structs when is_union=true
         //       (same for emit_opaque_struct_type)
@@ -502,16 +510,16 @@ impl IRBuilder for LLVMBuilderImpl {
 
     fn create_definition(
         &mut self,
-        is_global: bool,
-        name: &str,
-        tp: &QType,
-        linkage: Linkage,
-        init: &Option<Initializer>,
+        _is_global: bool,
+        _name: &str,
+        _tp: &QType,
+        _linkage: Linkage,
+        _init: &Option<Initializer>,
     ) {
         unimplemented!() // TODO
     }
 
-    fn create_constant_buffer(&mut self, ir_id: String, buf: Vec<u8>) {
+    fn create_constant_buffer(&mut self, _ir_id: String, _buf: Vec<u8>) {
         unimplemented!() // TODO
     }
 }
@@ -712,7 +720,7 @@ impl Compiler<'_> {
             .get_stmt_idxes()
             .into_iter()
             .map(|idx| &self.translation_unit.statements[*idx as usize])
-            .for_each(|stmt| {
+            .for_each(|_stmt| {
                 unimplemented!() // TODO
             });
 
@@ -925,10 +933,7 @@ impl Compiler<'_> {
                     Some((OrdinaryIdRef::EnumRef(_), _)) => {
                         unimplemented!() // TODO: support enums
                     }
-                    Some((
-                        OrdinaryIdRef::ObjFnRef(ir_id, tp, linkage, _),
-                        _,
-                    )) => {
+                    Some((OrdinaryIdRef::ObjFnRef(ir_id, tp, _, _), _)) => {
                         if fold_constant {
                             (tp.clone(), None) // not a constant expr
                         } else {
@@ -1097,10 +1102,33 @@ impl Compiler<'_> {
                 "{}: Cannot cast from/to non-scalar types",
                 Compiler::format_loc(e.1)
             ),
+
+            (_, None, _) => (dst_tp, None),
             (Type::Enum(_), _, _) | (_, _, Type::Enum(_)) => unimplemented!(),
 
-            // TODO: rest cases
-            _ => unimplemented!(),
+            (Type::Pointer(_), _, Type::Pointer(_)) => (dst_tp, v),
+
+            (_, Some(ConstantOrIrValue::Address(_, _)), _)
+            | (_, Some(ConstantOrIrValue::IrValue(_, _)), _) => {
+                if !emit_ir {
+                    (dst_tp, None)
+                } else {
+                    unimplemented!() // TODO: writing to IR is required
+                }
+            }
+
+            (_, Some(ConstantOrIrValue::I8(_)), _)
+            | (_, Some(ConstantOrIrValue::U8(_)), _)
+            | (_, Some(ConstantOrIrValue::I16(_)), _)
+            | (_, Some(ConstantOrIrValue::U16(_)), _)
+            | (_, Some(ConstantOrIrValue::I32(_)), _)
+            | (_, Some(ConstantOrIrValue::U32(_)), _)
+            | (_, Some(ConstantOrIrValue::I64(_)), _)
+            | (_, Some(ConstantOrIrValue::U64(_)), _)
+            | (_, Some(ConstantOrIrValue::Float(_)), _)
+            | (_, Some(ConstantOrIrValue::Double(_)), _) => {
+                unimplemented!() // TODO: easy constant folding
+            }
         }
     }
 
@@ -1333,7 +1361,7 @@ impl Compiler<'_> {
         }
     }
 
-    fn get_enum_type(&mut self, s: L<&ast::TypeSpecifier_Enum>) -> Type {
+    fn get_enum_type(&mut self, _s: L<&ast::TypeSpecifier_Enum>) -> Type {
         unimplemented!() // TODO
     }
 
@@ -1439,7 +1467,7 @@ impl Compiler<'_> {
                 self.unwrap_declarator(tp, (d.get_d(), d.get_loc()), false)
             }
             DD::array(array) => {
-                let size: Option<u32> = unimplemented!(); // TODO
+                let size: Option<u32> = None; // TODO: constant folding
                 tp = QType::from(Type::Array(Box::new(tp), size));
                 self.unwrap_direct_declarator(tp, array.dd_idx, false)
             }
@@ -1484,7 +1512,7 @@ impl Compiler<'_> {
                 (simple.get_ad(), simple.get_ad_loc()),
             ),
             DAD::array(array) => {
-                let size: Option<u32> = unimplemented!(); // TODO
+                let size: Option<u32> = None; // TODO: constant folding
                 tp = QType::from(Type::Array(Box::new(tp), size));
                 self.unwrap_direct_abstract_declarator(tp, array.dad_idx)
             }
@@ -1820,7 +1848,7 @@ impl Compiler<'_> {
                     _ => new.tp.clone(),
                 }
             }
-            (Type::Enum(tp_left), Type::Enum(tp_right)) => {
+            (Type::Enum(_tp_left), Type::Enum(_tp_right)) => {
                 unimplemented!() // TODO
             }
             (Type::Pointer(tp_left), Type::Pointer(tp_right)) => Type::Pointer(
