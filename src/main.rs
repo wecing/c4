@@ -1,6 +1,5 @@
 use protobuf::ProtobufEnum;
 use std::collections::{HashMap, HashSet};
-use std::convert::TryInto;
 use std::error::Error;
 use std::ffi::CString;
 use std::io;
@@ -121,7 +120,7 @@ enum ConstantOrIrValue {
     Double(f64),
     Str(String),
     WideStr(String),
-    // TODO: addr + offset
+    Address(String, i64),  // ir_id, offset
     IrValue(String, bool), // ir_id, is_lvalue
 }
 
@@ -698,10 +697,7 @@ impl Compiler<'_> {
         fd.get_body()
             .get_stmt_idxes()
             .into_iter()
-            .map(|idx_i32| {
-                let idx: usize = (*idx_i32).try_into().unwrap();
-                &self.translation_unit.statements[idx]
-            })
+            .map(|idx| &self.translation_unit.statements[*idx as usize])
             .for_each(|stmt| {
                 unimplemented!() // TODO
             });
@@ -850,14 +846,12 @@ impl Compiler<'_> {
         (storage_class_specifiers.pop(), qualified_type)
     }
 
-    fn visit_initializer(&mut self, init_idx_i32: i32) -> Initializer {
+    fn visit_initializer(&mut self, init_idx: i32) -> Initializer {
         let is_global_decl = self.current_scope.outer_scope.is_none();
-        let init_idx: usize = init_idx_i32.try_into().unwrap();
-        let init = &self.translation_unit.initializers[init_idx];
+        let init = &self.translation_unit.initializers[init_idx as usize];
         match &init.init {
             Some(ast::Initializer_oneof_init::expr(expr)) => {
-                let e_idx: usize = expr.e.try_into().unwrap();
-                let e = &self.translation_unit.exprs[e_idx];
+                let e = &self.translation_unit.exprs[expr.e as usize];
                 let (qtype, result) = self.visit_expr(
                     (e, expr.get_e_loc()),
                     true,
@@ -880,10 +874,9 @@ impl Compiler<'_> {
                         .collect(),
                 )
             }
-            None => panic!(
-                "Invalid AST input: initializer #{} is empty",
-                init_idx_i32
-            ),
+            None => {
+                panic!("Invalid AST input: initializer #{} is empty", init_idx)
+            }
         }
     }
 
@@ -995,8 +988,62 @@ impl Compiler<'_> {
                 )),
                 Some(ConstantOrIrValue::WideStr(ws.clone())),
             ),
+            ast::Expr_oneof_e::cast(cast) => {
+                self.visit_cast_expr((cast, e.1), fold_constant, emit_ir)
+            }
             _ => unimplemented!(), // TODO
         }
+    }
+
+    fn visit_cast_expr(
+        &mut self,
+        e: L<&ast::Expr_Cast>,
+        fold_constant: bool,
+        emit_ir: bool,
+    ) -> (QType, Option<ConstantOrIrValue>) {
+        let type_specifiers: Vec<L<&ast::TypeSpecifier>> =
+            e.0.get_tp()
+                .get_sp_qls()
+                .into_iter()
+                .flat_map(|spql| match &spql.elem {
+                    Some(ast::TypeName_SpQl_oneof_elem::sp(sp)) => {
+                        Some((sp, spql.get_loc())).into_iter()
+                    }
+                    _ => None.into_iter(),
+                })
+                .collect();
+        let type_qualifiers: Vec<L<ast::TypeQualifier>> =
+            e.0.get_tp()
+                .get_sp_qls()
+                .into_iter()
+                .flat_map(|spql| match &spql.elem {
+                    Some(ast::TypeName_SpQl_oneof_elem::ql(ql)) => {
+                        Some((*ql, spql.get_loc())).into_iter()
+                    }
+                    _ => None.into_iter(),
+                })
+                .collect();
+        let dst_tp = Compiler::qualify_type(
+            &type_qualifiers,
+            self.get_type(&type_specifiers, true),
+        );
+        let dst_tp = self.unwrap_abstract_declarator(
+            dst_tp,
+            (e.0.get_tp().get_ad(), e.0.get_tp().get_ad_loc()),
+        );
+
+        let expr = &self.translation_unit.exprs[e.0.e_idx as usize];
+        let (src_tp, v) =
+            self.visit_expr((expr, e.0.get_e_loc()), fold_constant, emit_ir);
+        // 3.2.2.1: auto conversion of array lvalues
+        let (src_tp, v) = Compiler::convert_array_lvalue(src_tp, v);
+
+        // now cast `v` of `src_tp` into `dst_tp`
+        //
+        // 3.3.4: Unless the type name specifies void type, the type name shall
+        // specify qualified or unqualified scalar type and the operand shall
+        // have scalar type.
+        unimplemented!() // TODO
     }
 
     fn get_type(
@@ -1323,11 +1370,10 @@ impl Compiler<'_> {
     fn unwrap_direct_declarator(
         &mut self,
         mut tp: QType,
-        dd_idx_i32: i32,
+        dd_idx: i32,
         is_function_definition: bool,
     ) -> (QType, String) {
-        let dd_idx: usize = dd_idx_i32.try_into().unwrap();
-        let dd = &self.translation_unit.direct_declarators[dd_idx];
+        let dd = &self.translation_unit.direct_declarators[dd_idx as usize];
         use ast::DirectDeclarator_oneof_dd as DD;
         match dd.dd.as_ref().unwrap() {
             DD::id(id) => (tp, id.id.clone()),
@@ -1369,10 +1415,10 @@ impl Compiler<'_> {
     fn unwrap_direct_abstract_declarator(
         &mut self,
         mut tp: QType,
-        dad_idx_i32: i32,
+        dad_idx: i32,
     ) -> QType {
-        let dad_idx: usize = dad_idx_i32.try_into().unwrap();
-        let dad = &self.translation_unit.direct_abstract_declarators[dad_idx];
+        let dad = &self.translation_unit.direct_abstract_declarators
+            [dad_idx as usize];
         use ast::DirectAbstractDeclarator_oneof_dad as DAD;
         match dad.dad.as_ref().unwrap() {
             DAD::simple(simple) => self.unwrap_abstract_declarator(
@@ -1395,10 +1441,9 @@ impl Compiler<'_> {
         }
     }
 
-    fn unwrap_pointer(&self, mut tp: QType, ptr_idx_i32: i32) -> QType {
-        let mut ptr_idx: usize = ptr_idx_i32.try_into().unwrap();
+    fn unwrap_pointer(&self, mut tp: QType, mut ptr_idx: i32) -> QType {
         while ptr_idx != 0 {
-            let pointer = &self.translation_unit.pointers[ptr_idx];
+            let pointer = &self.translation_unit.pointers[ptr_idx as usize];
             let type_qualifiers: Vec<L<ast::TypeQualifier>> = pointer
                 .get_qs()
                 .iter()
@@ -1407,7 +1452,7 @@ impl Compiler<'_> {
                 .collect();
             tp = QType::from(Type::Pointer(Box::new(tp.clone())));
             tp = Compiler::qualify_type(&type_qualifiers, tp);
-            ptr_idx = pointer.ptr_idx.try_into().unwrap();
+            ptr_idx = pointer.ptr_idx;
         }
         tp
     }
@@ -1907,6 +1952,33 @@ impl Compiler<'_> {
             qtype.is_volatile = is_volatile;
         }
         qtype
+    }
+
+    // 3.2.2.1: Except when it is the operand of the sizeof operator or the
+    // unary & operator, or is a character string literal used to initialize an
+    // array of character type, or is a wide string literal used to initialize
+    // an array with element type compatible with wchar_t, an lvalue that has
+    // type ``array of type'' is converted to an expression that has type
+    // ``pointer to type'' that points to the initial member of the array object
+    // and is not an lvalue.
+    fn convert_array_lvalue(
+        tp: QType,
+        expr: Option<ConstantOrIrValue>,
+    ) -> (QType, Option<ConstantOrIrValue>) {
+        match (tp.tp.clone(), expr.clone()) {
+            (
+                Type::Array(t, _),
+                Some(ConstantOrIrValue::IrValue(ir_id, true)),
+            ) => (
+                QType {
+                    is_const: tp.is_const,
+                    is_volatile: tp.is_volatile,
+                    tp: Type::Pointer(t),
+                },
+                Some(ConstantOrIrValue::IrValue(ir_id, false)),
+            ),
+            _ => (tp, expr),
+        }
     }
 
     fn format_loc(loc: &ast::Loc) -> String {
