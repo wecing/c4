@@ -118,8 +118,10 @@ enum ConstantOrIrValue {
     U64(u64),
     Float(f32),
     Double(f64),
-    Str(String),
-    WideStr(String),
+    // Address may be used as other integral types, e.g. U64, I32.
+    //
+    // Unlike IrValue, the ir_id of Address could be looked up in
+    // Compiler::global_constants and is guaranteed to exist.
     Address(String, i64),  // ir_id, offset
     IrValue(String, bool), // ir_id, is_lvalue
 }
@@ -225,6 +227,8 @@ trait IRBuilder {
         linkage: Linkage,
         init: &Option<Initializer>,
     );
+
+    fn create_constant_buffer(&mut self, ir_id: String, buf: Vec<u8>);
 }
 
 struct DummyIRBuilder {}
@@ -270,6 +274,8 @@ impl IRBuilder for DummyIRBuilder {
         _init: &Option<Initializer>,
     ) {
     }
+
+    fn create_constant_buffer(&mut self, _ir_id: String, _buf: Vec<u8>) {}
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -504,6 +510,10 @@ impl IRBuilder for LLVMBuilderImpl {
     ) {
         unimplemented!() // TODO
     }
+
+    fn create_constant_buffer(&mut self, ir_id: String, buf: Vec<u8>) {
+        unimplemented!() // TODO
+    }
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -519,6 +529,9 @@ struct Compiler<'a> {
     current_scope: Scope,
     next_uuid: u32,
 
+    // ir_id => binary representation
+    global_constants: HashMap<String, Vec<u8>>,
+
     c4ir_builder: C4IRBuilder,
     llvm_builder: LLVMBuilder,
 }
@@ -531,6 +544,7 @@ impl Compiler<'_> {
             translation_unit: &tu,
             current_scope: Scope::new(),
             next_uuid: 100,
+            global_constants: HashMap::new(),
             c4ir_builder: C4IRBuilder::new(),
             llvm_builder: LLVMBuilder::new(),
         };
@@ -974,20 +988,47 @@ impl Compiler<'_> {
                 QType::from(Type::Short),
                 Some(ConstantOrIrValue::I16(*wc as i16)),
             ),
-            ast::Expr_oneof_e::string(str) => (
-                QType::from(Type::Array(
+            ast::Expr_oneof_e::string(str) => {
+                let mut buf = str.clone().into_bytes();
+                buf.push(0);
+                let len = buf.len() as u32;
+
+                let ir_id = format!("$.{}", self.get_next_uuid());
+                self.global_constants.insert(ir_id.clone(), buf.clone());
+
+                self.c4ir_builder
+                    .create_constant_buffer(ir_id.clone(), buf.clone());
+                self.llvm_builder.create_constant_buffer(ir_id.clone(), buf);
+
+                let tp = QType::from(Type::Array(
                     Box::new(QType::from(Type::Char)),
-                    Some(str.len() as u32 + 1),
-                )),
-                Some(ConstantOrIrValue::Str(str.clone())),
-            ),
-            ast::Expr_oneof_e::wide_string(ws) => (
-                QType::from(Type::Array(
+                    Some(len),
+                ));
+                (tp, Some(ConstantOrIrValue::Address(ir_id, 0)))
+            }
+            ast::Expr_oneof_e::wide_string(ws) => {
+                let mut buf: Vec<u8> = vec![];
+                ws.encode_utf16().for_each(|v| {
+                    buf.push(v as u8); // assuming little-endian
+                    buf.push((v >> 8) as u8);
+                });
+                buf.push(0);
+                buf.push(0);
+                let len = buf.len() as u32;
+
+                let ir_id = format!("$.{}", self.get_next_uuid());
+                self.global_constants.insert(ir_id.clone(), buf.clone());
+
+                self.c4ir_builder
+                    .create_constant_buffer(ir_id.clone(), buf.clone());
+                self.llvm_builder.create_constant_buffer(ir_id.clone(), buf);
+
+                let tp = QType::from(Type::Array(
                     Box::new(QType::from(Type::Short)),
-                    Some(ws.len() as u32 + 1),
-                )),
-                Some(ConstantOrIrValue::WideStr(ws.clone())),
-            ),
+                    Some(len),
+                ));
+                (tp, Some(ConstantOrIrValue::Address(ir_id, 0)))
+            }
             ast::Expr_oneof_e::cast(cast) => {
                 self.visit_cast_expr((cast, e.1), fold_constant, emit_ir)
             }
@@ -1035,15 +1076,32 @@ impl Compiler<'_> {
         let expr = &self.translation_unit.exprs[e.0.e_idx as usize];
         let (src_tp, v) =
             self.visit_expr((expr, e.0.get_e_loc()), fold_constant, emit_ir);
+
         // 3.2.2.1: auto conversion of array lvalues
         let (src_tp, v) = Compiler::convert_array_lvalue(src_tp, v);
 
         // now cast `v` of `src_tp` into `dst_tp`
-        //
-        // 3.3.4: Unless the type name specifies void type, the type name shall
-        // specify qualified or unqualified scalar type and the operand shall
-        // have scalar type.
-        unimplemented!() // TODO
+        match (&src_tp.tp, &v, &dst_tp.tp) {
+            // 3.3.4: Unless the type name specifies void type, the type name
+            // shall specify qualified or unqualified scalar type and the
+            // operand shall have scalar type.
+            (_, _, Type::Void) => (dst_tp, None),
+            (Type::Struct(_), _, _)
+            | (Type::Union(_), _, _)
+            | (Type::Array(_, _), _, _)
+            | (Type::Function(_, _), _, _)
+            | (_, _, Type::Struct(_))
+            | (_, _, Type::Union(_))
+            | (_, _, Type::Array(_, _))
+            | (_, _, Type::Function(_, _)) => panic!(
+                "{}: Cannot cast from/to non-scalar types",
+                Compiler::format_loc(e.1)
+            ),
+            (Type::Enum(_), _, _) | (_, _, Type::Enum(_)) => unimplemented!(),
+
+            // TODO: rest cases
+            _ => unimplemented!(),
+        }
     }
 
     fn get_type(
