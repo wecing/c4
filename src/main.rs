@@ -236,7 +236,35 @@ trait IRBuilder {
         init: &Option<Initializer>,
     );
 
+    // global static constant buffer
     fn create_constant_buffer(&mut self, ir_id: String, buf: Vec<u8>);
+
+    // <ir_id> = <c>
+    //
+    // local variable initialized with constant literals
+    fn create_constant(
+        &mut self,
+        ir_id: String,
+        c: &ConstantOrIrValue,
+        c_tp: &QType,
+    );
+
+    // <dst_ir_id> = load <T>, <T>* <src_ir_id>
+    //     where src_tp.tp == Type::Pointer(T)
+    fn create_load(
+        &mut self,
+        dst_ir_id: String,
+        src_ir_id: String,
+        src_tp: &QType,
+    );
+
+    fn create_cast(
+        &mut self,
+        dst_ir_id: String,
+        dst_tp: &QType,
+        src_ir_id: String,
+        src_tp: &QType,
+    );
 }
 
 struct DummyIRBuilder {}
@@ -284,6 +312,31 @@ impl IRBuilder for DummyIRBuilder {
     }
 
     fn create_constant_buffer(&mut self, _ir_id: String, _buf: Vec<u8>) {}
+
+    fn create_constant(
+        &mut self,
+        _ir_id: String,
+        _c: &ConstantOrIrValue,
+        _c_tp: &QType,
+    ) {
+    }
+
+    fn create_load(
+        &mut self,
+        _dst_ir_id: String,
+        _src_ir_id: String,
+        _src_tp: &QType,
+    ) {
+    }
+
+    fn create_cast(
+        &mut self,
+        _dst_ir_id: String,
+        _dst_tp: &QType,
+        _src_ir_id: String,
+        _src_tp: &QType,
+    ) {
+    }
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -520,6 +573,34 @@ impl IRBuilder for LLVMBuilderImpl {
     }
 
     fn create_constant_buffer(&mut self, _ir_id: String, _buf: Vec<u8>) {
+        unimplemented!() // TODO
+    }
+
+    fn create_constant(
+        &mut self,
+        _ir_id: String,
+        _c: &ConstantOrIrValue,
+        _c_tp: &QType,
+    ) {
+        unimplemented!() // TODO
+    }
+
+    fn create_load(
+        &mut self,
+        _dst_ir_id: String,
+        _src_ir_id: String,
+        _src_tp: &QType,
+    ) {
+        unimplemented!() // TODO
+    }
+
+    fn create_cast(
+        &mut self,
+        _dst_ir_id: String,
+        _dst_tp: &QType,
+        _src_ir_id: String,
+        _src_tp: &QType,
+    ) {
         unimplemented!() // TODO
     }
 }
@@ -1128,15 +1209,63 @@ impl Compiler<'_> {
 
             (Type::Pointer(_), _, Type::Pointer(_)) => (dst_tp, v),
 
-            (_, Some(ConstantOrIrValue::Address(_, _)), _)
-            | (_, Some(ConstantOrIrValue::IrValue(_, _)), _) => {
+            (_, Some(p @ ConstantOrIrValue::Address(_, _)), _)
+            | (_, Some(p @ ConstantOrIrValue::IrValue(_, _)), _) => {
                 if !emit_ir {
                     (dst_tp, None)
                 } else {
-                    unimplemented!() // TODO: writing to IR is required
+                    let src_ir_id = match p {
+                        ConstantOrIrValue::IrValue(ir_id, false) => {
+                            ir_id.clone()
+                        }
+                        ConstantOrIrValue::IrValue(ir_id, true) => {
+                            // lvalues need to be deref-ed first
+                            let dst_ir_id = self.get_next_ir_id();
+                            self.c4ir_builder.create_load(
+                                dst_ir_id.clone(),
+                                ir_id.clone(),
+                                &src_tp,
+                            );
+                            self.llvm_builder.create_load(
+                                dst_ir_id.clone(),
+                                ir_id.clone(),
+                                &src_tp,
+                            );
+                            dst_ir_id
+                        }
+                        c => {
+                            let ir_id = self.get_next_ir_id();
+                            self.c4ir_builder.create_constant(
+                                ir_id.clone(),
+                                c,
+                                &src_tp,
+                            );
+                            self.llvm_builder.create_constant(
+                                ir_id.clone(),
+                                c,
+                                &src_tp,
+                            );
+                            ir_id
+                        }
+                    };
+                    let dst_ir_id = self.get_next_ir_id();
+                    self.c4ir_builder.create_cast(
+                        dst_ir_id.clone(),
+                        &dst_tp,
+                        src_ir_id.clone(),
+                        &src_tp,
+                    );
+                    self.llvm_builder.create_cast(
+                        dst_ir_id.clone(),
+                        &dst_tp,
+                        src_ir_id,
+                        &src_tp,
+                    );
+                    (dst_tp, Some(ConstantOrIrValue::IrValue(dst_ir_id, false)))
                 }
             }
 
+            // compile time constant folding for cast expressions
             (_, Some(ConstantOrIrValue::I8(v)), tp) => do_cast!(v, tp),
             (_, Some(ConstantOrIrValue::U8(v)), tp) => do_cast!(v, tp),
             (_, Some(ConstantOrIrValue::I16(v)), tp) => do_cast!(v, tp),
@@ -2111,6 +2240,10 @@ impl Compiler<'_> {
         let r = self.next_uuid;
         self.next_uuid += 1;
         r
+    }
+
+    fn get_next_ir_id(&mut self) -> String {
+        format!("$.{}", self.get_next_uuid())
     }
 }
 
