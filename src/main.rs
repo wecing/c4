@@ -1085,6 +1085,26 @@ impl Compiler<'_> {
         // 3.2.2.1: auto conversion of array lvalues
         let (src_tp, v) = Compiler::convert_array_lvalue(src_tp, v);
 
+        macro_rules! do_cast {
+            ($v:tt, $tp:tt) => {{
+                use ConstantOrIrValue as C;
+                match $tp {
+                    Type::Char => (dst_tp, Some(C::I8(*$v as i8))),
+                    Type::UnsignedChar => (dst_tp, Some(C::U8(*$v as u8))),
+                    Type::Short => (dst_tp, Some(C::I16(*$v as i16))),
+                    Type::UnsignedShort => (dst_tp, Some(C::U16(*$v as u16))),
+                    Type::Int => (dst_tp, Some(C::I32(*$v as i32))),
+                    Type::UnsignedInt => (dst_tp, Some(C::U32(*$v as u32))),
+                    Type::Long => (dst_tp, Some(C::I64(*$v as i64))),
+                    Type::UnsignedLong => (dst_tp, Some(C::U64(*$v as u64))),
+                    Type::Float => (dst_tp, Some(C::Float(*$v as f32))),
+                    Type::Double => (dst_tp, Some(C::Double(*$v as f64))),
+                    Type::Pointer(_) => (dst_tp, Some(C::U64(*$v as u64))),
+                    _ => unreachable!(),
+                }
+            }};
+        }
+
         // now cast `v` of `src_tp` into `dst_tp`
         match (&src_tp.tp, &v, &dst_tp.tp) {
             // 3.3.4: Unless the type name specifies void type, the type name
@@ -1117,18 +1137,16 @@ impl Compiler<'_> {
                 }
             }
 
-            (_, Some(ConstantOrIrValue::I8(_)), _)
-            | (_, Some(ConstantOrIrValue::U8(_)), _)
-            | (_, Some(ConstantOrIrValue::I16(_)), _)
-            | (_, Some(ConstantOrIrValue::U16(_)), _)
-            | (_, Some(ConstantOrIrValue::I32(_)), _)
-            | (_, Some(ConstantOrIrValue::U32(_)), _)
-            | (_, Some(ConstantOrIrValue::I64(_)), _)
-            | (_, Some(ConstantOrIrValue::U64(_)), _)
-            | (_, Some(ConstantOrIrValue::Float(_)), _)
-            | (_, Some(ConstantOrIrValue::Double(_)), _) => {
-                unimplemented!() // TODO: easy constant folding
-            }
+            (_, Some(ConstantOrIrValue::I8(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::U8(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::I16(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::U16(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::I32(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::U32(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::I64(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::U64(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::Float(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::Double(v)), tp) => do_cast!(v, tp),
         }
     }
 
