@@ -1,4 +1,3 @@
-use llvm_sys::prelude::LLVMValueRef;
 use protobuf::ProtobufEnum;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -618,8 +617,8 @@ impl IRBuilder for LLVMBuilderImpl {
                     let src_tp =
                         Type::Pointer(Box::new(QType::from(Type::Void)));
                     let src_tp_llvm = self.get_llvm_type(&src_tp);
-                    let ptr: LLVMValueRef =
-                        self.symbol_table.get(ir_id).unwrap().clone();
+                    let ptr: llvm_sys::prelude::LLVMValueRef =
+                        *self.symbol_table.get(ir_id).unwrap();
                     let ptr = unsafe {
                         llvm_sys::core::LLVMConstBitCast(ptr, src_tp_llvm)
                     };
@@ -663,12 +662,84 @@ impl IRBuilder for LLVMBuilderImpl {
 
     fn create_cast(
         &mut self,
-        _dst_ir_id: String,
-        _dst_tp: &QType,
-        _src_ir_id: String,
-        _src_tp: &QType,
+        dst_ir_id: String,
+        dst_tp: &QType,
+        src_ir_id: String,
+        src_tp: &QType,
     ) {
-        unimplemented!() // TODO
+        enum K {
+            Int(i32, bool), // num_of_bits, is_signed
+            FP(i32),        // num_of_bits
+            Ptr,
+        }
+        let get_kind = |tp: &Type| match tp {
+            Type::Char => K::Int(8, true),
+            Type::UnsignedChar => K::Int(8, false),
+            Type::Short => K::Int(16, true),
+            Type::UnsignedShort => K::Int(16, false),
+            Type::Int => K::Int(32, true),
+            Type::UnsignedInt => K::Int(32, false),
+            Type::Long => K::Int(64, true),
+            Type::UnsignedLong => K::Int(64, false),
+            Type::Float => K::FP(32),
+            Type::Double => K::FP(64),
+            Type::Pointer(_) => K::Ptr,
+            _ => unreachable!(),
+        };
+        use llvm_sys::LLVMOpcode as O;
+        let opcode = match (get_kind(&src_tp.tp), get_kind(&dst_tp.tp)) {
+            // int -> int
+            (K::Int(nb_src, _), K::Int(nb_dst, _)) if nb_src == nb_dst => None,
+            (K::Int(nb_src, _), K::Int(nb_dst, _)) if nb_src > nb_dst => {
+                Some(O::LLVMTrunc)
+            }
+            (K::Int(_, true), K::Int(_, _)) => Some(O::LLVMSExt),
+            (K::Int(_, false), K::Int(_, _)) => Some(O::LLVMZExt),
+            // int -> fp
+            (K::Int(_, true), K::FP(_)) => Some(O::LLVMSIToFP),
+            (K::Int(_, false), K::FP(_)) => Some(O::LLVMUIToFP),
+            // int -> ptr
+            (K::Int(_, _), K::Ptr) => Some(O::LLVMIntToPtr),
+
+            // fp -> int
+            (K::FP(_), K::Int(_, true)) => Some(O::LLVMFPToSI),
+            (K::FP(_), K::Int(_, false)) => Some(O::LLVMFPToUI),
+            // fp -> fp
+            (K::FP(nb_src), K::FP(nb_dst)) if nb_src > nb_dst => {
+                Some(O::LLVMFPTrunc)
+            }
+            (K::FP(nb_src), K::FP(nb_dst)) if nb_src < nb_dst => {
+                Some(O::LLVMFPExt)
+            }
+            (K::FP(_), K::FP(_)) => None,
+            // fp -> ptr
+            (K::FP(_), K::Ptr) => unreachable!(),
+
+            // ptr -> int
+            (K::Ptr, K::Int(_, _)) => Some(O::LLVMPtrToInt),
+            // ptr -> FP
+            (K::Ptr, K::FP(_)) => unreachable!(),
+            // ptr -> ptr
+            (K::Ptr, K::Ptr) => Some(O::LLVMBitCast),
+        };
+
+        let src: llvm_sys::prelude::LLVMValueRef =
+            *self.symbol_table.get(&src_ir_id).unwrap();
+        let dst_tp_llvm = self.get_llvm_type(&dst_tp.tp);
+        let dst_ir_id_c = CString::new(dst_ir_id.clone()).unwrap();
+        let dst = match opcode {
+            None => src,
+            Some(op) => unsafe {
+                llvm_sys::core::LLVMBuildCast(
+                    self.builder,
+                    op,
+                    src,
+                    dst_tp_llvm,
+                    dst_ir_id_c.as_ptr(),
+                )
+            },
+        };
+        self.symbol_table.insert(dst_ir_id, dst);
     }
 }
 
