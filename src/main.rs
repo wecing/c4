@@ -1,3 +1,4 @@
+use llvm_sys::prelude::LLVMValueRef;
 use protobuf::ProtobufEnum;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -241,7 +242,7 @@ trait IRBuilder {
         &mut self,
         ir_id: String,
         c: &ConstantOrIrValue,
-        c_tp: &QType,
+        tp: &QType,
     );
 
     // <dst_ir_id> = load <T>, <T>* <src_ir_id>
@@ -310,7 +311,7 @@ impl IRBuilder for DummyIRBuilder {
         &mut self,
         _ir_id: String,
         _c: &ConstantOrIrValue,
-        _c_tp: &QType,
+        _tp: &QType,
     ) {
     }
 
@@ -338,6 +339,8 @@ struct LLVMBuilderImpl {
     module: llvm_sys::prelude::LLVMModuleRef,
     builder: llvm_sys::prelude::LLVMBuilderRef,
 
+    next_uuid: u32,
+
     current_function: llvm_sys::prelude::LLVMValueRef,
     basic_blocks: HashMap<String, llvm_sys::prelude::LLVMBasicBlockRef>,
     // key: ir_id
@@ -359,6 +362,7 @@ impl LLVMBuilderImpl {
                 context,
                 module,
                 builder,
+                next_uuid: 1_000_000,
                 current_function: ptr::null_mut(),
                 basic_blocks: HashMap::new(),
                 symbol_table: HashMap::new(),
@@ -453,6 +457,12 @@ impl LLVMBuilderImpl {
                 }
             }
         }
+    }
+
+    fn get_next_tmp_ir_id(&mut self) -> String {
+        let r = self.next_uuid;
+        self.next_uuid += 1;
+        format!("$.t.{}", r)
     }
 }
 
@@ -572,11 +582,65 @@ impl IRBuilder for LLVMBuilderImpl {
 
     fn create_constant(
         &mut self,
-        _ir_id: String,
-        _c: &ConstantOrIrValue,
-        _c_tp: &QType,
+        ir_id: String,
+        c: &ConstantOrIrValue,
+        tp: &QType,
     ) {
-        unimplemented!() // TODO
+        let (src, src_tp) = {
+            let f_int = |src_tp: Type, v: u64, is_signed: bool| {
+                let src_tp_llvm = self.get_llvm_type(&src_tp);
+                let is_signed = if is_signed { 1 } else { 0 };
+                let v = unsafe {
+                    llvm_sys::core::LLVMConstInt(src_tp_llvm, v, is_signed)
+                };
+                (v, QType::from(src_tp))
+            };
+            let f_fp = |src_tp: Type, v: f64| {
+                let src_tp_llvm = self.get_llvm_type(&src_tp);
+                let v =
+                    unsafe { llvm_sys::core::LLVMConstReal(src_tp_llvm, v) };
+                (v, QType::from(src_tp))
+            };
+            use ConstantOrIrValue as C;
+            use Type as T;
+            match c {
+                C::I8(v) => f_int(T::Char, *v as u64, true),
+                C::U8(v) => f_int(T::UnsignedChar, *v as u64, false),
+                C::I16(v) => f_int(T::Short, *v as u64, true),
+                C::U16(v) => f_int(T::UnsignedShort, *v as u64, false),
+                C::I32(v) => f_int(T::Int, *v as u64, true),
+                C::U32(v) => f_int(T::UnsignedInt, *v as u64, false),
+                C::I64(v) => f_int(T::Long, *v as u64, true),
+                C::U64(v) => f_int(T::UnsignedLong, *v, false),
+                C::Float(v) => f_fp(T::Float, *v as f64),
+                C::Double(v) => f_fp(T::Double, *v),
+                C::Address(ir_id, offset) => {
+                    let src_tp =
+                        Type::Pointer(Box::new(QType::from(Type::Void)));
+                    let src_tp_llvm = self.get_llvm_type(&src_tp);
+                    let ptr: LLVMValueRef =
+                        self.symbol_table.get(ir_id).unwrap().clone();
+                    let ptr = unsafe {
+                        llvm_sys::core::LLVMConstBitCast(ptr, src_tp_llvm)
+                    };
+                    let mut offset = unsafe {
+                        llvm_sys::core::LLVMConstInt(
+                            self.get_llvm_type(&Type::Long),
+                            *offset as u64,
+                            1,
+                        )
+                    };
+                    let src = unsafe {
+                        llvm_sys::core::LLVMConstGEP(ptr, &mut offset, 1)
+                    };
+                    (src, QType::from(src_tp))
+                }
+                C::IrValue(_, _) => unreachable!(),
+            }
+        };
+        let src_ir_id = self.get_next_tmp_ir_id();
+        self.symbol_table.insert(src_ir_id.clone(), src);
+        self.create_cast(ir_id, tp, src_ir_id, &src_tp);
     }
 
     fn create_load(
@@ -635,7 +699,7 @@ impl Compiler<'_> {
         let mut cc = Compiler {
             translation_unit: &tu,
             current_scope: Scope::new(),
-            next_uuid: 100,
+            next_uuid: 1_000,
             global_constants: HashMap::new(),
             c4ir_builder: C4IRBuilder::new(),
             llvm_builder: LLVMBuilder::new(),
@@ -1209,6 +1273,14 @@ impl Compiler<'_> {
             | (_, _, Type::Array(_, _))
             | (_, _, Type::Function(_, _)) => panic!(
                 "{}: Cannot cast from/to non-scalar types",
+                Compiler::format_loc(e.1)
+            ),
+
+            (Type::Float, _, Type::Pointer(_))
+            | (Type::Double, _, Type::Pointer(_))
+            | (Type::Pointer(_), _, Type::Float)
+            | (Type::Pointer(_), _, Type::Double) => panic!(
+                "{}: Cannot cast floating point values from/to pointers",
                 Compiler::format_loc(e.1)
             ),
 
