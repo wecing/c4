@@ -340,6 +340,8 @@ struct LLVMBuilderImpl {
 
     current_function: llvm_sys::prelude::LLVMValueRef,
     basic_blocks: HashMap<String, llvm_sys::prelude::LLVMBasicBlockRef>,
+    // key: ir_id
+    symbol_table: HashMap<String, llvm_sys::prelude::LLVMValueRef>,
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -359,6 +361,7 @@ impl LLVMBuilderImpl {
                 builder,
                 current_function: ptr::null_mut(),
                 basic_blocks: HashMap::new(),
+                symbol_table: HashMap::new(),
             }
         }
     }
@@ -506,6 +509,7 @@ impl IRBuilder for LLVMBuilderImpl {
                 llvm_tp,
             )
         };
+        self.symbol_table.insert(String::from(name), llvm_func);
         let llvm_linkage = if linkage == Linkage::INTERNAL {
             llvm_sys::LLVMLinkage::LLVMInternalLinkage
         } else {
@@ -522,6 +526,7 @@ impl IRBuilder for LLVMBuilderImpl {
                     c_ir_id.as_ptr(),
                     ir_id.len(),
                 );
+                self.symbol_table.insert(ir_id.clone(), llvm_param);
                 llvm_param = llvm_sys::core::LLVMGetNextParam(llvm_param);
             });
 
@@ -576,11 +581,20 @@ impl IRBuilder for LLVMBuilderImpl {
 
     fn create_load(
         &mut self,
-        _dst_ir_id: String,
-        _src_ir_id: String,
+        dst_ir_id: String,
+        src_ir_id: String,
         _src_tp: &QType,
     ) {
-        unimplemented!() // TODO
+        let dst_ir_id_c = CString::new(dst_ir_id.clone()).unwrap();
+        let src = self.symbol_table.get(&src_ir_id).unwrap();
+        let dst = unsafe {
+            llvm_sys::core::LLVMBuildLoad(
+                self.builder,
+                *src,
+                dst_ir_id_c.as_ptr(),
+            )
+        };
+        self.symbol_table.insert(dst_ir_id, dst);
     }
 
     fn create_cast(
