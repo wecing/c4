@@ -196,11 +196,6 @@ impl Drop for Scope {
     }
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-struct BasicBlock {
-    id: String,
-}
-
 trait IRBuilder {
     fn emit_opaque_struct_type(&mut self, name: &str);
 
@@ -223,9 +218,9 @@ trait IRBuilder {
     );
 
     // create a new basic block in the last created function.
-    fn create_basic_block(&mut self, name: &str) -> BasicBlock;
+    fn create_basic_block(&mut self, name: &str);
 
-    fn set_current_basic_block(&mut self, bb: &BasicBlock);
+    fn set_current_basic_block(&mut self, bb: &str);
 
     fn create_definition(
         &mut self,
@@ -295,11 +290,9 @@ impl IRBuilder for DummyIRBuilder {
     ) {
     }
 
-    fn create_basic_block(&mut self, _name: &str) -> BasicBlock {
-        BasicBlock { id: String::new() }
-    }
+    fn create_basic_block(&mut self, _name: &str) {}
 
-    fn set_current_basic_block(&mut self, _bb: &BasicBlock) {}
+    fn set_current_basic_block(&mut self, _bb: &str) {}
 
     fn create_definition(
         &mut self,
@@ -346,7 +339,7 @@ struct LLVMBuilderImpl {
     builder: llvm_sys::prelude::LLVMBuilderRef,
 
     current_function: llvm_sys::prelude::LLVMValueRef,
-    basic_blocks: HashMap<BasicBlock, llvm_sys::prelude::LLVMBasicBlockRef>,
+    basic_blocks: HashMap<String, llvm_sys::prelude::LLVMBasicBlockRef>,
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -538,24 +531,20 @@ impl IRBuilder for LLVMBuilderImpl {
         self.basic_blocks.clear();
     }
 
-    fn create_basic_block(&mut self, name: &str) -> BasicBlock {
-        let bb_ref = BasicBlock {
-            id: String::from(name),
-        };
-        let name = CString::new(name).unwrap();
+    fn create_basic_block(&mut self, name: &str) {
+        let name_c = CString::new(name).unwrap();
         let bb = unsafe {
             llvm_sys::core::LLVMAppendBasicBlockInContext(
                 self.context,
                 self.current_function,
-                name.as_ptr(),
+                name_c.as_ptr(),
             )
         };
-        self.basic_blocks.insert(bb_ref.clone(), bb);
-        bb_ref
+        self.basic_blocks.insert(String::from(name), bb);
     }
 
-    fn set_current_basic_block(&mut self, bb_ref: &BasicBlock) {
-        let bb = *self.basic_blocks.get(bb_ref).unwrap();
+    fn set_current_basic_block(&mut self, bb: &str) {
+        let bb = *self.basic_blocks.get(bb).unwrap();
         unsafe {
             llvm_sys::core::LLVMPositionBuilderAtEnd(self.builder, bb);
         }
@@ -788,19 +777,18 @@ impl Compiler<'_> {
             .create_function(&fname, &ftp, linkage, &param_ir_ids);
 
         let entry_bb_id = format!("$entry.{}", self.get_next_uuid());
-        let c4ir_entry_bb = self.c4ir_builder.create_basic_block(&entry_bb_id);
-        self.c4ir_builder.set_current_basic_block(&c4ir_entry_bb);
-        let llvm_entry_bb = self.llvm_builder.create_basic_block(&entry_bb_id);
-        self.llvm_builder.set_current_basic_block(&llvm_entry_bb);
+        self.c4ir_builder.create_basic_block(&entry_bb_id);
+        self.llvm_builder.create_basic_block(&entry_bb_id);
+        self.c4ir_builder.set_current_basic_block(&entry_bb_id);
+        self.llvm_builder.set_current_basic_block(&entry_bb_id);
 
         fd.get_body()
             .get_dls()
             .into_iter()
             .for_each(|dl| self.visit_declaration(dl));
         // struct FuncDefCtx {
-        //   // user-provided label name => BasicBlock
-        //   // TODO: get rid of the BasicBlock type
-        //   basic_blocks: HashMap<String, BasicBlock>,
+        //   // user-provided label name => basic block name
+        //   basic_blocks: HashMap<String, String>,
         //   unresolved_labels: HashSet<String>
         // }
         fd.get_body()
