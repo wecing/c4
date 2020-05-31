@@ -797,6 +797,12 @@ impl Compiler<'_> {
             .get_dls()
             .into_iter()
             .for_each(|dl| self.visit_declaration(dl));
+        // struct FuncDefCtx {
+        //   // user-provided label name => BasicBlock
+        //   // TODO: get rid of the BasicBlock type
+        //   basic_blocks: HashMap<String, BasicBlock>,
+        //   unresolved_labels: HashSet<String>
+        // }
         fd.get_body()
             .get_stmt_idxes()
             .into_iter()
