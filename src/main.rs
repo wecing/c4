@@ -575,8 +575,16 @@ impl IRBuilder for LLVMBuilderImpl {
         unimplemented!() // TODO
     }
 
-    fn create_constant_buffer(&mut self, _ir_id: String, _buf: Vec<u8>) {
-        unimplemented!() // TODO
+    fn create_constant_buffer(&mut self, ir_id: String, buf: Vec<u8>) {
+        let v = unsafe {
+            llvm_sys::core::LLVMConstStringInContext(
+                self.context,
+                buf.as_ptr() as *const i8,
+                buf.len() as u32,
+                1,
+            )
+        };
+        self.symbol_table.insert(ir_id, v);
     }
 
     fn create_constant(
@@ -757,6 +765,7 @@ struct Compiler<'a> {
     next_uuid: u32,
 
     // ir_id => binary representation
+    // TODO: value should be Either<Vec<u8>, Initializer>
     global_constants: HashMap<String, Vec<u8>>,
 
     c4ir_builder: C4IRBuilder,
