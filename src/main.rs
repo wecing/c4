@@ -1734,10 +1734,13 @@ impl Compiler<'_> {
                     } else {
                         Some(field_name)
                     };
-                    let bit_field_size: Option<u8> = if decl.get_e() != 0 {
-                        unimplemented!(); // TODO
-                    } else {
+                    let bit_field_size: Option<u8> = if decl.e == 0 {
                         None
+                    } else {
+                        Some(self.get_bitmask_size((
+                            &self.translation_unit.exprs[decl.e as usize],
+                            decl.get_e_loc(),
+                        )))
                     };
                     SuField {
                         name: field_name_opt,
@@ -1774,7 +1777,14 @@ impl Compiler<'_> {
                 self.unwrap_declarator(tp, (d.get_d(), d.get_loc()), false)
             }
             DD::array(array) => {
-                let size: Option<u32> = None; // TODO: constant folding
+                let size: Option<u32> = if array.size_idx == 0 {
+                    None
+                } else {
+                    Some(self.get_array_size((
+                        &self.translation_unit.exprs[array.size_idx as usize],
+                        array.get_size_loc(),
+                    )))
+                };
                 tp = QType::from(Type::Array(Box::new(tp), size));
                 self.unwrap_direct_declarator(tp, array.dd_idx, false)
             }
@@ -1819,7 +1829,14 @@ impl Compiler<'_> {
                 (simple.get_ad(), simple.get_ad_loc()),
             ),
             DAD::array(array) => {
-                let size: Option<u32> = None; // TODO: constant folding
+                let size: Option<u32> = if array.size_idx == 0 {
+                    None
+                } else {
+                    Some(self.get_array_size((
+                        &self.translation_unit.exprs[array.size_idx as usize],
+                        array.get_size_loc(),
+                    )))
+                };
                 tp = QType::from(Type::Array(Box::new(tp), size));
                 self.unwrap_direct_abstract_declarator(tp, array.dad_idx)
             }
@@ -2371,6 +2388,69 @@ impl Compiler<'_> {
                 Some(ConstantOrIrValue::IrValue(ir_id, false)),
             ),
             _ => (tp, expr),
+        }
+    }
+
+    fn get_bitmask_size(&mut self, e: L<&ast::Expr>) -> u8 {
+        let sz = self.get_array_size(e);
+        if sz > 64 {
+            panic!(
+                "{}: Bitmask size must be within the [0, 64] range",
+                Compiler::format_loc(e.1)
+            )
+        }
+        sz as u8
+    }
+
+    fn get_array_size(&mut self, e: L<&ast::Expr>) -> u32 {
+        let (tp, r) = self.visit_expr(e, true, false);
+        let r = match r {
+            None => panic!(
+                "{}: Array size is not a constant",
+                Compiler::format_loc(e.1)
+            ),
+            Some(t) => t,
+        };
+
+        match tp.tp {
+            Type::Void
+            | Type::Float
+            | Type::Double
+            | Type::Struct(_)
+            | Type::Union(_)
+            | Type::Pointer(_)
+            | Type::Array(_, _)
+            | Type::Function(_, _) => {
+                panic!("{}: Illegal expression type", Compiler::format_loc(e.1))
+            }
+            Type::Enum(_) => unimplemented!(), // TODO: support enums
+            _ => (),
+        }
+        use ConstantOrIrValue as C;
+        let sz = match r {
+            C::I8(v) => v as u64,
+            C::U8(v) => v as u64,
+            C::I16(v) => v as u64,
+            C::U16(v) => v as u64,
+            C::I32(v) => v as u64,
+            C::U32(v) => v as u64,
+            C::I64(v) => v as u64,
+            C::U64(v) => v,
+            C::Float(_)
+            | C::Double(_)
+            | C::Address(_, _)
+            | C::IrValue(_, _) => panic!(
+                "{}: Array size is not a constant",
+                Compiler::format_loc(e.1)
+            ),
+        };
+        if sz > 0x7fff_ffff {
+            panic!(
+                "{}: Array size must be within the [0, INT_MAX] range",
+                Compiler::format_loc(e.1)
+            )
+        } else {
+            sz as u32
         }
     }
 
