@@ -1046,8 +1046,19 @@ impl Compiler<'_> {
                         ),
                     );
                     Some(self.visit_initializer(id.init_idx))
-                    // TODO: check if `init` is compatible with `qtype`
                 };
+
+                // TODO: check if `init` is compatible with `qtype`
+                // TODO: `qtype` could still change at this point
+                //
+                // 3.5: If an identifier for an object is declared with no
+                // linkage, the type for the object shall be complete by the end
+                // of its declarator, or by the end of its init-declarator if it
+                // has an initializer.
+                //
+                // 3.7.2: If the declaration of an identifier for an object is a
+                // tentative definition and has internal linkage, the declared
+                // type shall not be an incomplete type.
 
                 self.c4ir_builder.create_definition(
                     is_global, &ir_id, &qtype, linkage, &init,
