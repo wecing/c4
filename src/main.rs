@@ -130,7 +130,7 @@ enum ConstantOrIrValue {
     //
     // Unlike IrValue, the ir_id of Address could be looked up in
     // Compiler::global_constants and is guaranteed to exist.
-    Address(String, i64),  // ir_id, offset
+    Address(String, i64),  // ir_id, offset_bytes
     IrValue(String, bool), // ir_id, is_lvalue
 }
 
@@ -458,6 +458,66 @@ impl LLVMBuilderImpl {
         }
     }
 
+    fn get_llvm_constant(
+        &mut self,
+        c: &ConstantOrIrValue,
+    ) -> (llvm_sys::prelude::LLVMValueRef, QType) {
+        let f_int = |src_tp: Type, v: u64, is_signed: bool| {
+            let src_tp_llvm = self.get_llvm_type(&src_tp);
+            let is_signed = if is_signed { 1 } else { 0 };
+            let v = unsafe {
+                llvm_sys::core::LLVMConstInt(src_tp_llvm, v, is_signed)
+            };
+            (v, QType::from(src_tp))
+        };
+        let f_fp = |src_tp: Type, v: f64| {
+            let src_tp_llvm = self.get_llvm_type(&src_tp);
+            let v = unsafe { llvm_sys::core::LLVMConstReal(src_tp_llvm, v) };
+            (v, QType::from(src_tp))
+        };
+        use ConstantOrIrValue as C;
+        use Type as T;
+        match c {
+            C::I8(v) => f_int(T::Char, *v as u64, true),
+            C::U8(v) => f_int(T::UnsignedChar, *v as u64, false),
+            C::I16(v) => f_int(T::Short, *v as u64, true),
+            C::U16(v) => f_int(T::UnsignedShort, *v as u64, false),
+            C::I32(v) => f_int(T::Int, *v as u64, true),
+            C::U32(v) => f_int(T::UnsignedInt, *v as u64, false),
+            C::I64(v) => f_int(T::Long, *v as u64, true),
+            C::U64(v) => f_int(T::UnsignedLong, *v, false),
+            C::Float(v) => f_fp(T::Float, *v as f64),
+            C::Double(v) => f_fp(T::Double, *v),
+            C::Address(ir_id, offset_bytes) => {
+                let src_tp = Type::Pointer(Box::new(QType::from(Type::Void)));
+                let src_tp_llvm = self.get_llvm_type(&src_tp);
+                let char_ptr_tp = self.get_llvm_type(&Type::Pointer(Box::new(
+                    QType::from(Type::Char),
+                )));
+                let ptr: llvm_sys::prelude::LLVMValueRef =
+                    *self.symbol_table.get(ir_id).unwrap();
+                let ptr = unsafe {
+                    llvm_sys::core::LLVMConstBitCast(ptr, char_ptr_tp)
+                };
+                let mut offset = unsafe {
+                    llvm_sys::core::LLVMConstInt(
+                        self.get_llvm_type(&Type::Long),
+                        *offset_bytes as u64,
+                        1,
+                    )
+                };
+                let src = unsafe {
+                    llvm_sys::core::LLVMConstGEP(ptr, &mut offset, 1)
+                };
+                let src = unsafe {
+                    llvm_sys::core::LLVMConstBitCast(src, src_tp_llvm)
+                };
+                (src, QType::from(src_tp))
+            }
+            C::IrValue(_, _) => unreachable!(),
+        }
+    }
+
     fn get_next_tmp_ir_id(&mut self) -> String {
         let r = self.next_uuid;
         self.next_uuid += 1;
@@ -566,13 +626,68 @@ impl IRBuilder for LLVMBuilderImpl {
 
     fn create_definition(
         &mut self,
-        _is_global: bool,
-        _name: &str,
-        _tp: &QType,
-        _linkage: Linkage,
-        _init: &Option<Initializer>,
+        is_global: bool,
+        name: &str,
+        tp: &QType,
+        linkage: Linkage,
+        init: &Option<Initializer>,
     ) {
-        unimplemented!() // TODO
+        let name_c = CString::new(name).unwrap();
+        let tp_llvm = self.get_llvm_type(&tp.tp);
+        let v = unsafe {
+            if is_global {
+                llvm_sys::core::LLVMAddGlobal(
+                    self.module,
+                    tp_llvm,
+                    name_c.as_ptr(),
+                )
+            } else {
+                llvm_sys::core::LLVMBuildAlloca(
+                    self.builder,
+                    tp_llvm,
+                    name_c.as_ptr(),
+                )
+            }
+        };
+        use llvm_sys::LLVMLinkage as LL;
+        let linkage_llvm = match linkage {
+            Linkage::EXTERNAL => Some(LL::LLVMExternalLinkage),
+            Linkage::INTERNAL => Some(LL::LLVMInternalLinkage),
+            Linkage::NONE => None,
+        };
+        linkage_llvm.map(|ln| unsafe { llvm_sys::core::LLVMSetLinkage(v, ln) });
+
+        use ConstantOrIrValue as C;
+        init.as_ref()
+            .map(|x| match x {
+                Initializer::Struct(_) => unimplemented!(), // TODO
+                Initializer::Expr(_, C::IrValue(ir_id, is_lvalue)) => {
+                    let value = *self.symbol_table.get(ir_id).unwrap();
+                    if *is_lvalue {
+                        let name_c =
+                            CString::new(self.get_next_tmp_ir_id()).unwrap();
+                        unsafe {
+                            llvm_sys::core::LLVMBuildLoad(
+                                self.builder,
+                                value,
+                                name_c.as_ptr(),
+                            )
+                        }
+                    } else {
+                        value
+                    }
+                }
+                Initializer::Expr(_, c) => self.get_llvm_constant(c).0,
+            })
+            .map(|value| unsafe {
+                if is_global {
+                    llvm_sys::core::LLVMSetInitializer(v, value);
+                } else {
+                    llvm_sys::core::LLVMBuildStore(self.builder, value, v);
+                }
+            });
+
+        self.symbol_table.insert(String::from(name), v);
     }
 
     fn create_constant_buffer(&mut self, ir_id: String, buf: Vec<u8>) {
@@ -593,58 +708,7 @@ impl IRBuilder for LLVMBuilderImpl {
         c: &ConstantOrIrValue,
         tp: &QType,
     ) {
-        let (src, src_tp) = {
-            let f_int = |src_tp: Type, v: u64, is_signed: bool| {
-                let src_tp_llvm = self.get_llvm_type(&src_tp);
-                let is_signed = if is_signed { 1 } else { 0 };
-                let v = unsafe {
-                    llvm_sys::core::LLVMConstInt(src_tp_llvm, v, is_signed)
-                };
-                (v, QType::from(src_tp))
-            };
-            let f_fp = |src_tp: Type, v: f64| {
-                let src_tp_llvm = self.get_llvm_type(&src_tp);
-                let v =
-                    unsafe { llvm_sys::core::LLVMConstReal(src_tp_llvm, v) };
-                (v, QType::from(src_tp))
-            };
-            use ConstantOrIrValue as C;
-            use Type as T;
-            match c {
-                C::I8(v) => f_int(T::Char, *v as u64, true),
-                C::U8(v) => f_int(T::UnsignedChar, *v as u64, false),
-                C::I16(v) => f_int(T::Short, *v as u64, true),
-                C::U16(v) => f_int(T::UnsignedShort, *v as u64, false),
-                C::I32(v) => f_int(T::Int, *v as u64, true),
-                C::U32(v) => f_int(T::UnsignedInt, *v as u64, false),
-                C::I64(v) => f_int(T::Long, *v as u64, true),
-                C::U64(v) => f_int(T::UnsignedLong, *v, false),
-                C::Float(v) => f_fp(T::Float, *v as f64),
-                C::Double(v) => f_fp(T::Double, *v),
-                C::Address(ir_id, offset) => {
-                    let src_tp =
-                        Type::Pointer(Box::new(QType::from(Type::Void)));
-                    let src_tp_llvm = self.get_llvm_type(&src_tp);
-                    let ptr: llvm_sys::prelude::LLVMValueRef =
-                        *self.symbol_table.get(ir_id).unwrap();
-                    let ptr = unsafe {
-                        llvm_sys::core::LLVMConstBitCast(ptr, src_tp_llvm)
-                    };
-                    let mut offset = unsafe {
-                        llvm_sys::core::LLVMConstInt(
-                            self.get_llvm_type(&Type::Long),
-                            *offset as u64,
-                            1,
-                        )
-                    };
-                    let src = unsafe {
-                        llvm_sys::core::LLVMConstGEP(ptr, &mut offset, 1)
-                    };
-                    (src, QType::from(src_tp))
-                }
-                C::IrValue(_, _) => unreachable!(),
-            }
-        };
+        let (src, src_tp) = self.get_llvm_constant(c);
         let src_ir_id = self.get_next_tmp_ir_id();
         self.symbol_table.insert(src_ir_id.clone(), src);
         self.create_cast(ir_id, tp, src_ir_id, &src_tp);
