@@ -62,6 +62,20 @@ impl QType {
             tp,
         }
     }
+
+    fn is_integral_type(&self) -> bool {
+        match self.tp {
+            Type::Char
+            | Type::UnsignedChar
+            | Type::Short
+            | Type::UnsignedShort
+            | Type::Int
+            | Type::UnsignedInt
+            | Type::Long
+            | Type::UnsignedLong => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1343,7 +1357,27 @@ impl Compiler<'_> {
             ast::Expr_oneof_e::cast(cast) => {
                 self.visit_cast_expr((cast, e.1), fold_constant, emit_ir)
             }
-            _ => unimplemented!(), // TODO: implement rest expressions
+            ast::Expr_oneof_e::arr_sub(arr_sub) => self.visit_arr_sub_expr(
+                (
+                    &self.translation_unit.exprs[arr_sub.arr_idx as usize],
+                    arr_sub.get_arr_loc(),
+                ),
+                (
+                    &self.translation_unit.exprs[arr_sub.sub_idx as usize],
+                    arr_sub.get_sub_loc(),
+                ),
+                fold_constant,
+                emit_ir,
+            ),
+            ast::Expr_oneof_e::func_call(_) => unimplemented!(),
+            ast::Expr_oneof_e::dot(_) => unimplemented!(),
+            ast::Expr_oneof_e::ptr(_) => unimplemented!(),
+            ast::Expr_oneof_e::sizeof_val(_) => unimplemented!(),
+            ast::Expr_oneof_e::sizeof_tp(_) => unimplemented!(),
+            ast::Expr_oneof_e::unary(_) => unimplemented!(),
+            ast::Expr_oneof_e::binary(_) => unimplemented!(),
+            ast::Expr_oneof_e::ternary(_) => unimplemented!(),
+            // TODO: implement all expressions
         }
     }
 
@@ -1510,6 +1544,77 @@ impl Compiler<'_> {
             (_, Some(ConstantOrIrValue::Float(v)), tp) => do_cast!(v, tp),
             (_, Some(ConstantOrIrValue::Double(v)), tp) => do_cast!(v, tp),
         }
+    }
+
+    fn visit_arr_sub_expr(
+        &mut self,
+        arr_e: L<&ast::Expr>,
+        sub_e: L<&ast::Expr>,
+        fold_constant: bool,
+        emit_ir: bool,
+    ) -> (QType, Option<ConstantOrIrValue>) {
+        let (ptr_tp, ptr) = self.visit_expr(arr_e, fold_constant, emit_ir);
+        let (sub_tp, sub) = self.visit_expr(sub_e, fold_constant, emit_ir);
+        let (ptr_tp, ptr) = Compiler::convert_array_lvalue(ptr_tp, ptr);
+        let elem_tp = match ptr_tp.tp {
+            Type::Pointer(tp) => match tp.tp {
+                Type::Function(_, _) | Type::Void => panic!(
+                    "{}: Illegal element type for array subscripting",
+                    Compiler::format_loc(arr_e.1)
+                ),
+                _ => *tp,
+            },
+            _ => panic!(
+                "{}: Illegal type for array subscripting",
+                Compiler::format_loc(arr_e.1)
+            ),
+        };
+        if !sub_tp.is_integral_type() {
+            panic!(
+                "{}: Array index must be an integral type",
+                Compiler::format_loc(sub_e.1)
+            )
+        }
+        let r = if ptr.is_none() || sub.is_none() || !fold_constant {
+            None
+        } else {
+            // visit_cast_expr ensures `ptr` could only be U64, Address, or
+            // IrValue, and `sub` must be an integral type, or IrValue.
+            use ConstantOrIrValue as C;
+            if !emit_ir {
+                let sub_c: Option<i64> = match sub.as_ref().unwrap() {
+                    C::I8(v) => Some(*v as i64),
+                    C::U8(v) => Some(*v as i64),
+                    C::I16(v) => Some(*v as i64),
+                    C::U16(v) => Some(*v as i64),
+                    C::I32(v) => Some(*v as i64),
+                    C::U32(v) => Some(*v as i64),
+                    C::I64(v) => Some(*v),
+                    C::U64(v) => Some(*v as i64),
+                    _ => None,
+                };
+                sub_c.and_then(|s| match (ptr.as_ref().unwrap(), &elem_tp.tp) {
+                    (C::Address(ir_id, offset_bytes), Type::Char)
+                    | (C::Address(ir_id, offset_bytes), Type::UnsignedChar) => {
+                        let offset: usize = (*offset_bytes + s) as usize;
+                        let buf = self.global_constants.get(ir_id).unwrap();
+                        if buf.len() <= offset {
+                            panic!(
+                                "{}: Index out of bound",
+                                Compiler::format_loc(sub_e.1)
+                            )
+                        }
+                        Some(C::I8(buf[offset] as i8))
+                    }
+                    // technically we can also constant fold wide strings here
+                    _ => None,
+                })
+            } else {
+                // TODO: T a[b] = * (T *) ((void *)a + (b * sizeof(T)))
+                unimplemented!()
+            }
+        };
+        (elem_tp, r)
     }
 
     fn get_type(
