@@ -1805,6 +1805,15 @@ impl Compiler<'_> {
                     } else {
                         (qualified_type.clone(), String::from(""))
                     };
+                    // 3.5.2.1: A structure or union shall not contain a member with
+                    // incomplete or function type.
+                    match Compiler::get_type_size_and_align_bytes(&tp.tp) {
+                        None => panic!(
+                            "{}: Struct or union contains incomplete type",
+                            Compiler::format_loc(sd.1)
+                        ),
+                        _ => (),
+                    }
                     let field_name_opt = if field_name.is_empty() {
                         None
                     } else {
@@ -2398,10 +2407,7 @@ impl Compiler<'_> {
         }
     }
 
-    fn get_type_size_and_align_bytes(
-        tp: &Type,
-        loc: &ast::Loc,
-    ) -> Option<(u32, u32)> {
+    fn get_type_size_and_align_bytes(tp: &Type) -> Option<(u32, u32)> {
         match tp {
             Type::Void => None,
             Type::Char | Type::UnsignedChar => Some((1, 1)),
@@ -2415,18 +2421,10 @@ impl Compiler<'_> {
                 let mut align: u32 = 0;
                 let mut bit_field_quota: u32 = 0;
                 for f in fs {
-                    match Compiler::get_type_size_and_align_bytes(&f.tp.tp, loc)
-                    {
-                        // 3.5.2.1: A structure or union shall not contain a
-                        // member with incomplete or function type.
-                        None => panic!(
-                            "{}: Field{} has incomplete type",
-                            Compiler::format_loc(loc),
-                            f.name.as_ref().map_or(
-                                String::from(""),
-                                |n| format!(" '{}'", n)
-                            )
-                        ),
+                    match Compiler::get_type_size_and_align_bytes(&f.tp.tp) {
+                        // get_su_field ensures struct/union does not contain
+                        // fields of incomplete type.
+                        None => unreachable!(),
                         Some((f_sz, f_align)) => {
                             align = max(align, f_align);
                             match f.bit_field_size {
@@ -2453,6 +2451,10 @@ impl Compiler<'_> {
                         }
                     }
                 }
+                // 3.5.2.1: There may also be unnamed padding at the end of a
+                // structure or union, as necessary to achieve the appropriate
+                // alignment were the structure or union to be a member of an
+                // array.
                 sz = Compiler::align_up(sz, align);
                 Some((sz, align))
             }),
