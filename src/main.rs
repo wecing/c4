@@ -541,8 +541,6 @@ impl IRBuilder for LLVMBuilderImpl {
         fields: &Vec<SuField>,
         _is_union: bool,
     ) {
-        // TODO: should emit multiple structs when is_union=true
-        //       (same for emit_opaque_struct_type)
         unsafe {
             let name_cstr = CString::new(name).unwrap();
             let tp = llvm_sys::core::LLVMGetTypeByName(
@@ -553,7 +551,6 @@ impl IRBuilder for LLVMBuilderImpl {
                 .iter()
                 .map(|su_field| self.get_llvm_type(&su_field.tp.tp))
                 .collect();
-            // TODO: need to verify struct has size (& alignment)
             llvm_sys::core::LLVMStructSetBody(
                 tp,
                 element_types.as_mut_ptr(),
@@ -661,7 +658,7 @@ impl IRBuilder for LLVMBuilderImpl {
         use ConstantOrIrValue as C;
         init.as_ref()
             .map(|x| match x {
-                Initializer::Struct(_) => unimplemented!(), // TODO
+                Initializer::Struct(_) => unimplemented!(), // TODO: {...} init
                 Initializer::Expr(_, C::IrValue(ir_id, is_lvalue)) => {
                     let value = *self.symbol_table.get(ir_id).unwrap();
                     if *is_lvalue {
@@ -1019,7 +1016,7 @@ impl Compiler<'_> {
             .into_iter()
             .map(|idx| &self.translation_unit.statements[*idx as usize])
             .for_each(|_stmt| {
-                unimplemented!() // TODO
+                unimplemented!() // TODO: implement statements
             });
 
         self.leave_scope();
@@ -1346,7 +1343,7 @@ impl Compiler<'_> {
             ast::Expr_oneof_e::cast(cast) => {
                 self.visit_cast_expr((cast, e.1), fold_constant, emit_ir)
             }
-            _ => unimplemented!(), // TODO
+            _ => unimplemented!(), // TODO: implement rest expressions
         }
     }
 
@@ -1745,7 +1742,7 @@ impl Compiler<'_> {
     }
 
     fn get_enum_type(&mut self, _s: L<&ast::TypeSpecifier_Enum>) -> Type {
-        unimplemented!() // TODO
+        unimplemented!() // TODO: implement enum
     }
 
     fn get_typedef_type(&mut self, id: L<&str>) -> QType {
@@ -1853,7 +1850,6 @@ impl Compiler<'_> {
         r
     }
 
-    // TODO: caller/callee check type completeness?
     fn unwrap_declarator(
         &mut self,
         mut tp: QType,
@@ -2288,7 +2284,7 @@ impl Compiler<'_> {
                 }
             }
             (Type::Enum(_tp_left), Type::Enum(_tp_right)) => {
-                unimplemented!() // TODO
+                unimplemented!() // TODO: implement enum
             }
             (Type::Pointer(tp_left), Type::Pointer(tp_right)) => Type::Pointer(
                 Box::new(Compiler::get_composite_type(tp_left, tp_right, loc)),
