@@ -1,4 +1,5 @@
 use protobuf::ProtobufEnum;
+use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::ffi::CString;
@@ -1812,10 +1813,26 @@ impl Compiler<'_> {
                     let bit_field_size: Option<u8> = if decl.e == 0 {
                         None
                     } else {
-                        Some(self.get_bitmask_size((
+                        // 3.5.2.1: A bit-field may have type int, unsigned int,
+                        // or signed int.
+                        match tp.tp {
+                            Type::Int | Type::UnsignedInt => (),
+                            _ => panic!(
+                                "{}: Unexpected bit-field type",
+                                Compiler::format_loc(sd.1)
+                            ),
+                        }
+                        let sz = self.get_bitmask_size((
                             &self.translation_unit.exprs[decl.e as usize],
                             decl.get_e_loc(),
-                        )))
+                        ));
+                        if sz == 0 && field_name_opt.is_none() {
+                            panic!(
+                                "{}: Named bit-field cannot have zero width",
+                                Compiler::format_loc(sd.1)
+                            )
+                        }
+                        Some(sz)
                     };
                     SuField {
                         name: field_name_opt,
@@ -2381,6 +2398,81 @@ impl Compiler<'_> {
         }
     }
 
+    fn get_type_size_and_align_bytes(
+        tp: &Type,
+        loc: &ast::Loc,
+    ) -> Option<(u32, u32)> {
+        match tp {
+            Type::Void => None,
+            Type::Char | Type::UnsignedChar => Some((1, 1)),
+            Type::Short | Type::UnsignedShort => Some((2, 2)),
+            Type::Int | Type::UnsignedInt => Some((4, 4)),
+            Type::Long | Type::UnsignedLong => Some((8, 8)),
+            Type::Float => Some((4, 4)),
+            Type::Double => Some((8, 8)),
+            Type::Struct(body) => body.fields.as_ref().and_then(|fs| {
+                let mut sz: u32 = 0;
+                let mut align: u32 = 0;
+                let mut bit_field_quota: u32 = 0;
+                for f in fs {
+                    match Compiler::get_type_size_and_align_bytes(&f.tp.tp, loc)
+                    {
+                        // 3.5.2.1: A structure or union shall not contain a
+                        // member with incomplete or function type.
+                        None => panic!(
+                            "{}: Field{} has incomplete type",
+                            Compiler::format_loc(loc),
+                            f.name.as_ref().map_or(
+                                String::from(""),
+                                |n| format!(" '{}'", n)
+                            )
+                        ),
+                        Some((f_sz, f_align)) => {
+                            align = max(align, f_align);
+                            match f.bit_field_size {
+                                None => {
+                                    sz = Compiler::align_up(sz, f_align) + f_sz
+                                }
+                                // 3.5.2.1: a bit-field with a width of 0
+                                // indicates that no further bit-field is to be
+                                // packed into the unit in which the previous
+                                // bit-field, if any, was placed.
+                                Some(0) => {
+                                    bit_field_quota = 0;
+                                }
+                                Some(x) if (x as u32) <= bit_field_quota => {
+                                    bit_field_quota -= x as u32;
+                                }
+                                Some(x) => {
+                                    // bit field type and mask size were checked
+                                    // in get_su_field.
+                                    sz = Compiler::align_up(sz, f_align) + f_sz;
+                                    bit_field_quota = f_sz - x as u32;
+                                }
+                            }
+                        }
+                    }
+                }
+                sz = Compiler::align_up(sz, align);
+                Some((sz, align))
+            }),
+            _ => unimplemented!(), // TODO
+        }
+    }
+
+    // returns smallest number that is >=n and mod(align)==0.
+    fn align_up(n: u32, align: u32) -> u32 {
+        if align == 0 {
+            panic!()
+        }
+        let rem = n & (align - 1);
+        if rem == 0 {
+            n
+        } else {
+            (n ^ rem) + align
+        }
+    }
+
     // 3.5.4.3: For each parameter declared with function or array type, its
     // type for these comparisons is the one that results from conversion to a
     // pointer type, as in 3.7.1; For each parameter declared with qualified
@@ -2468,9 +2560,11 @@ impl Compiler<'_> {
 
     fn get_bitmask_size(&mut self, e: L<&ast::Expr>) -> u8 {
         let sz = self.get_array_size(e);
-        if sz > 64 {
+        if sz > 32 {
+            // 3.5.2.1: A bit-field may have type int, unsigned int, or
+            // signed int.
             panic!(
-                "{}: Bitmask size must be within the [0, 64] range",
+                "{}: Bitmask size must be within the [0, 32] range",
                 Compiler::format_loc(e.1)
             )
         }
