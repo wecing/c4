@@ -1878,6 +1878,13 @@ impl Compiler<'_> {
                 self.unwrap_declarator(tp, (d.get_d(), d.get_loc()), false)
             }
             DD::array(array) => {
+                match Compiler::get_type_size_and_align_bytes(&tp.tp) {
+                    None => panic!(
+                        "{}: Array has incomplete element type",
+                        Compiler::format_loc(array.get_dd_loc())
+                    ),
+                    _ => (),
+                }
                 let size: Option<u32> = if array.size_idx == 0 {
                     None
                 } else {
@@ -1930,6 +1937,13 @@ impl Compiler<'_> {
                 (simple.get_ad(), simple.get_ad_loc()),
             ),
             DAD::array(array) => {
+                match Compiler::get_type_size_and_align_bytes(&tp.tp) {
+                    None => panic!(
+                        "{}: Array has incomplete element type",
+                        Compiler::format_loc(array.get_dad_loc())
+                    ),
+                    _ => (),
+                }
                 let size: Option<u32> = if array.size_idx == 0 {
                     None
                 } else {
@@ -2458,7 +2472,29 @@ impl Compiler<'_> {
                 sz = Compiler::align_up(sz, align);
                 Some((sz, align))
             }),
-            _ => unimplemented!(), // TODO
+            Type::Union(body) => body.fields.as_ref().and_then(|fs| {
+                let sz_align_vec: Vec<(u32, u32)> = fs
+                    .into_iter()
+                    .map(|f| {
+                        Compiler::get_type_size_and_align_bytes(&f.tp.tp)
+                            .unwrap()
+                    })
+                    .collect();
+                Some((
+                    (&sz_align_vec).into_iter().map(|p| p.0).max().unwrap(),
+                    (&sz_align_vec).into_iter().map(|p| p.1).max().unwrap(),
+                ))
+            }),
+            Type::Enum(_) => unimplemented!(),
+            Type::Pointer(_) => Some((8, 8)),
+            Type::Array(elem, elem_cnt_opt) => elem_cnt_opt.map(|elem_cnt| {
+                // elem type completeness is checked in
+                // unwrap(_abstract)_declarator.
+                let (elem_sz, elem_align) =
+                    Compiler::get_type_size_and_align_bytes(&elem.tp).unwrap();
+                (elem_sz * elem_cnt, elem_align)
+            }),
+            Type::Function(_, _) => None,
         }
     }
 
