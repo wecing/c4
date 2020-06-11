@@ -73,7 +73,15 @@ impl QType {
             | Type::UnsignedInt
             | Type::Long
             | Type::UnsignedLong => true,
+            Type::Enum(_) => true, // TODO: support enum
             _ => false,
+        }
+    }
+
+    fn is_arithmetic_type(&self) -> bool {
+        match self.tp {
+            Type::Float | Type::Double => true,
+            _ => self.is_integral_type(),
         }
     }
 }
@@ -2759,6 +2767,186 @@ impl Compiler<'_> {
             )
         } else {
             sz as u32
+        }
+    }
+
+    // x and y must both be of arithmetic types, and shall not be lvalues.
+    fn do_arithmetic_conversion(
+        &mut self,
+        ir_id_x: String,
+        tp_x: &QType,
+        ir_id_y: String,
+        tp_y: &QType,
+    ) -> (String, String, QType) {
+        if !tp_x.is_arithmetic_type() || !tp_y.is_arithmetic_type() {
+            panic!(
+                "programming error: do_arithmetic_conversion() only accepts \
+                 arithmetic types"
+            )
+        }
+
+        macro_rules! do_cast {
+            ($ir_id_old:expr, $tp_old:expr, $tp_new:expr) => {{
+                let ir_id_old: String = $ir_id_old;
+                let tp_old: &QType = $tp_old;
+                let tp_new: Type = $tp_new;
+
+                let ir_id_new = self.get_next_ir_id();
+                let tp_new = QType::from(tp_new);
+                self.c4ir_builder.create_cast(
+                    ir_id_new.clone(),
+                    &tp_new,
+                    ir_id_old.clone(),
+                    tp_old,
+                );
+                self.llvm_builder.create_cast(
+                    ir_id_new.clone(),
+                    &tp_new,
+                    ir_id_old.clone(),
+                    tp_old,
+                );
+                (ir_id_new, tp_new)
+            }};
+        }
+
+        match (&tp_x.tp, &tp_y.tp) {
+            (Type::Enum(_), _) | (_, Type::Enum(_)) => {
+                unimplemented!() // TODO: support enum
+            }
+            // 3.2.1.5: First, if either operand has type long double, the other
+            // operand is converted to long double. Otherwise, if either operand
+            // has type double, the other operand is converted to double.
+            (Type::Double, Type::Double) => {
+                (ir_id_x, ir_id_y, QType::from(Type::Double))
+            }
+            (Type::Double, _) => {
+                let (new_ir_id_y, tp) = do_cast!(ir_id_y, &tp_y, Type::Double);
+                (ir_id_x, new_ir_id_y, tp)
+            }
+            (_, Type::Double) => {
+                let (new_ir_id_x, tp) = do_cast!(ir_id_x, &tp_x, Type::Double);
+                (new_ir_id_x, ir_id_y, tp)
+            }
+            // 3.2.1.5: Otherwise, if either operand has type float, the other
+            // operand is converted to float.
+            (Type::Float, Type::Float) => {
+                (ir_id_x, ir_id_y, QType::from(Type::Float))
+            }
+            (Type::Float, _) => {
+                let (new_ir_id_y, tp) = do_cast!(ir_id_y, &tp_y, Type::Float);
+                (ir_id_x, new_ir_id_y, tp)
+            }
+            (_, Type::Float) => {
+                let (new_ir_id_x, tp) = do_cast!(ir_id_x, &tp_x, Type::Float);
+                (new_ir_id_x, ir_id_y, tp)
+            }
+            // 3.2.1.5: Otherwise, the integral promotions are performed on both
+            // operands.
+            _ => {
+                let (ir_id_x, tp_x) = self.do_integral_promotion(ir_id_x, tp_x);
+                let (ir_id_y, tp_y) = self.do_integral_promotion(ir_id_y, tp_y);
+                match (&tp_x.tp, &tp_y.tp) {
+                    // 3.2.1.5: Then the following rules are applied: If either
+                    // operand has type unsigned long int, the other operand is
+                    // converted to unsigned long int.
+                    (Type::UnsignedLong, Type::UnsignedLong) => {
+                        (ir_id_x, ir_id_y, QType::from(Type::UnsignedLong))
+                    }
+                    (Type::UnsignedLong, _) => {
+                        let (new_ir_id_y, tp) =
+                            do_cast!(ir_id_y, &tp_y, Type::UnsignedLong);
+                        (ir_id_x, new_ir_id_y, tp)
+                    }
+                    (_, Type::UnsignedLong) => {
+                        let (new_ir_id_x, tp) =
+                            do_cast!(ir_id_x, &tp_x, Type::UnsignedLong);
+                        (new_ir_id_x, ir_id_y, tp)
+                    }
+                    // 3.2.1.5: Otherwise, if one operand has type long int and
+                    // the other has type unsigned int, if a long int can
+                    // represent all values of an unsigned int, the operand of
+                    // type unsigned int is converted to long int; if a long int
+                    // cannot represent all the values of an unsigned int, both
+                    // operands are converted to unsigned long int. Otherwise,
+                    // if either operand has type long int, the other operand is
+                    // converted to long int.
+                    (Type::Long, Type::Long) => {
+                        (ir_id_x, ir_id_y, QType::from(Type::Long))
+                    }
+                    (Type::Long, _) => {
+                        let (new_ir_id_y, tp) =
+                            do_cast!(ir_id_y, &tp_y, Type::Long);
+                        (ir_id_x, new_ir_id_y, tp)
+                    }
+                    (_, Type::Long) => {
+                        let (new_ir_id_x, tp) =
+                            do_cast!(ir_id_x, &tp_x, Type::Long);
+                        (new_ir_id_x, ir_id_y, tp)
+                    }
+                    // 3.2.1.5: Otherwise, if either operand has type unsigned
+                    // int, the other operand is converted to unsigned int.
+                    (Type::UnsignedInt, Type::UnsignedInt) => {
+                        (ir_id_x, ir_id_y, QType::from(Type::UnsignedInt))
+                    }
+                    (Type::UnsignedInt, _) => {
+                        let (new_ir_id_y, tp) =
+                            do_cast!(ir_id_y, &tp_y, Type::UnsignedInt);
+                        (ir_id_x, new_ir_id_y, tp)
+                    }
+                    (_, Type::UnsignedInt) => {
+                        let (new_ir_id_x, tp) =
+                            do_cast!(ir_id_x, &tp_x, Type::UnsignedInt);
+                        (new_ir_id_x, ir_id_y, tp)
+                    }
+                    // 3.2.1.5: Otherwise, both operands have type int.
+                    //
+                    // since this went through integral promotion, they could
+                    // only be int if control flow reaches here.
+                    _ => (ir_id_x, ir_id_y, QType::from(Type::Int)),
+                }
+            }
+        }
+    }
+
+    // 3.2.1.1: A char, a short int, or an int bit-field, or their signed or
+    // unsigned varieties, or an object that has enumeration type, may be used
+    // in an expression wherever an int or unsigned int may be used. If an int
+    // can represent all values of the original type, the value is converted to
+    // an int; otherwise it is converted to an unsigned int.
+    fn do_integral_promotion(
+        &mut self,
+        ir_id: String,
+        tp: &QType,
+    ) -> (String, QType) {
+        if !tp.is_integral_type() {
+            panic!(
+                "programming error: cannot do integral promotion on \
+                 non-integral types"
+            )
+        }
+        match &tp.tp {
+            Type::Enum(_) => unimplemented!(), // TODO: support enums
+            Type::Char
+            | Type::UnsignedChar
+            | Type::Short
+            | Type::UnsignedShort => {
+                let ir_id_new = self.get_next_ir_id();
+                let tp_new = QType::from(Type::Int);
+                self.c4ir_builder.create_cast(
+                    ir_id_new.clone(),
+                    &tp_new,
+                    ir_id.clone(),
+                    tp,
+                );
+                self.llvm_builder.create_cast(
+                    ir_id_new.clone(),
+                    &tp_new,
+                    ir_id.clone(),
+                    tp,
+                );
+                (ir_id_new, tp_new)
+            }
+            _ => (ir_id, tp.clone()),
         }
     }
 
