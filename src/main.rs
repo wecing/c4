@@ -139,22 +139,56 @@ enum OrdinaryIdRef {
 
 #[derive(Debug, Clone)]
 enum ConstantOrIrValue {
-    I8(i8),
-    U8(u8),
-    I16(i16),
-    U16(u16),
-    I32(i32),
-    U32(u32),
-    I64(i64),
-    U64(u64),
-    Float(f32),
-    Double(f64),
+    I8(i8),      // Char
+    U8(u8),      // UnsignedChar
+    I16(i16),    // Short
+    U16(u16),    // UnsignedShort
+    I32(i32),    // Int // TODO: enum?
+    U32(u32),    // UnsignedInt
+    I64(i64),    // Long
+    U64(u64),    // UnsignedLong, Pointer(_)
+    Float(f32),  // Float
+    Double(f64), // Double
     // Addresses may only be used together with pointer or array types.
     //
     // Unlike IrValue, the ir_id of Address could be looked up in
     // Compiler::global_constants and is guaranteed to exist.
     Address(String, i64),  // ir_id, offset_bytes
     IrValue(String, bool), // ir_id, is_lvalue
+}
+
+impl ConstantOrIrValue {
+    fn as_constant_double(&self) -> Option<f64> {
+        match self {
+            ConstantOrIrValue::I8(v) => Some(*v as f64),
+            ConstantOrIrValue::U8(v) => Some(*v as f64),
+            ConstantOrIrValue::I16(v) => Some(*v as f64),
+            ConstantOrIrValue::U16(v) => Some(*v as f64),
+            ConstantOrIrValue::I32(v) => Some(*v as f64),
+            ConstantOrIrValue::U32(v) => Some(*v as f64),
+            ConstantOrIrValue::I64(v) => Some(*v as f64),
+            ConstantOrIrValue::U64(v) => Some(*v as f64),
+            ConstantOrIrValue::Float(v) => Some(*v as f64),
+            ConstantOrIrValue::Double(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    fn as_constant_u64(&self) -> Option<u64> {
+        match self {
+            ConstantOrIrValue::I8(v) => Some(*v as u64),
+            ConstantOrIrValue::U8(v) => Some(*v as u64),
+            ConstantOrIrValue::I16(v) => Some(*v as u64),
+            ConstantOrIrValue::U16(v) => Some(*v as u64),
+            ConstantOrIrValue::I32(v) => Some(*v as u64),
+            ConstantOrIrValue::U32(v) => Some(*v as u64),
+            ConstantOrIrValue::I64(v) => Some(*v as u64),
+            ConstantOrIrValue::U64(v) => Some(*v),
+            ConstantOrIrValue::Float(v) => Some(*v as u64),
+            ConstantOrIrValue::Double(v) => Some(*v as u64),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2770,17 +2804,132 @@ impl Compiler<'_> {
         }
     }
 
-    // x and y must both be of arithmetic types, and shall not be lvalues.
     fn do_arithmetic_conversion(
         &mut self,
-        ir_id_x: String,
         tp_x: &QType,
-        ir_id_y: String,
+        x: ConstantOrIrValue,
         tp_y: &QType,
-    ) -> (String, String, QType) {
+        y: ConstantOrIrValue,
+    ) -> (ConstantOrIrValue, ConstantOrIrValue, QType) {
         if !tp_x.is_arithmetic_type() || !tp_y.is_arithmetic_type() {
             panic!(
                 "programming error: do_arithmetic_conversion() only accepts \
+                 arithmetic types"
+            )
+        }
+        use ConstantOrIrValue as C;
+        match (&x, &y) {
+            (C::IrValue(ir_id_x, true), _) => {
+                let new_ir_id_x = self.get_next_ir_id();
+                self.c4ir_builder.create_load(
+                    new_ir_id_x.clone(),
+                    ir_id_x.clone(),
+                    tp_x,
+                );
+                self.llvm_builder.create_load(
+                    new_ir_id_x.clone(),
+                    ir_id_x.clone(),
+                    tp_x,
+                );
+                let new_x = C::IrValue(new_ir_id_x, false);
+                self.do_arithmetic_conversion(tp_x, new_x, tp_y, y)
+            }
+            (_, C::IrValue(ir_id_y, true)) => {
+                let new_ir_id_y = self.get_next_ir_id();
+                self.c4ir_builder.create_load(
+                    new_ir_id_y.clone(),
+                    ir_id_y.clone(),
+                    tp_y,
+                );
+                self.llvm_builder.create_load(
+                    new_ir_id_y.clone(),
+                    ir_id_y.clone(),
+                    tp_y,
+                );
+                let new_y = C::IrValue(new_ir_id_y, false);
+                self.do_arithmetic_conversion(tp_x, x, tp_y, new_y)
+            }
+            (C::IrValue(ir_id_x, false), C::IrValue(ir_id_y, false)) => {
+                let (new_ir_id_x, new_ir_id_y, new_tp) = self
+                    .do_arithmetic_conversion_ir(
+                        tp_x,
+                        ir_id_x.clone(),
+                        tp_y,
+                        ir_id_y.clone(),
+                    );
+                let new_x = C::IrValue(new_ir_id_x, false);
+                let new_y = C::IrValue(new_ir_id_y, false);
+                (new_x, new_y, new_tp)
+            }
+            (C::Double(_), _) => (
+                x,
+                C::Double(y.as_constant_double().unwrap()),
+                QType::from(Type::Double),
+            ),
+            (_, C::Double(_)) => (
+                C::Double(x.as_constant_double().unwrap()),
+                y,
+                QType::from(Type::Double),
+            ),
+            (C::Float(_), _) => (
+                x,
+                C::Float(y.as_constant_double().unwrap() as f32),
+                QType::from(Type::Float),
+            ),
+            (_, C::Float(_)) => (
+                C::Float(x.as_constant_double().unwrap() as f32),
+                y,
+                QType::from(Type::Float),
+            ),
+            (C::U64(_), _) => (
+                x,
+                C::U64(y.as_constant_u64().unwrap()),
+                QType::from(Type::UnsignedLong),
+            ),
+            (_, C::U64(_)) => (
+                C::U64(x.as_constant_u64().unwrap()),
+                y,
+                QType::from(Type::UnsignedLong),
+            ),
+            (C::I64(_), _) => (
+                x,
+                C::I64(y.as_constant_u64().unwrap() as i64),
+                QType::from(Type::Long),
+            ),
+            (_, C::I64(_)) => (
+                C::I64(x.as_constant_u64().unwrap() as i64),
+                y,
+                QType::from(Type::Long),
+            ),
+            (C::U32(_), _) => (
+                x,
+                C::U32(y.as_constant_u64().unwrap() as u32),
+                QType::from(Type::UnsignedInt),
+            ),
+            (_, C::U32(_)) => (
+                C::U32(x.as_constant_u64().unwrap() as u32),
+                y,
+                QType::from(Type::UnsignedInt),
+            ),
+            _ => (
+                C::I32(x.as_constant_u64().unwrap() as i32),
+                C::I32(y.as_constant_u64().unwrap() as i32),
+                QType::from(Type::Int),
+            ),
+        }
+    }
+
+    // x and y must both be of arithmetic types, and shall not be lvalues.
+    fn do_arithmetic_conversion_ir(
+        &mut self,
+        tp_x: &QType,
+        ir_id_x: String,
+        tp_y: &QType,
+        ir_id_y: String,
+    ) -> (String, String, QType) {
+        if !tp_x.is_arithmetic_type() || !tp_y.is_arithmetic_type() {
+            panic!(
+                "programming error: do_arithmetic_conversion_ir() only accepts \
                  arithmetic types"
             )
         }
@@ -2843,8 +2992,10 @@ impl Compiler<'_> {
             // 3.2.1.5: Otherwise, the integral promotions are performed on both
             // operands.
             _ => {
-                let (ir_id_x, tp_x) = self.do_integral_promotion(ir_id_x, tp_x);
-                let (ir_id_y, tp_y) = self.do_integral_promotion(ir_id_y, tp_y);
+                let (ir_id_x, tp_x) =
+                    self.do_integral_promotion_ir(ir_id_x, tp_x);
+                let (ir_id_y, tp_y) =
+                    self.do_integral_promotion_ir(ir_id_y, tp_y);
                 match (&tp_x.tp, &tp_y.tp) {
                     // 3.2.1.5: Then the following rules are applied: If either
                     // operand has type unsigned long int, the other operand is
@@ -2913,7 +3064,7 @@ impl Compiler<'_> {
     // in an expression wherever an int or unsigned int may be used. If an int
     // can represent all values of the original type, the value is converted to
     // an int; otherwise it is converted to an unsigned int.
-    fn do_integral_promotion(
+    fn do_integral_promotion_ir(
         &mut self,
         ir_id: String,
         tp: &QType,
