@@ -1411,15 +1411,85 @@ impl Compiler<'_> {
                 fold_constant,
                 emit_ir,
             ),
+            // TODO: implement all expressions
             ast::Expr_oneof_e::func_call(_) => unimplemented!(),
             ast::Expr_oneof_e::dot(_) => unimplemented!(),
             ast::Expr_oneof_e::ptr(_) => unimplemented!(),
             ast::Expr_oneof_e::sizeof_val(_) => unimplemented!(),
             ast::Expr_oneof_e::sizeof_tp(_) => unimplemented!(),
-            ast::Expr_oneof_e::unary(_) => unimplemented!(),
-            ast::Expr_oneof_e::binary(_) => unimplemented!(),
-            ast::Expr_oneof_e::ternary(_) => unimplemented!(),
-            // TODO: implement all expressions
+            ast::Expr_oneof_e::unary(unary) => {
+                let arg = (
+                    &self.translation_unit.exprs[unary.e_idx as usize],
+                    unary.get_e_loc(),
+                );
+                let (tp, arg) = self.visit_expr(arg, fold_constant, emit_ir);
+                self.visit_unary_op(
+                    &tp,
+                    arg,
+                    unary.get_e_loc(),
+                    unary.op,
+                    fold_constant,
+                    emit_ir,
+                )
+            }
+            ast::Expr_oneof_e::binary(binary) => {
+                let left = (
+                    &self.translation_unit.exprs[binary.e1_idx as usize],
+                    binary.get_e1_loc(),
+                );
+                let right = (
+                    &self.translation_unit.exprs[binary.e2_idx as usize],
+                    binary.get_e2_loc(),
+                );
+                if binary.op == ast::Expr_Binary_Op::LOGIC_AND
+                    || binary.op == ast::Expr_Binary_Op::LOGIC_OR
+                {
+                    self.visit_special_binary_op(
+                        left,
+                        right,
+                        binary.op,
+                        fold_constant,
+                        emit_ir,
+                    )
+                } else {
+                    let (tp_left, left) =
+                        self.visit_expr(left, fold_constant, emit_ir);
+                    let (tp_right, right) =
+                        self.visit_expr(right, fold_constant, emit_ir);
+                    self.visit_simple_binary_op(
+                        &tp_left,
+                        left,
+                        binary.get_e1_loc(),
+                        &tp_right,
+                        right,
+                        binary.get_e2_loc(),
+                        binary.op,
+                        fold_constant,
+                        emit_ir,
+                    )
+                }
+            }
+            ast::Expr_oneof_e::ternary(ternary) => {
+                let e_cond = (
+                    &self.translation_unit.exprs[ternary.cond_idx as usize],
+                    ternary.get_cond_loc(),
+                );
+                let e_then = (
+                    &self.translation_unit.exprs[ternary.then_idx as usize],
+                    ternary.get_then_loc(),
+                );
+                let e_else = (
+                    &self.translation_unit.exprs[ternary.else_idx as usize],
+                    ternary.get_else_loc(),
+                );
+                self.visit_ternary_op(
+                    e_cond,
+                    e_then,
+                    e_else,
+                    fold_constant,
+                    emit_ir,
+                )
+            }
         }
     }
 
@@ -1598,13 +1668,13 @@ impl Compiler<'_> {
         let (ptr_tp, ptr) = self.visit_expr(arr_e, fold_constant, emit_ir);
         let (sub_tp, sub) = self.visit_expr(sub_e, fold_constant, emit_ir);
         let (ptr_tp, ptr) = Compiler::convert_array_lvalue(ptr_tp, ptr);
-        let elem_tp = match ptr_tp.tp {
+        let elem_tp = match &ptr_tp.tp {
             Type::Pointer(tp) => match tp.tp {
                 Type::Function(_, _) | Type::Void => panic!(
                     "{}: Illegal element type for array subscripting",
                     Compiler::format_loc(arr_e.1)
                 ),
-                _ => *tp,
+                _ => *tp.clone(),
             },
             _ => panic!(
                 "{}: Illegal type for array subscripting",
@@ -1652,11 +1722,81 @@ impl Compiler<'_> {
                     _ => None,
                 })
             } else {
-                // TODO: T a[b] = * (T *) ((void *)a + (b * sizeof(T)))
-                unimplemented!()
+                // T ptr[sub] = *(ptr + sub)
+                let (ptr_tp, ptr) = self.visit_simple_binary_op(
+                    &ptr_tp,
+                    ptr,
+                    arr_e.1,
+                    &sub_tp,
+                    sub,
+                    sub_e.1,
+                    ast::Expr_Binary_Op::ADD,
+                    fold_constant,
+                    emit_ir,
+                );
+                let (_, r) = self.visit_unary_op(
+                    &ptr_tp,
+                    ptr,
+                    arr_e.1,
+                    ast::Expr_Unary_Op::DEREF,
+                    fold_constant,
+                    emit_ir,
+                );
+                r
             }
         };
         (elem_tp, r)
+    }
+
+    fn visit_unary_op(
+        &mut self,
+        tp: &QType,
+        arg: Option<ConstantOrIrValue>,
+        loc: &ast::Loc,
+        op: ast::Expr_Unary_Op,
+        fold_constant: bool,
+        emit_ir: bool,
+    ) -> (QType, Option<ConstantOrIrValue>) {
+        unimplemented!() // TODO
+    }
+
+    // binary ops except && and ||, which perform short-circuit evaluation
+    fn visit_simple_binary_op(
+        &mut self,
+        tp_left: &QType,
+        left: Option<ConstantOrIrValue>,
+        loc_left: &ast::Loc,
+        tp_right: &QType,
+        right: Option<ConstantOrIrValue>,
+        loc_right: &ast::Loc,
+        op: ast::Expr_Binary_Op,
+        fold_constant: bool,
+        emit_ir: bool,
+    ) -> (QType, Option<ConstantOrIrValue>) {
+        unimplemented!() // TODO
+    }
+
+    // for && and ||
+    fn visit_special_binary_op(
+        &mut self,
+        e_left: L<&ast::Expr>,
+        e_right: L<&ast::Expr>,
+        op: ast::Expr_Binary_Op,
+        fold_constant: bool,
+        emit_ir: bool,
+    ) -> (QType, Option<ConstantOrIrValue>) {
+        unimplemented!() // TODO
+    }
+
+    fn visit_ternary_op(
+        &mut self,
+        e_cond: L<&ast::Expr>,
+        e_then: L<&ast::Expr>,
+        e_else: L<&ast::Expr>,
+        fold_constant: bool,
+        emit_ir: bool,
+    ) -> (QType, Option<ConstantOrIrValue>) {
+        unimplemented!() // TODO
     }
 
     fn get_type(
