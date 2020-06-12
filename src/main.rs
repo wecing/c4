@@ -193,7 +193,7 @@ impl ConstantOrIrValue {
 
 #[derive(Debug, Clone)]
 enum Initializer {
-    Expr(QType, ConstantOrIrValue),
+    Expr(QType, ConstantOrIrValue), // does not contain lvalues
     Struct(Vec<Initializer>),
 }
 
@@ -715,21 +715,8 @@ impl IRBuilder for LLVMBuilderImpl {
         init.as_ref()
             .map(|x| match x {
                 Initializer::Struct(_) => unimplemented!(), // TODO: {...} init
-                Initializer::Expr(_, C::IrValue(ir_id, is_lvalue)) => {
-                    let value = *self.symbol_table.get(ir_id).unwrap();
-                    if *is_lvalue {
-                        let name_c =
-                            CString::new(self.get_next_tmp_ir_id()).unwrap();
-                        unsafe {
-                            llvm_sys::core::LLVMBuildLoad(
-                                self.builder,
-                                value,
-                                name_c.as_ptr(),
-                            )
-                        }
-                    } else {
-                        value
-                    }
+                Initializer::Expr(_, C::IrValue(ir_id, false)) => {
+                    *self.symbol_table.get(ir_id).unwrap()
                 }
                 Initializer::Expr(_, c) => self.get_llvm_constant(c).0,
             })
@@ -1241,6 +1228,9 @@ impl Compiler<'_> {
                     true,
                     !is_global_decl,
                 );
+                let (qtype, result) = self.convert_lvalue_and_func_designator(
+                    qtype, result, true, true, true,
+                );
                 match result {
                     None => panic!(
                         "{}: Global definition initializer must evaluate to \
@@ -1535,7 +1525,8 @@ impl Compiler<'_> {
             self.visit_expr((expr, e.0.get_e_loc()), fold_constant, emit_ir);
 
         // 3.2.2.1: auto conversion of array lvalues
-        let (src_tp, v) = Compiler::convert_array_lvalue(src_tp, v);
+        let (src_tp, v) = self
+            .convert_lvalue_and_func_designator(src_tp, v, true, true, true);
 
         macro_rules! do_cast {
             ($v:tt, $tp:tt) => {{
@@ -1597,20 +1588,8 @@ impl Compiler<'_> {
                         ConstantOrIrValue::IrValue(ir_id, false) => {
                             ir_id.clone()
                         }
-                        ConstantOrIrValue::IrValue(ir_id, true) => {
-                            // lvalues need to be deref-ed first
-                            let dst_ir_id = self.get_next_ir_id();
-                            self.c4ir_builder.create_load(
-                                dst_ir_id.clone(),
-                                ir_id.clone(),
-                                &src_tp,
-                            );
-                            self.llvm_builder.create_load(
-                                dst_ir_id.clone(),
-                                ir_id.clone(),
-                                &src_tp,
-                            );
-                            dst_ir_id
+                        ConstantOrIrValue::IrValue(_, true) => {
+                            unreachable!() // convert_lvalue_and_func_designator
                         }
                         c => {
                             let ir_id = self.get_next_ir_id();
@@ -1667,7 +1646,8 @@ impl Compiler<'_> {
     ) -> (QType, Option<ConstantOrIrValue>) {
         let (ptr_tp, ptr) = self.visit_expr(arr_e, fold_constant, emit_ir);
         let (sub_tp, sub) = self.visit_expr(sub_e, fold_constant, emit_ir);
-        let (ptr_tp, ptr) = Compiler::convert_array_lvalue(ptr_tp, ptr);
+        let (ptr_tp, ptr) = self
+            .convert_lvalue_and_func_designator(ptr_tp, ptr, true, true, true);
         let elem_tp = match &ptr_tp.tp {
             Type::Pointer(tp) => match tp.tp {
                 Type::Function(_, _) | Type::Void => panic!(
@@ -1750,12 +1730,12 @@ impl Compiler<'_> {
 
     fn visit_unary_op(
         &mut self,
-        tp: &QType,
-        arg: Option<ConstantOrIrValue>,
-        loc: &ast::Loc,
-        op: ast::Expr_Unary_Op,
-        fold_constant: bool,
-        emit_ir: bool,
+        _tp: &QType,
+        _arg: Option<ConstantOrIrValue>,
+        _loc: &ast::Loc,
+        _op: ast::Expr_Unary_Op,
+        _fold_constant: bool,
+        _emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
         unimplemented!() // TODO
     }
@@ -1763,15 +1743,15 @@ impl Compiler<'_> {
     // binary ops except && and ||, which perform short-circuit evaluation
     fn visit_simple_binary_op(
         &mut self,
-        tp_left: &QType,
-        left: Option<ConstantOrIrValue>,
-        loc_left: &ast::Loc,
-        tp_right: &QType,
-        right: Option<ConstantOrIrValue>,
-        loc_right: &ast::Loc,
-        op: ast::Expr_Binary_Op,
-        fold_constant: bool,
-        emit_ir: bool,
+        _tp_left: &QType,
+        _left: Option<ConstantOrIrValue>,
+        _loc_left: &ast::Loc,
+        _tp_right: &QType,
+        _right: Option<ConstantOrIrValue>,
+        _loc_right: &ast::Loc,
+        _op: ast::Expr_Binary_Op,
+        _fold_constant: bool,
+        _emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
         unimplemented!() // TODO
     }
@@ -1779,22 +1759,22 @@ impl Compiler<'_> {
     // for && and ||
     fn visit_special_binary_op(
         &mut self,
-        e_left: L<&ast::Expr>,
-        e_right: L<&ast::Expr>,
-        op: ast::Expr_Binary_Op,
-        fold_constant: bool,
-        emit_ir: bool,
+        _e_left: L<&ast::Expr>,
+        _e_right: L<&ast::Expr>,
+        _op: ast::Expr_Binary_Op,
+        _fold_constant: bool,
+        _emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
         unimplemented!() // TODO
     }
 
     fn visit_ternary_op(
         &mut self,
-        e_cond: L<&ast::Expr>,
-        e_then: L<&ast::Expr>,
-        e_else: L<&ast::Expr>,
-        fold_constant: bool,
-        emit_ir: bool,
+        _e_cond: L<&ast::Expr>,
+        _e_then: L<&ast::Expr>,
+        _e_else: L<&ast::Expr>,
+        _fold_constant: bool,
+        _emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
         unimplemented!() // TODO
     }
@@ -2763,10 +2743,12 @@ impl Compiler<'_> {
                             .unwrap()
                     })
                     .collect();
-                Some((
-                    (&sz_align_vec).into_iter().map(|p| p.0).max().unwrap(),
-                    (&sz_align_vec).into_iter().map(|p| p.1).max().unwrap(),
-                ))
+                let sz =
+                    (&sz_align_vec).into_iter().map(|p| p.0).max().unwrap();
+                let align =
+                    (&sz_align_vec).into_iter().map(|p| p.1).max().unwrap();
+                let sz = Compiler::align_up(sz, align);
+                Some((sz, align))
             }),
             Type::Enum(_) => unimplemented!(),
             Type::Pointer(_) => Some((8, 8)),
@@ -2852,29 +2834,82 @@ impl Compiler<'_> {
         qtype
     }
 
-    // 3.2.2.1: Except when it is the operand of the sizeof operator or the
-    // unary & operator, or is a character string literal used to initialize an
-    // array of character type, or is a wide string literal used to initialize
-    // an array with element type compatible with wchar_t, an lvalue that has
-    // type ``array of type'' is converted to an expression that has type
-    // ``pointer to type'' that points to the initial member of the array object
-    // and is not an lvalue.
-    fn convert_array_lvalue(
+    // 3.2.2.1:
+    //
+    // Except when it is the operand of
+    //     the sizeof operator,
+    //     the unary & operator,
+    //     the ++ operator,
+    //     the -- operator,
+    // or the left operand of
+    //     the . operator or
+    //     an assignment operator,
+    // an lvalue that does not have array type is converted to the value stored
+    // in the designated object (and is no longer an lvalue). If the lvalue has
+    // qualified type, the value has the unqualified version of the type of the
+    // lvalue; otherwise the value has the type of the lvalue. If the lvalue has
+    // an incomplete type and does not have array type, the behavior is
+    // undefined.
+    //
+    // Except when it is the operand of
+    //     the sizeof operator or
+    //     the unary & operator,
+    // or
+    //     is a character string literal used to initialize an array of
+    //         character type, or
+    //     is a wide string literal used to initialize an array with element
+    //         type compatible with wchar_t,
+    // an lvalue that has type ``array of type'' is converted to an expression
+    // that has type ``pointer to type'' that points to the initial member of
+    // the array object and is not an lvalue.
+    //
+    // A function designator is an expression that has function type. Except
+    // when it is the operand of
+    //     the sizeof operator or
+    //     the unary & operator,
+    // a function designator with type ``function returning type'' is converted
+    // to an expression that has type ``pointer to function returning type''.
+    fn convert_lvalue_and_func_designator(
+        &mut self,
         tp: QType,
         expr: Option<ConstantOrIrValue>,
+        do_deref_lvalue: bool,
+        do_arr_to_ptr: bool,
+        do_fun_to_ptr: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
+        use ConstantOrIrValue as C;
         match (tp.tp.clone(), expr.clone()) {
-            (
-                Type::Array(t, _),
-                Some(ConstantOrIrValue::IrValue(ir_id, true)),
-            ) => (
-                QType {
-                    is_const: tp.is_const,
-                    is_volatile: tp.is_volatile,
-                    tp: Type::Pointer(t),
-                },
-                Some(ConstantOrIrValue::IrValue(ir_id, false)),
-            ),
+            (Type::Array(t, _), Some(C::IrValue(ir_id, true)))
+                if do_arr_to_ptr =>
+            {
+                let tp = QType::from(Type::Pointer(t));
+                (tp, Some(C::IrValue(ir_id, false)))
+            }
+            (Type::Array(_, _), _) => (tp, expr),
+
+            (Type::Function(_, _), Some(C::IrValue(ir_id, _)))
+                if do_fun_to_ptr =>
+            {
+                let tp = QType::from(Type::Pointer(Box::new(tp)));
+                // ir_id should already have func ptr type in IR
+                (tp, Some(C::IrValue(ir_id, false)))
+            }
+            (Type::Function(_, _), _) => (tp, expr),
+
+            (t, Some(C::IrValue(ir_id, true))) if do_deref_lvalue => {
+                let dst_ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_load(
+                    dst_ir_id.clone(),
+                    ir_id.clone(),
+                    &tp,
+                );
+                self.llvm_builder.create_load(
+                    dst_ir_id.clone(),
+                    ir_id.clone(),
+                    &tp,
+                );
+                (QType::from(t), Some(C::IrValue(dst_ir_id, false)))
+            }
             _ => (tp, expr),
         }
     }
@@ -2946,9 +2981,9 @@ impl Compiler<'_> {
 
     fn do_arithmetic_conversion(
         &mut self,
-        tp_x: &QType,
+        tp_x: QType,
         x: ConstantOrIrValue,
-        tp_y: &QType,
+        tp_y: QType,
         y: ConstantOrIrValue,
     ) -> (ConstantOrIrValue, ConstantOrIrValue, QType) {
         if !tp_x.is_arithmetic_type() || !tp_y.is_arithmetic_type() {
@@ -2957,37 +2992,28 @@ impl Compiler<'_> {
                  arithmetic types"
             )
         }
+
+        let (tp_x, x) = self.convert_lvalue_and_func_designator(
+            tp_x,
+            Some(x),
+            true,
+            false,
+            false,
+        );
+        let x = x.unwrap();
+        let (tp_y, y) = self.convert_lvalue_and_func_designator(
+            tp_y,
+            Some(y),
+            true,
+            false,
+            false,
+        );
+        let y = y.unwrap();
+
         use ConstantOrIrValue as C;
         match (&x, &y) {
-            (C::IrValue(ir_id_x, true), _) => {
-                let new_ir_id_x = self.get_next_ir_id();
-                self.c4ir_builder.create_load(
-                    new_ir_id_x.clone(),
-                    ir_id_x.clone(),
-                    tp_x,
-                );
-                self.llvm_builder.create_load(
-                    new_ir_id_x.clone(),
-                    ir_id_x.clone(),
-                    tp_x,
-                );
-                let new_x = C::IrValue(new_ir_id_x, false);
-                self.do_arithmetic_conversion(tp_x, new_x, tp_y, y)
-            }
-            (_, C::IrValue(ir_id_y, true)) => {
-                let new_ir_id_y = self.get_next_ir_id();
-                self.c4ir_builder.create_load(
-                    new_ir_id_y.clone(),
-                    ir_id_y.clone(),
-                    tp_y,
-                );
-                self.llvm_builder.create_load(
-                    new_ir_id_y.clone(),
-                    ir_id_y.clone(),
-                    tp_y,
-                );
-                let new_y = C::IrValue(new_ir_id_y, false);
-                self.do_arithmetic_conversion(tp_x, x, tp_y, new_y)
+            (C::IrValue(_, true), _) | (_, C::IrValue(_, true)) => {
+                unreachable!() // convert_lvalue_and_func_designator
             }
             (C::IrValue(ir_id_x, false), C::IrValue(ir_id_y, false)) => {
                 let (new_ir_id_x, new_ir_id_y, new_tp) = self
@@ -3062,9 +3088,9 @@ impl Compiler<'_> {
     // x and y must both be of arithmetic types, and shall not be lvalues.
     fn do_arithmetic_conversion_ir(
         &mut self,
-        tp_x: &QType,
+        tp_x: QType,
         ir_id_x: String,
-        tp_y: &QType,
+        tp_y: QType,
         ir_id_y: String,
     ) -> (String, String, QType) {
         if !tp_x.is_arithmetic_type() || !tp_y.is_arithmetic_type() {
@@ -3207,7 +3233,7 @@ impl Compiler<'_> {
     fn do_integral_promotion_ir(
         &mut self,
         ir_id: String,
-        tp: &QType,
+        tp: QType,
     ) -> (String, QType) {
         if !tp.is_integral_type() {
             panic!(
@@ -3227,17 +3253,17 @@ impl Compiler<'_> {
                     ir_id_new.clone(),
                     &tp_new,
                     ir_id.clone(),
-                    tp,
+                    &tp,
                 );
                 self.llvm_builder.create_cast(
                     ir_id_new.clone(),
                     &tp_new,
                     ir_id.clone(),
-                    tp,
+                    &tp,
                 );
                 (ir_id_new, tp_new)
             }
-            _ => (ir_id, tp.clone()),
+            _ => (ir_id, tp),
         }
     }
 
