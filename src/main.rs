@@ -3100,29 +3100,27 @@ impl Compiler<'_> {
             )
         }
 
-        macro_rules! do_cast {
-            ($ir_id_old:expr, $tp_old:expr, $tp_new:expr) => {{
-                let ir_id_old: String = $ir_id_old;
-                let tp_old: &QType = $tp_old;
-                let tp_new: Type = $tp_new;
-
-                let ir_id_new = self.get_next_ir_id();
-                let tp_new = QType::from(tp_new);
-                self.c4ir_builder.create_cast(
-                    ir_id_new.clone(),
-                    &tp_new,
-                    ir_id_old.clone(),
-                    tp_old,
-                );
-                self.llvm_builder.create_cast(
-                    ir_id_new.clone(),
-                    &tp_new,
-                    ir_id_old.clone(),
-                    tp_old,
-                );
-                (ir_id_new, tp_new)
-            }};
-        }
+        let do_cast = |cc: &mut Compiler,
+                       ir_id_old: String,
+                       tp_old: &QType,
+                       tp_new: Type|
+         -> (String, QType) {
+            let ir_id_new = cc.get_next_ir_id();
+            let tp_new = QType::from(tp_new);
+            cc.c4ir_builder.create_cast(
+                ir_id_new.clone(),
+                &tp_new,
+                ir_id_old.clone(),
+                tp_old,
+            );
+            cc.llvm_builder.create_cast(
+                ir_id_new.clone(),
+                &tp_new,
+                ir_id_old.clone(),
+                tp_old,
+            );
+            (ir_id_new, tp_new)
+        };
 
         match (&tp_x.tp, &tp_y.tp) {
             (Type::Enum(_), _) | (_, Type::Enum(_)) => {
@@ -3135,11 +3133,13 @@ impl Compiler<'_> {
                 (ir_id_x, ir_id_y, QType::from(Type::Double))
             }
             (Type::Double, _) => {
-                let (new_ir_id_y, tp) = do_cast!(ir_id_y, &tp_y, Type::Double);
+                let (new_ir_id_y, tp) =
+                    do_cast(self, ir_id_y, &tp_y, Type::Double);
                 (ir_id_x, new_ir_id_y, tp)
             }
             (_, Type::Double) => {
-                let (new_ir_id_x, tp) = do_cast!(ir_id_x, &tp_x, Type::Double);
+                let (new_ir_id_x, tp) =
+                    do_cast(self, ir_id_x, &tp_x, Type::Double);
                 (new_ir_id_x, ir_id_y, tp)
             }
             // 3.2.1.5: Otherwise, if either operand has type float, the other
@@ -3148,11 +3148,13 @@ impl Compiler<'_> {
                 (ir_id_x, ir_id_y, QType::from(Type::Float))
             }
             (Type::Float, _) => {
-                let (new_ir_id_y, tp) = do_cast!(ir_id_y, &tp_y, Type::Float);
+                let (new_ir_id_y, tp) =
+                    do_cast(self, ir_id_y, &tp_y, Type::Float);
                 (ir_id_x, new_ir_id_y, tp)
             }
             (_, Type::Float) => {
-                let (new_ir_id_x, tp) = do_cast!(ir_id_x, &tp_x, Type::Float);
+                let (new_ir_id_x, tp) =
+                    do_cast(self, ir_id_x, &tp_x, Type::Float);
                 (new_ir_id_x, ir_id_y, tp)
             }
             // 3.2.1.5: Otherwise, the integral promotions are performed on both
@@ -3171,12 +3173,12 @@ impl Compiler<'_> {
                     }
                     (Type::UnsignedLong, _) => {
                         let (new_ir_id_y, tp) =
-                            do_cast!(ir_id_y, &tp_y, Type::UnsignedLong);
+                            do_cast(self, ir_id_y, &tp_y, Type::UnsignedLong);
                         (ir_id_x, new_ir_id_y, tp)
                     }
                     (_, Type::UnsignedLong) => {
                         let (new_ir_id_x, tp) =
-                            do_cast!(ir_id_x, &tp_x, Type::UnsignedLong);
+                            do_cast(self, ir_id_x, &tp_x, Type::UnsignedLong);
                         (new_ir_id_x, ir_id_y, tp)
                     }
                     // 3.2.1.5: Otherwise, if one operand has type long int and
@@ -3192,12 +3194,12 @@ impl Compiler<'_> {
                     }
                     (Type::Long, _) => {
                         let (new_ir_id_y, tp) =
-                            do_cast!(ir_id_y, &tp_y, Type::Long);
+                            do_cast(self, ir_id_y, &tp_y, Type::Long);
                         (ir_id_x, new_ir_id_y, tp)
                     }
                     (_, Type::Long) => {
                         let (new_ir_id_x, tp) =
-                            do_cast!(ir_id_x, &tp_x, Type::Long);
+                            do_cast(self, ir_id_x, &tp_x, Type::Long);
                         (new_ir_id_x, ir_id_y, tp)
                     }
                     // 3.2.1.5: Otherwise, if either operand has type unsigned
@@ -3207,12 +3209,12 @@ impl Compiler<'_> {
                     }
                     (Type::UnsignedInt, _) => {
                         let (new_ir_id_y, tp) =
-                            do_cast!(ir_id_y, &tp_y, Type::UnsignedInt);
+                            do_cast(self, ir_id_y, &tp_y, Type::UnsignedInt);
                         (ir_id_x, new_ir_id_y, tp)
                     }
                     (_, Type::UnsignedInt) => {
                         let (new_ir_id_x, tp) =
-                            do_cast!(ir_id_x, &tp_x, Type::UnsignedInt);
+                            do_cast(self, ir_id_x, &tp_x, Type::UnsignedInt);
                         (new_ir_id_x, ir_id_y, tp)
                     }
                     // 3.2.1.5: Otherwise, both operands have type int.
