@@ -153,7 +153,8 @@ enum ConstantOrIrValue {
     //
     // Unlike IrValue, the ir_id of Address could be looked up in
     // Compiler::global_constants and is guaranteed to exist.
-    Address(String, i64),  // ir_id, offset_bytes
+    Address(String, i64), // ir_id, offset_bytes
+    // For struct/union/array, ir_id is a pointer even when is_lvalue=false.
     IrValue(String, bool), // ir_id, is_lvalue
 }
 
@@ -2896,6 +2897,12 @@ impl Compiler<'_> {
             }
             (Type::Function(_, _), _) => (tp, expr),
 
+            (t @ Type::Struct(_), Some(C::IrValue(ir_id, true)))
+            | (t @ Type::Union(_), Some(C::IrValue(ir_id, true)))
+                if do_deref_lvalue =>
+            {
+                (QType::from(t), Some(C::IrValue(ir_id, false)))
+            }
             (t, Some(C::IrValue(ir_id, true))) if do_deref_lvalue => {
                 let dst_ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_load(
