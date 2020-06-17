@@ -311,6 +311,18 @@ trait IRBuilder {
         src_tp: &QType,
     );
 
+    // store <T> <src_ir_id>, <T>* <dst_ir_id>
+    fn create_store(&mut self, dst_ir_id: String, src_ir_id: String);
+
+    // call void @llvm.memcpy(T* <dst_ir_id>, T* <src_ir_id>, <size>)
+    fn create_memcpy(
+        &mut self,
+        dst_ir_id: String,
+        src_ir_id: String,
+        size: u32,
+        align: u32,
+    );
+
     fn create_cast(
         &mut self,
         dst_ir_id: String,
@@ -377,6 +389,17 @@ impl IRBuilder for DummyIRBuilder {
         _dst_ir_id: String,
         _src_ir_id: String,
         _src_tp: &QType,
+    ) {
+    }
+
+    fn create_store(&mut self, _dst_ir_id: String, _src_ir_id: String) {}
+
+    fn create_memcpy(
+        &mut self,
+        _dst_ir_id: String,
+        _src_ir_id: String,
+        _size: u32,
+        _align: u32,
     ) {
     }
 
@@ -772,6 +795,35 @@ impl IRBuilder for LLVMBuilderImpl {
             )
         };
         self.symbol_table.insert(dst_ir_id, dst);
+    }
+
+    fn create_store(&mut self, dst_ir_id: String, src_ir_id: String) {
+        let src = self.symbol_table.get(&src_ir_id).unwrap();
+        let dst = self.symbol_table.get(&dst_ir_id).unwrap();
+        unsafe {
+            llvm_sys::core::LLVMBuildStore(self.builder, *src, *dst);
+        }
+    }
+
+    fn create_memcpy(
+        &mut self,
+        dst_ir_id: String,
+        src_ir_id: String,
+        size: u32,
+        align: u32,
+    ) {
+        let src = self.symbol_table.get(&src_ir_id).unwrap();
+        let dst = self.symbol_table.get(&dst_ir_id).unwrap();
+        unsafe {
+            llvm_sys::core::LLVMBuildMemCpy(
+                self.builder,
+                *dst,
+                align,
+                *src,
+                align,
+                self.get_llvm_constant(&ConstantOrIrValue::U32(size)).0,
+            );
+        }
     }
 
     fn create_cast(
@@ -1529,113 +1581,7 @@ impl Compiler<'_> {
         let (src_tp, v) = self
             .convert_lvalue_and_func_designator(src_tp, v, true, true, true);
 
-        macro_rules! do_cast {
-            ($v:tt, $tp:tt) => {{
-                use ConstantOrIrValue as C;
-                match $tp {
-                    Type::Char => (dst_tp, Some(C::I8(*$v as i8))),
-                    Type::UnsignedChar => (dst_tp, Some(C::U8(*$v as u8))),
-                    Type::Short => (dst_tp, Some(C::I16(*$v as i16))),
-                    Type::UnsignedShort => (dst_tp, Some(C::U16(*$v as u16))),
-                    Type::Int => (dst_tp, Some(C::I32(*$v as i32))),
-                    Type::UnsignedInt => (dst_tp, Some(C::U32(*$v as u32))),
-                    Type::Long => (dst_tp, Some(C::I64(*$v as i64))),
-                    Type::UnsignedLong => (dst_tp, Some(C::U64(*$v as u64))),
-                    Type::Float => (dst_tp, Some(C::Float(*$v as f32))),
-                    Type::Double => (dst_tp, Some(C::Double(*$v as f64))),
-                    Type::Pointer(_) => (dst_tp, Some(C::U64(*$v as u64))),
-                    _ => unreachable!(),
-                }
-            }};
-        }
-
-        // now cast `v` of `src_tp` into `dst_tp`
-        match (&src_tp.tp, &v, &dst_tp.tp) {
-            // 3.3.4: Unless the type name specifies void type, the type name
-            // shall specify qualified or unqualified scalar type and the
-            // operand shall have scalar type.
-            (_, _, Type::Void) => (dst_tp, None),
-            (Type::Struct(_), _, _)
-            | (Type::Union(_), _, _)
-            | (Type::Array(_, _), _, _)
-            | (Type::Function(_, _), _, _)
-            | (_, _, Type::Struct(_))
-            | (_, _, Type::Union(_))
-            | (_, _, Type::Array(_, _))
-            | (_, _, Type::Function(_, _)) => panic!(
-                "{}: Cannot cast from/to non-scalar types",
-                Compiler::format_loc(e.1)
-            ),
-
-            (Type::Float, _, Type::Pointer(_))
-            | (Type::Double, _, Type::Pointer(_))
-            | (Type::Pointer(_), _, Type::Float)
-            | (Type::Pointer(_), _, Type::Double) => panic!(
-                "{}: Cannot cast floating point values from/to pointers",
-                Compiler::format_loc(e.1)
-            ),
-
-            (_, None, _) => (dst_tp, None),
-            (Type::Enum(_), _, _) | (_, _, Type::Enum(_)) => unimplemented!(),
-
-            (Type::Pointer(_), _, Type::Pointer(_)) => (dst_tp, v),
-
-            (_, Some(p @ ConstantOrIrValue::Address(_, _)), _)
-            | (_, Some(p @ ConstantOrIrValue::IrValue(_, _)), _) => {
-                if !emit_ir {
-                    (dst_tp, None)
-                } else {
-                    let src_ir_id = match p {
-                        ConstantOrIrValue::IrValue(ir_id, false) => {
-                            ir_id.clone()
-                        }
-                        ConstantOrIrValue::IrValue(_, true) => {
-                            unreachable!() // convert_lvalue_and_func_designator
-                        }
-                        c => {
-                            let ir_id = self.get_next_ir_id();
-                            self.c4ir_builder.create_constant(
-                                ir_id.clone(),
-                                c,
-                                &src_tp,
-                            );
-                            self.llvm_builder.create_constant(
-                                ir_id.clone(),
-                                c,
-                                &src_tp,
-                            );
-                            ir_id
-                        }
-                    };
-                    let dst_ir_id = self.get_next_ir_id();
-                    self.c4ir_builder.create_cast(
-                        dst_ir_id.clone(),
-                        &dst_tp,
-                        src_ir_id.clone(),
-                        &src_tp,
-                    );
-                    self.llvm_builder.create_cast(
-                        dst_ir_id.clone(),
-                        &dst_tp,
-                        src_ir_id,
-                        &src_tp,
-                    );
-                    (dst_tp, Some(ConstantOrIrValue::IrValue(dst_ir_id, false)))
-                }
-            }
-
-            // compile time constant folding for cast expressions
-            (_, Some(ConstantOrIrValue::I8(v)), tp) => do_cast!(v, tp),
-            (_, Some(ConstantOrIrValue::U8(v)), tp) => do_cast!(v, tp),
-            (_, Some(ConstantOrIrValue::I16(v)), tp) => do_cast!(v, tp),
-            (_, Some(ConstantOrIrValue::U16(v)), tp) => do_cast!(v, tp),
-            (_, Some(ConstantOrIrValue::I32(v)), tp) => do_cast!(v, tp),
-            (_, Some(ConstantOrIrValue::U32(v)), tp) => do_cast!(v, tp),
-            (_, Some(ConstantOrIrValue::I64(v)), tp) => do_cast!(v, tp),
-            (_, Some(ConstantOrIrValue::U64(v)), tp) => do_cast!(v, tp),
-            (_, Some(ConstantOrIrValue::Float(v)), tp) => do_cast!(v, tp),
-            (_, Some(ConstantOrIrValue::Double(v)), tp) => do_cast!(v, tp),
-        }
+        self.cast_expression(src_tp, v, dst_tp, e.1, emit_ir)
     }
 
     fn visit_arr_sub_expr(
@@ -1744,17 +1690,162 @@ impl Compiler<'_> {
     // binary ops except && and ||, which perform short-circuit evaluation
     fn visit_simple_binary_op(
         &mut self,
-        _tp_left: &QType,
-        _left: Option<ConstantOrIrValue>,
-        _loc_left: &ast::Loc,
-        _tp_right: &QType,
-        _right: Option<ConstantOrIrValue>,
-        _loc_right: &ast::Loc,
-        _op: ast::Expr_Binary_Op,
+        tp_left: &QType,
+        left: Option<ConstantOrIrValue>,
+        loc_left: &ast::Loc,
+        tp_right: &QType,
+        right: Option<ConstantOrIrValue>,
+        loc_right: &ast::Loc,
+        op: ast::Expr_Binary_Op,
         _fold_constant: bool,
-        _emit_ir: bool,
+        emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
-        unimplemented!() // TODO
+        use ast::Expr_Binary_Op as Op;
+        let (tp_left, left) = self.convert_lvalue_and_func_designator(
+            tp_left.clone(),
+            left,
+            op != Op::ASSIGN,
+            true,
+            true,
+        );
+        let (tp_right, right) = self.convert_lvalue_and_func_designator(
+            tp_right.clone(),
+            right,
+            true,
+            true,
+            true,
+        );
+
+        match op {
+            Op::ASSIGN => {
+                if !emit_ir {
+                    panic!(
+                        "{}: Expression is not a compiler time constant",
+                        Compiler::format_loc(loc_left)
+                    )
+                }
+                if tp_left.is_const {
+                    panic!(
+                        "{}: Cannot modify const-qualified variables",
+                        Compiler::format_loc(loc_left)
+                    )
+                }
+                let is_void = |tp: &QType| match tp.tp {
+                    Type::Void => true,
+                    _ => false,
+                };
+                // 3.3.16.1: One of the following shall hold:
+                match (&tp_left.tp, &tp_right.tp) {
+                    // * the left operand has qualified or unqualified
+                    //   arithmetic type and the right has arithmetic type;
+                    _ if tp_left.is_arithmetic_type()
+                        && tp_right.is_arithmetic_type() =>
+                    {
+                        ()
+                    }
+                    // * the left operand has a qualified or unqualified version
+                    //   of a structure or union type compatible with the type
+                    //   of the right;
+                    (Type::Struct(_), Type::Struct(_))
+                    | (Type::Union(_), Type::Union(_))
+                        if Compiler::try_get_composite_type(
+                            &tp_left, &tp_right, loc_right,
+                        )
+                        .is_ok() =>
+                    {
+                        ()
+                    }
+                    // * both operands are pointers to qualified or unqualified
+                    //   versions of compatible types, and the type pointed to
+                    //   by the left has all the qualifiers of the type pointed
+                    //   to by the right;
+                    (Type::Pointer(tp_l), Type::Pointer(tp_r))
+                        if Compiler::try_get_composite_type(
+                            tp_l.as_ref(),
+                            tp_r.as_ref(),
+                            loc_right,
+                        )
+                        .is_ok()
+                            && (tp_l.is_const || !tp_r.is_const)
+                            && (tp_l.is_volatile || !tp_r.is_volatile) =>
+                    {
+                        ()
+                    }
+                    // * one operand is a pointer to an object or incomplete
+                    //   type and the other is a pointer to a qualified or
+                    //   unqualified version of void, and the type pointed to by
+                    //   the left has all the qualifiers of the type pointed to
+                    //   by the right; or
+                    (Type::Pointer(tp_l), Type::Pointer(tp_r))
+                        if is_void(tp_r)
+                            && (tp_l.is_const || !tp_r.is_const)
+                            && (tp_l.is_volatile || !tp_r.is_volatile) =>
+                    {
+                        ()
+                    }
+                    // * the left operand is a pointer and the right is a null
+                    //   pointer constant.
+                    (Type::Pointer(_), _)
+                        if right.as_ref().and_then(|r| r.as_constant_u64())
+                            == Some(0) =>
+                    {
+                        ()
+                    }
+                    _ => panic!(
+                        "{}: Illegal right hand side value type for ASSIGN",
+                        Compiler::format_loc(loc_right)
+                    ),
+                }
+                let (_, right) = self.cast_expression(
+                    tp_right,
+                    right,
+                    tp_left.clone(),
+                    loc_right,
+                    true,
+                );
+                // now store `right` to `left`
+                let dst_ir_id = match left {
+                    Some(ConstantOrIrValue::IrValue(ir_id, true)) => ir_id,
+                    _ => unreachable!(),
+                };
+                let src_ir_id = match &right {
+                    Some(ConstantOrIrValue::IrValue(ir_id, false)) => {
+                        ir_id.clone()
+                    }
+                    _ => unreachable!(),
+                };
+                match &tp_left.tp {
+                    Type::Struct(_) | Type::Union(_) => {
+                        let (size, align) =
+                            Compiler::get_type_size_and_align_bytes(
+                                &tp_left.tp,
+                            )
+                            .unwrap();
+                        self.c4ir_builder.create_memcpy(
+                            dst_ir_id.clone(),
+                            src_ir_id.clone(),
+                            size,
+                            align,
+                        );
+                        self.llvm_builder.create_memcpy(
+                            dst_ir_id.clone(),
+                            src_ir_id.clone(),
+                            size,
+                            align,
+                        );
+                        (QType::from(tp_left.tp), right)
+                    }
+                    _ => {
+                        self.c4ir_builder
+                            .create_store(dst_ir_id.clone(), src_ir_id.clone());
+                        self.llvm_builder
+                            .create_store(dst_ir_id.clone(), src_ir_id.clone());
+                        (QType::from(tp_left.tp), right)
+                    }
+                }
+            }
+            _ => unimplemented!(), // TODO
+        }
     }
 
     // for && and ||
@@ -2471,21 +2562,148 @@ impl Compiler<'_> {
         }
     }
 
+    fn cast_expression(
+        &mut self,
+        src_tp: QType,
+        v: Option<ConstantOrIrValue>,
+        dst_tp: QType,
+        loc: &ast::Loc,
+        emit_ir: bool,
+    ) -> (QType, Option<ConstantOrIrValue>) {
+        macro_rules! do_cast {
+            ($v:tt, $tp:tt) => {{
+                use ConstantOrIrValue as C;
+                match $tp {
+                    Type::Char => (dst_tp, Some(C::I8(*$v as i8))),
+                    Type::UnsignedChar => (dst_tp, Some(C::U8(*$v as u8))),
+                    Type::Short => (dst_tp, Some(C::I16(*$v as i16))),
+                    Type::UnsignedShort => (dst_tp, Some(C::U16(*$v as u16))),
+                    Type::Int => (dst_tp, Some(C::I32(*$v as i32))),
+                    Type::UnsignedInt => (dst_tp, Some(C::U32(*$v as u32))),
+                    Type::Long => (dst_tp, Some(C::I64(*$v as i64))),
+                    Type::UnsignedLong => (dst_tp, Some(C::U64(*$v as u64))),
+                    Type::Float => (dst_tp, Some(C::Float(*$v as f32))),
+                    Type::Double => (dst_tp, Some(C::Double(*$v as f64))),
+                    Type::Pointer(_) => (dst_tp, Some(C::U64(*$v as u64))),
+                    _ => unreachable!(),
+                }
+            }};
+        }
+
+        // now cast `v` of `src_tp` into `dst_tp`
+        match (&src_tp.tp, &v, &dst_tp.tp) {
+            // 3.3.4: Unless the type name specifies void type, the type name
+            // shall specify qualified or unqualified scalar type and the
+            // operand shall have scalar type.
+            (_, _, Type::Void) => (dst_tp, None),
+            (Type::Struct(_), _, _)
+            | (Type::Union(_), _, _)
+            | (Type::Array(_, _), _, _)
+            | (Type::Function(_, _), _, _)
+            | (_, _, Type::Struct(_))
+            | (_, _, Type::Union(_))
+            | (_, _, Type::Array(_, _))
+            | (_, _, Type::Function(_, _)) => panic!(
+                "{}: Cannot cast from/to non-scalar types",
+                Compiler::format_loc(loc)
+            ),
+
+            (Type::Float, _, Type::Pointer(_))
+            | (Type::Double, _, Type::Pointer(_))
+            | (Type::Pointer(_), _, Type::Float)
+            | (Type::Pointer(_), _, Type::Double) => panic!(
+                "{}: Cannot cast floating point values from/to pointers",
+                Compiler::format_loc(loc)
+            ),
+
+            (_, None, _) => (dst_tp, None),
+            (Type::Enum(_), _, _) | (_, _, Type::Enum(_)) => unimplemented!(),
+
+            (Type::Pointer(_), _, Type::Pointer(_)) => (dst_tp, v),
+
+            (_, Some(p @ ConstantOrIrValue::Address(_, _)), _)
+            | (_, Some(p @ ConstantOrIrValue::IrValue(_, _)), _) => {
+                if !emit_ir {
+                    (dst_tp, None)
+                } else {
+                    let src_ir_id = match p {
+                        ConstantOrIrValue::IrValue(ir_id, false) => {
+                            ir_id.clone()
+                        }
+                        ConstantOrIrValue::IrValue(_, true) => {
+                            unreachable!() // convert_lvalue_and_func_designator
+                        }
+                        c => {
+                            let ir_id = self.get_next_ir_id();
+                            self.c4ir_builder.create_constant(
+                                ir_id.clone(),
+                                c,
+                                &src_tp,
+                            );
+                            self.llvm_builder.create_constant(
+                                ir_id.clone(),
+                                c,
+                                &src_tp,
+                            );
+                            ir_id
+                        }
+                    };
+                    let dst_ir_id = self.get_next_ir_id();
+                    self.c4ir_builder.create_cast(
+                        dst_ir_id.clone(),
+                        &dst_tp,
+                        src_ir_id.clone(),
+                        &src_tp,
+                    );
+                    self.llvm_builder.create_cast(
+                        dst_ir_id.clone(),
+                        &dst_tp,
+                        src_ir_id,
+                        &src_tp,
+                    );
+                    (dst_tp, Some(ConstantOrIrValue::IrValue(dst_ir_id, false)))
+                }
+            }
+
+            // compile time constant folding for cast expressions
+            (_, Some(ConstantOrIrValue::I8(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::U8(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::I16(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::U16(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::I32(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::U32(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::I64(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::U64(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::Float(v)), tp) => do_cast!(v, tp),
+            (_, Some(ConstantOrIrValue::Double(v)), tp) => do_cast!(v, tp),
+        }
+    }
+
     fn get_composite_type(old: &QType, new: &QType, loc: &ast::Loc) -> QType {
+        Compiler::try_get_composite_type(old, new, loc).unwrap()
+    }
+
+    fn try_get_composite_type(
+        old: &QType,
+        new: &QType,
+        loc: &ast::Loc,
+    ) -> Result<QType, String> {
         macro_rules! incompatible_panic {
-            () => {
-                panic!(
+            () => {{
+                let msg = format!(
                     "{}: Type incompatible with previous declaration",
                     Compiler::format_loc(loc)
-                )
-            };
-            ($msg:expr) => {
-                panic!(
+                );
+                return Err(msg);
+            }};
+            ($msg:expr) => {{
+                let msg = format!(
                     "{}: Type incompatible with previous declaration; {}",
                     Compiler::format_loc(loc),
                     $msg
-                )
-            };
+                );
+                return Err(msg);
+            }};
         };
 
         // 3.5.3: For two qualified types to be compatible, both shall have the
@@ -2616,7 +2834,7 @@ impl Compiler<'_> {
                         if is_varargs_left != is_varargs_right {
                             incompatible_panic!("different varargs usage")
                         }
-                        let tps: Vec<TypedFuncParam> = tps_left
+                        let tps: Vec<Result<TypedFuncParam, String>> = tps_left
                             .iter()
                             .zip(tps_right)
                             .map(|(tp_left, tp_right)| {
@@ -2629,7 +2847,7 @@ impl Compiler<'_> {
                                     .name
                                     .clone()
                                     .or(tp_left.name.clone());
-                                TypedFuncParam {
+                                let param = TypedFuncParam {
                                     is_register: tp_left.is_register,
                                     tp: Compiler::get_composite_type(
                                         &tp_left.tp,
@@ -2637,9 +2855,17 @@ impl Compiler<'_> {
                                         loc,
                                     ),
                                     name,
-                                }
+                                };
+                                Ok(param)
                             })
                             .collect();
+                        for tp in &tps {
+                            if tp.is_err() {
+                                return Err(tp.clone().unwrap_err());
+                            }
+                        }
+                        let tps: Vec<TypedFuncParam> =
+                            tps.into_iter().map(|tp| tp.unwrap()).collect();
                         Some(FuncParams::Typed(tps, is_varargs_left))
                     }
                     (
@@ -2678,11 +2904,12 @@ impl Compiler<'_> {
             _ => incompatible_panic!(),
         };
 
-        QType {
+        let tp = QType {
             is_const: new.is_const,
             is_volatile: new.is_volatile,
             tp,
-        }
+        };
+        Ok(tp)
     }
 
     fn get_type_size_and_align_bytes(tp: &Type) -> Option<(u32, u32)> {
