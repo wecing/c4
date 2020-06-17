@@ -9,6 +9,34 @@ use std::ptr;
 
 mod ast;
 
+// TODO: replace panic!(..., format_loc(...), ...) with Result<T, Err>
+
+struct SemanticError {
+    msg: String,
+    loc: ast::Loc,
+}
+
+type R<T> = Result<T, SemanticError>;
+
+macro_rules! c4_fail {
+    ($loc:expr, $msg:expr) => {
+        return Err(
+            SemanticError {
+                msg: format!($msg),
+                loc: $loc.clone(),
+            }
+        );
+    };
+    ($loc:expr, $fmt:expr, $($arg:tt)*) => {
+        return Err(
+            SemanticError {
+                msg: format!($fmt, $($arg)*),
+                loc: $loc.clone(),
+            }
+        );
+    };
+}
+
 #[derive(Debug, Clone)]
 enum Type {
     Void,
@@ -252,6 +280,12 @@ impl Drop for Scope {
     fn drop(&mut self) {
         self.outer_scope = Box::new(None);
     }
+}
+
+struct FuncDefCtx {
+    // user-provided label name => basic block name
+    basic_blocks: HashMap<String, String>,
+    unresolved_labels: HashSet<String>,
 }
 
 trait IRBuilder {
@@ -1102,18 +1136,27 @@ impl Compiler<'_> {
             .get_dls()
             .into_iter()
             .for_each(|dl| self.visit_declaration(dl));
-        // struct FuncDefCtx {
-        //   // user-provided label name => basic block name
-        //   basic_blocks: HashMap<String, String>,
-        //   unresolved_labels: HashSet<String>
-        // }
-        fd.get_body()
+        let stmts: Vec<L<&ast::Statement>> = fd
+            .get_body()
             .get_stmt_idxes()
             .into_iter()
             .map(|idx| &self.translation_unit.statements[*idx as usize])
-            .for_each(|_stmt| {
-                unimplemented!() // TODO: implement statements
-            });
+            .zip(fd.get_body().get_stmt_locs())
+            .collect();
+        let mut func_def_ctx = FuncDefCtx {
+            basic_blocks: HashMap::new(),
+            unresolved_labels: HashSet::new(),
+        };
+        let err = stmts
+            .into_iter()
+            .map(|stmt| self.visit_stmt(stmt, &mut func_def_ctx))
+            .filter(|r| r.is_err())
+            .next()
+            .unwrap_or_else(|| -> R<()> { Ok(()) });
+        if err.is_err() {
+            let err = err.unwrap_err();
+            panic!("{}: {}", Compiler::format_loc(&err.loc), err.msg)
+        }
 
         self.leave_scope();
     }
@@ -1868,6 +1911,14 @@ impl Compiler<'_> {
         _fold_constant: bool,
         _emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
+        unimplemented!() // TODO
+    }
+
+    fn visit_stmt(
+        &mut self,
+        _stmt: L<&ast::Statement>,
+        _ctx: &mut FuncDefCtx,
+    ) -> R<()> {
         unimplemented!() // TODO
     }
 
