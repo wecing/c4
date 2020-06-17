@@ -364,6 +364,16 @@ trait IRBuilder {
         src_ir_id: String,
         src_tp: &QType,
     );
+
+    fn create_bin_op(
+        &mut self,
+        dst_ir_id: String,
+        op: ast::Expr_Binary_Op,
+        is_signed: bool,
+        is_fp: bool,
+        left_ir_id: String,
+        right_ir_id: String,
+    );
 }
 
 struct DummyIRBuilder {}
@@ -443,6 +453,17 @@ impl IRBuilder for DummyIRBuilder {
         _dst_tp: &QType,
         _src_ir_id: String,
         _src_tp: &QType,
+    ) {
+    }
+
+    fn create_bin_op(
+        &mut self,
+        _dst_ir_id: String,
+        _op: ast::Expr_Binary_Op,
+        _is_signed: bool,
+        _is_fp: bool,
+        _left_ir_id: String,
+        _right_ir_id: String,
     ) {
     }
 }
@@ -938,6 +959,53 @@ impl IRBuilder for LLVMBuilderImpl {
                     dst_ir_id_c.as_ptr(),
                 )
             },
+        };
+        self.symbol_table.insert(dst_ir_id, dst);
+    }
+
+    fn create_bin_op(
+        &mut self,
+        dst_ir_id: String,
+        op: ast::Expr_Binary_Op,
+        is_signed: bool,
+        is_fp: bool,
+        left_ir_id: String,
+        right_ir_id: String,
+    ) {
+        use ast::Expr_Binary_Op as Op;
+        use llvm_sys::LLVMOpcode as O;
+        let dst_ir_id_c = CString::new(dst_ir_id.clone()).unwrap();
+        let left = self.symbol_table.get(&left_ir_id).unwrap();
+        let right = self.symbol_table.get(&right_ir_id).unwrap();
+        let op = match op {
+            Op::BIT_OR => O::LLVMOr,
+            Op::XOR => O::LLVMXor,
+            Op::BIT_AND => O::LLVMAnd,
+            Op::L_SHIFT => O::LLVMShl,
+            Op::R_SHIFT if is_signed => O::LLVMAShr,
+            Op::R_SHIFT => O::LLVMLShr,
+            Op::ADD if is_fp => O::LLVMFAdd,
+            Op::ADD => O::LLVMAdd,
+            Op::SUB if is_fp => O::LLVMFSub,
+            Op::SUB => O::LLVMSub,
+            Op::MUL if is_fp => O::LLVMFMul,
+            Op::MUL => O::LLVMMul,
+            Op::DIV if is_fp => O::LLVMFDiv,
+            Op::DIV if is_signed => O::LLVMSDiv,
+            Op::DIV => O::LLVMUDiv,
+            Op::MOD if is_fp => O::LLVMFRem,
+            Op::MOD if is_signed => O::LLVMSRem,
+            Op::MOD => O::LLVMURem,
+            _ => unreachable!(),
+        };
+        let dst = unsafe {
+            llvm_sys::core::LLVMBuildBinOp(
+                self.builder,
+                op,
+                *left,
+                *right,
+                dst_ir_id_c.as_ptr(),
+            )
         };
         self.symbol_table.insert(dst_ir_id, dst);
     }
@@ -1740,7 +1808,7 @@ impl Compiler<'_> {
         right: Option<ConstantOrIrValue>,
         loc_right: &ast::Loc,
         op: ast::Expr_Binary_Op,
-        _fold_constant: bool,
+        fold_constant: bool,
         emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
         use ast::Expr_Binary_Op as Op;
@@ -1758,6 +1826,18 @@ impl Compiler<'_> {
             true,
             true,
         );
+
+        let is_signed = |tp: &QType| match tp.tp {
+            Type::UnsignedChar
+            | Type::UnsignedShort
+            | Type::UnsignedInt
+            | Type::UnsignedLong => false,
+            _ => true,
+        };
+        let is_fp = |tp: &QType| match tp.tp {
+            Type::Float | Type::Double => true,
+            _ => false,
+        };
 
         match op {
             Op::ASSIGN => {
@@ -1885,6 +1965,73 @@ impl Compiler<'_> {
                             .create_store(dst_ir_id.clone(), src_ir_id.clone());
                         (QType::from(tp_left.tp), right)
                     }
+                }
+            }
+            Op::DIV => {
+                if !tp_left.is_arithmetic_type() {
+                    panic!(
+                        "{}: Invalid operand type",
+                        Compiler::format_loc(loc_left)
+                    )
+                }
+                if !tp_right.is_arithmetic_type() {
+                    panic!(
+                        "{}: Invalid operand type",
+                        Compiler::format_loc(loc_right)
+                    )
+                }
+                let (left, right, tp) = self
+                    .do_arithmetic_conversion(tp_left, left, tp_right, right);
+                if left.is_none() || right.is_none() || !fold_constant {
+                    (tp, None)
+                } else {
+                    let left = left.unwrap();
+                    let right = right.unwrap();
+                    if (tp.is_integral_type()
+                        && right.as_constant_u64() == Some(0 as u64))
+                        || (!tp.is_integral_type()
+                            && right.as_constant_double() == Some(0.0))
+                    {
+                        panic!(
+                            "{}: Divisor is 0",
+                            Compiler::format_loc(loc_right)
+                        )
+                    }
+                    use ConstantOrIrValue as C;
+                    let c = match (left, right) {
+                        (C::I8(x), C::I8(y)) => C::I8(x / y),
+                        (C::U8(x), C::U8(y)) => C::U8(x / y),
+                        (C::I16(x), C::I16(y)) => C::I16(x / y),
+                        (C::U16(x), C::U16(y)) => C::U16(x / y),
+                        (C::I32(x), C::I32(y)) => C::I32(x / y),
+                        (C::U32(x), C::U32(y)) => C::U32(x / y),
+                        (C::I64(x), C::I64(y)) => C::I64(x / y),
+                        (C::U64(x), C::U64(y)) => C::U64(x / y),
+                        (C::Float(x), C::Float(y)) => C::Float(x / y),
+                        (C::Double(x), C::Double(y)) => C::Double(x / y),
+                        (C::IrValue(x, false), C::IrValue(y, false)) => {
+                            let ir_id = self.get_next_ir_id();
+                            self.c4ir_builder.create_bin_op(
+                                ir_id.clone(),
+                                op,
+                                is_signed(&tp),
+                                is_fp(&tp),
+                                x.clone(),
+                                y.clone(),
+                            );
+                            self.llvm_builder.create_bin_op(
+                                ir_id.clone(),
+                                op,
+                                is_signed(&tp),
+                                is_fp(&tp),
+                                x.clone(),
+                                y.clone(),
+                            );
+                            C::IrValue(ir_id, false)
+                        }
+                        _ => unreachable!(),
+                    };
+                    (tp, Some(c))
                 }
             }
             _ => unimplemented!(), // TODO
@@ -3267,10 +3414,10 @@ impl Compiler<'_> {
     fn do_arithmetic_conversion(
         &mut self,
         tp_x: QType,
-        x: ConstantOrIrValue,
+        x: Option<ConstantOrIrValue>,
         tp_y: QType,
-        y: ConstantOrIrValue,
-    ) -> (ConstantOrIrValue, ConstantOrIrValue, QType) {
+        y: Option<ConstantOrIrValue>,
+    ) -> (Option<ConstantOrIrValue>, Option<ConstantOrIrValue>, QType) {
         if !tp_x.is_arithmetic_type() || !tp_y.is_arithmetic_type() {
             panic!(
                 "programming error: do_arithmetic_conversion() only accepts \
@@ -3278,25 +3425,30 @@ impl Compiler<'_> {
             )
         }
 
-        let (tp_x, x) = self.convert_lvalue_and_func_designator(
-            tp_x,
-            Some(x),
-            true,
-            false,
-            false,
-        );
-        let x = x.unwrap();
-        let (tp_y, y) = self.convert_lvalue_and_func_designator(
-            tp_y,
-            Some(y),
-            true,
-            false,
-            false,
-        );
-        let y = y.unwrap();
-
+        let return_none = x.is_none() || y.is_none();
         use ConstantOrIrValue as C;
-        match (&x, &y) {
+        let get_dummy_value = |tp: &QType| match tp.tp {
+            Type::Char => C::I8(0),
+            Type::UnsignedChar => C::U8(0),
+            Type::Short => C::I16(0),
+            Type::UnsignedShort => C::U16(0),
+            Type::Int => C::I32(0),
+            Type::UnsignedInt => C::U32(0),
+            Type::Long => C::I64(0),
+            Type::UnsignedLong => C::U64(0),
+            Type::Float => C::Float(0.0),
+            Type::Double => C::Double(0.0),
+            Type::Enum(_) => unimplemented!(), // TODO: support enum
+            _ => unreachable!(),
+        };
+        let (tp_x, x) = self
+            .convert_lvalue_and_func_designator(tp_x, x, true, false, false);
+        let x = x.unwrap_or_else(|| get_dummy_value(&tp_x));
+        let (tp_y, y) = self
+            .convert_lvalue_and_func_designator(tp_y, y, true, false, false);
+        let y = y.unwrap_or_else(|| get_dummy_value(&tp_y));
+
+        let r = match (&x, &y) {
             (C::IrValue(_, true), _) | (_, C::IrValue(_, true)) => {
                 unreachable!() // convert_lvalue_and_func_designator
             }
@@ -3367,6 +3519,11 @@ impl Compiler<'_> {
                 C::I32(y.as_constant_u64().unwrap() as i32),
                 QType::from(Type::Int),
             ),
+        };
+        if return_none {
+            (None, None, r.2)
+        } else {
+            (Some(r.0), Some(r.1), r.2)
         }
     }
 
