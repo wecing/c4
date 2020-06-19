@@ -1,8 +1,9 @@
 use protobuf::ProtobufEnum;
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::error::Error;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
 use std::mem;
@@ -396,6 +397,9 @@ trait IRBuilder {
     fn create_return_void(&mut self);
 
     fn create_return(&mut self, ir_id: &str);
+
+    // use "-" to print to stdout.
+    fn print_to_file(&mut self, file_name: &str);
 }
 
 struct DummyIRBuilder {}
@@ -492,6 +496,8 @@ impl IRBuilder for DummyIRBuilder {
     fn create_return_void(&mut self) {}
 
     fn create_return(&mut self, _ir_id: &str) {}
+
+    fn print_to_file(&mut self, _file_name: &str) {}
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -1048,6 +1054,22 @@ impl IRBuilder for LLVMBuilderImpl {
             llvm_sys::core::LLVMBuildRet(self.builder, *v);
         }
     }
+
+    fn print_to_file(&mut self, file_name: &str) {
+        let file_name_c = CString::new(file_name).unwrap();
+        unsafe {
+            let mut err_msg_c: *mut i8 = ptr::null_mut();
+            llvm_sys::core::LLVMPrintModuleToFile(
+                self.module,
+                file_name_c.as_ptr(),
+                &mut err_msg_c,
+            );
+            if !err_msg_c.is_null() {
+                let msg = CStr::from_ptr(err_msg_c).to_str().unwrap();
+                panic!("Error returned by LLVM backend: {}", msg);
+            }
+        }
+    }
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -1090,6 +1112,9 @@ impl Compiler<'_> {
                 cc.visit_declaration(ed.get_dl())
             }
         }
+
+        cc.c4ir_builder.print_to_file("-");
+        cc.llvm_builder.print_to_file("-");
     }
 
     fn visit_function_def(&mut self, fd: &ast::FunctionDef) {
@@ -3903,13 +3928,12 @@ impl Compiler<'_> {
 }
 
 fn main() {
-    let mut args = std::env::args();
-    args.next(); // skip program name
+    let input_path: Option<String> = env::args().into_iter().skip(1).next();
 
     let parse =
         |input| ::protobuf::parse_from_reader::<ast::TranslationUnit>(input);
 
-    let protobuf_result = match args.next() {
+    let protobuf_result = match input_path {
         None => parse(&mut io::stdin()),
         Some(p) => parse(&mut File::open(p).unwrap()),
     };
