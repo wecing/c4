@@ -281,7 +281,7 @@ message DirectDeclarator {
   message Array {
     int32 dd_idx = 1; // DirectDeclarator
     Loc dd_loc = 2;
-    int32 size_idx = 3; // optional; Pointer
+    int32 size_idx = 3; // optional; Expr
     Loc size_loc = 4;
   }
   message FuncType {

@@ -5,29 +5,25 @@ load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 git_repository(
     name = "jflex_rules",
     remote = "https://github.com/jflex-de/bazel_rules.git",
-    commit = "9d4239f31104e1311258268ecc5e3cb41f048f6f", # 12/29 2019
-    shallow_since = "1577655108 +0100",
+    commit = "b9a053fa6e461bdd131f0918966afba4f94993c7", # 03/28 2020
 )
 
 git_repository(
     name = "io_bazel_rules_scala",
     remote = "https://github.com/bazelbuild/rules_scala.git",
-    commit = "bd0c388125e12f4f173648fc4474f73160a5c628", # 12/28 2019
-    shallow_since = "1577561321 +0200",
+    commit = "056d5921d2c595e7ce2d54a627e8bc68ece7e28d", # 06/16 2020
 )
 
 git_repository(
     name = "io_bazel_rules_proto",
     remote = "https://github.com/bazelbuild/rules_proto.git",
-    commit = "2c0468366367d7ed97a1f702f9cd7155ab3f73c5", # 12/4 2019
-    shallow_since = "1575470667 +0100",
+    commit = "486aaf1808a15b87f1b6778be6d30a17a87e491a", # 06/03 2020
 )
 
 git_repository(
     name = "bazel_skylib",
     remote = "https://github.com/bazelbuild/bazel-skylib.git",
-    commit = "327d61b5eaa15c11a868a1f7f3f97cdf07d31c58", # 10/30 2019
-    shallow_since = "1572441481 +0100",
+    commit = "3b666f525dfc645eea2bc4832796f8d6a07a997a", # 06/19 2020
 )
 
 load("@io_bazel_rules_scala//scala:toolchains.bzl", "scala_register_toolchains")

@@ -8,7 +8,7 @@ import cats._
 final case class Located[+T](loc: Loc, value: T) {
   def map[P](f: (T => P)): Located[P] = Located(loc, f(value))
 
-  def deLoc: Id[T] = value
+  // def deLoc: Id[T] = value
 }
 
 object Located {
