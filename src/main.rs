@@ -22,10 +22,10 @@ macro_rules! c4_fail {
     ($loc:expr, $msg:expr) => {
         return Err(
             SemanticError {
-                msg: format!($msg),
+                msg: format!("{}", $msg),
                 loc: $loc.clone(),
             }
-        );
+        )
     };
     ($loc:expr, $fmt:expr, $($arg:tt)*) => {
         return Err(
@@ -33,7 +33,7 @@ macro_rules! c4_fail {
                 msg: format!($fmt, $($arg)*),
                 loc: $loc.clone(),
             }
-        );
+        )
     };
 }
 
@@ -110,6 +110,20 @@ impl QType {
         match self.tp {
             Type::Float | Type::Double => true,
             _ => self.is_integral_type(),
+        }
+    }
+
+    fn is_void(&self) -> bool {
+        match self.tp {
+            Type::Void => true,
+            _ => false,
+        }
+    }
+
+    fn is_pointer(&self) -> bool {
+        match self.tp {
+            Type::Pointer(_) => true,
+            _ => false,
         }
     }
 }
@@ -283,6 +297,9 @@ impl Drop for Scope {
 }
 
 struct FuncDefCtx {
+    func_name: String,
+    return_type: QType,
+
     // user-provided label name => basic block name
     basic_blocks: HashMap<String, String>,
     unresolved_labels: HashSet<String>,
@@ -374,6 +391,10 @@ trait IRBuilder {
         left_ir_id: String,
         right_ir_id: String,
     );
+
+    fn create_return_void(&mut self);
+
+    fn create_return(&mut self, ir_id: &str);
 }
 
 struct DummyIRBuilder {}
@@ -466,6 +487,10 @@ impl IRBuilder for DummyIRBuilder {
         _right_ir_id: String,
     ) {
     }
+
+    fn create_return_void(&mut self) {}
+
+    fn create_return(&mut self, _ir_id: &str) {}
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -1009,6 +1034,19 @@ impl IRBuilder for LLVMBuilderImpl {
         };
         self.symbol_table.insert(dst_ir_id, dst);
     }
+
+    fn create_return_void(&mut self) {
+        unsafe {
+            llvm_sys::core::LLVMBuildRetVoid(self.builder);
+        }
+    }
+
+    fn create_return(&mut self, ir_id: &str) {
+        let v = self.symbol_table.get(ir_id).unwrap();
+        unsafe {
+            llvm_sys::core::LLVMBuildRet(self.builder, *v);
+        }
+    }
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -1200,27 +1238,18 @@ impl Compiler<'_> {
         self.c4ir_builder.set_current_basic_block(&entry_bb_id);
         self.llvm_builder.set_current_basic_block(&entry_bb_id);
 
-        fd.get_body()
-            .get_dls()
-            .into_iter()
-            .for_each(|dl| self.visit_declaration(dl));
-        let stmts: Vec<L<&ast::Statement>> = fd
-            .get_body()
-            .get_stmt_idxes()
-            .into_iter()
-            .map(|idx| &self.translation_unit.statements[*idx as usize])
-            .zip(fd.get_body().get_stmt_locs())
-            .collect();
+        let rtp = match &ftp.tp {
+            Type::Function(rtp, _) => *rtp.clone(),
+            _ => unreachable!(),
+        };
         let mut func_def_ctx = FuncDefCtx {
+            func_name: fname,
+            return_type: rtp,
             basic_blocks: HashMap::new(),
             unresolved_labels: HashSet::new(),
         };
-        let err = stmts
-            .into_iter()
-            .map(|stmt| self.visit_stmt(stmt, &mut func_def_ctx))
-            .filter(|r| r.is_err())
-            .next()
-            .unwrap_or_else(|| -> R<()> { Ok(()) });
+
+        let err = self.visit_compound_stmt(fd.get_body(), &mut func_def_ctx);
         if err.is_err() {
             let err = err.unwrap_err();
             panic!("{}: {}", Compiler::format_loc(&err.loc), err.msg)
@@ -2063,10 +2092,127 @@ impl Compiler<'_> {
 
     fn visit_stmt(
         &mut self,
-        _stmt: L<&ast::Statement>,
-        _ctx: &mut FuncDefCtx,
+        stmt: L<&ast::Statement>,
+        ctx: &mut FuncDefCtx,
     ) -> R<()> {
-        unimplemented!() // TODO
+        match stmt.0.stmt.as_ref().unwrap() {
+            ast::Statement_oneof_stmt::compound(compound) => {
+                self.enter_scope();
+                self.visit_compound_stmt(compound, ctx)?;
+                self.leave_scope();
+                Ok(())
+            }
+            ast::Statement_oneof_stmt::return_s(return_s) => {
+                self.visit_return_stmt((return_s, stmt.1), ctx)
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    // caller should handle scopes for visit_compound_stmt().
+    fn visit_compound_stmt(
+        &mut self,
+        compound: &ast::Statement_Compound,
+        ctx: &mut FuncDefCtx,
+    ) -> R<()> {
+        compound
+            .get_dls()
+            .into_iter()
+            .for_each(|dl| self.visit_declaration(dl));
+        let stmts: Vec<L<&ast::Statement>> = compound
+            .get_stmt_idxes()
+            .into_iter()
+            .map(|idx| &self.translation_unit.statements[*idx as usize])
+            .zip(compound.get_stmt_locs())
+            .collect();
+        stmts
+            .into_iter()
+            .map(|s| self.visit_stmt(s, ctx))
+            .filter(|r| r.is_err())
+            .next()
+            .unwrap_or_else(|| -> R<()> { Ok(()) })
+    }
+
+    fn visit_return_stmt(
+        &mut self,
+        return_s: L<&ast::Statement_Return>,
+        ctx: &mut FuncDefCtx,
+    ) -> R<()> {
+        let loc = return_s.1;
+        let return_s = return_s.0;
+
+        let (tp, r) = if return_s.e_idx == 0 {
+            if ctx.return_type.is_void() {
+                self.c4ir_builder.create_return_void();
+                self.llvm_builder.create_return_void();
+                return Ok(());
+            } else if ctx.func_name == "main" {
+                // 3.6.6.4: If a return statement without an expression
+                // is executed, and the value of the function call is
+                // used by the caller, the behavior is undefined.
+                (QType::from(Type::Int), Some(ConstantOrIrValue::I32(0)))
+            } else {
+                c4_fail!(loc, "Return value missing");
+            }
+        } else if ctx.return_type.is_void() {
+            c4_fail!(return_s.get_e_loc(), "Unexpected return value");
+        } else {
+            let e = &self.translation_unit.exprs[return_s.e_idx as usize];
+            self.visit_expr((e, return_s.get_e_loc()), true, true)
+        };
+
+        let (tp, r) =
+            self.convert_lvalue_and_func_designator(tp, r, true, true, true);
+        let r = r.unwrap();
+        let ir_id = match &r {
+            ConstantOrIrValue::IrValue(x, false) => x.clone(),
+            _ => {
+                let ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_constant(ir_id.clone(), &r, &tp);
+                self.llvm_builder.create_constant(ir_id.clone(), &r, &tp);
+                ir_id
+            }
+        };
+        if !tp.is_arithmetic_type() && !tp.is_pointer() {
+            unimplemented!() // TODO: return struct / union
+        }
+
+        // 3.6.6.4: If the expression has a type different from that of
+        // the function in which it appears, it is converted as if it
+        // were assigned to an object of that type.
+        let new_ir_id = self.get_next_ir_id();
+        self.c4ir_builder.create_definition(
+            false,
+            &new_ir_id,
+            &ctx.return_type,
+            Linkage::NONE,
+            &None,
+        );
+        self.llvm_builder.create_definition(
+            false,
+            &new_ir_id,
+            &ctx.return_type,
+            Linkage::NONE,
+            &None,
+        );
+        // T y;
+        // y = x;
+        // return y;
+        self.visit_simple_binary_op(
+            &ctx.return_type,
+            Some(ConstantOrIrValue::IrValue(new_ir_id.clone(), true)),
+            return_s.get_e_loc(),
+            &tp,
+            Some(ConstantOrIrValue::IrValue(ir_id, false)),
+            return_s.get_e_loc(),
+            ast::Expr_Binary_Op::ASSIGN,
+            true,
+            true,
+        );
+
+        self.c4ir_builder.create_return(&new_ir_id);
+        self.llvm_builder.create_return(&new_ir_id);
+        Ok(())
     }
 
     fn get_type(
