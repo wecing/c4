@@ -2243,9 +2243,19 @@ impl Compiler<'_> {
             true,
             true,
         );
-
-        self.c4ir_builder.create_return(&new_ir_id);
-        self.llvm_builder.create_return(&new_ir_id);
+        let ret_ir_id = self.get_next_ir_id();
+        self.c4ir_builder.create_load(
+            ret_ir_id.clone(),
+            new_ir_id.clone(),
+            &ctx.return_type,
+        );
+        self.llvm_builder.create_load(
+            ret_ir_id.clone(),
+            new_ir_id.clone(),
+            &ctx.return_type,
+        );
+        self.c4ir_builder.create_return(&ret_ir_id);
+        self.llvm_builder.create_return(&ret_ir_id);
         Ok(())
     }
 
