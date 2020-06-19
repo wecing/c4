@@ -3,6 +3,7 @@ use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::ffi::CString;
+use std::fs::File;
 use std::io;
 use std::mem;
 use std::ptr;
@@ -1215,7 +1216,15 @@ impl Compiler<'_> {
                 fd.get_d_loc(),
             );
         });
-        let linkage = match self.current_scope.ordinary_ids_ns.get(&fname) {
+        let linkage = match self
+            .current_scope
+            .outer_scope
+            .as_ref() // for Box
+            .as_ref() // for Option
+            .unwrap()
+            .ordinary_ids_ns
+            .get(&fname)
+        {
             Some(OrdinaryIdRef::ObjFnRef(_, _, linkage, _)) => linkage.clone(),
             _ => unreachable!(),
         };
@@ -2606,6 +2615,9 @@ impl Compiler<'_> {
                 self.unwrap_direct_declarator(tp, ft.dd_idx, false)
             }
             DD::ids_list(ids_list) => {
+                if is_function_definition {
+                    self.enter_scope();
+                }
                 let names = FuncParams::Names(ids_list.ids.clone().into_vec());
                 tp = QType::from(Type::Function(Box::new(tp), Some(names)));
                 self.unwrap_direct_declarator(tp, ids_list.dd_idx, false)
@@ -3891,8 +3903,16 @@ impl Compiler<'_> {
 }
 
 fn main() {
-    let protobuf_result =
-        ::protobuf::parse_from_reader::<ast::TranslationUnit>(&mut io::stdin());
+    let mut args = std::env::args();
+    args.next(); // skip program name
+
+    let parse =
+        |input| ::protobuf::parse_from_reader::<ast::TranslationUnit>(input);
+
+    let protobuf_result = match args.next() {
+        None => parse(&mut io::stdin()),
+        Some(p) => parse(&mut File::open(p).unwrap()),
+    };
     let translation_unit = match protobuf_result {
         Ok(tu) => tu,
         Err(e) => panic!(String::from(e.description())),
