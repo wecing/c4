@@ -25,6 +25,14 @@ class SourcePhase7ReaderTest extends FlatSpec with Matchers {
     checkPP("10.c", "10.expect")
   }
 
+  it should "pass our own tests" in {
+    read("42.5") should be (Seq(TokDouble(42.5)))
+    read("42.5e0") should be (Seq(TokDouble(42.5)))
+    read("42.5e1") should be (Seq(TokDouble(425)))
+    read("42.5e+1") should be (Seq(TokDouble(425)))
+    read("42.5e-1") should be (Seq(TokDouble(4.25)))
+  }
+
   // TODO: more Phase7Reader specific tests here?
 
   def checkPP(srcPath: String, expectedPath: String): Unit = {
@@ -78,5 +86,17 @@ class SourcePhase7ReaderTest extends FlatSpec with Matchers {
       case e: IllegalSourceException =>
         fail(s"unexpected IllegalArgumentException: ${e.msg.toString}", e)
     }
+  }
+
+  def read(content: String): Seq[Tok] = {
+    val srcUrl = TestUtil.createTempFile(content + "\n")
+    val srcWarnings: ArrayBuffer[Message] = ArrayBuffer.empty
+    val srcReader = new SourcePhase7Reader(srcWarnings, srcUrl)
+
+    val toks: ArrayBuffer[Tok] = ArrayBuffer.empty
+    while (srcReader.get().map(t => toks += t.value).isDefined) {
+      // loop
+    }
+    toks.toSeq
   }
 }

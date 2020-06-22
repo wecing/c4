@@ -252,7 +252,8 @@ class SourcePhase7Reader(val warnings: ArrayBuffer[Message],
                 // f: "123.3" or ".45" or "34."
                 // e: "e01" or "e+01" or "e-01"
                 // s: one of [flFL]
-                val v = BigDecimal(f) * BigDecimal(2).pow(e.tail.toInt)
+                val eVal = if (e.isEmpty) 0 else e.tail.toInt
+                val v = BigDecimal(f) * BigDecimal(10).pow(eVal)
                 val newTok: Tok = s match {
                   case "" => TokDouble(v.toDouble)
                   case "f" | "F" => TokFloat(v.toFloat)
