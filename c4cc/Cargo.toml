@@ -1,0 +1,12 @@
+[package]
+name = "c4cc"
+version = "0.1.0"
+authors = ["Chenguang Wang <w3cing@gmail.com>"]
+edition = "2018"
+
+[features]
+default = ["llvm-sys"]
+
+[dependencies]
+llvm-sys = { version = "90", optional = true }
+protobuf = "2.10.1"

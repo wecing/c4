@@ -7,3 +7,7 @@ bazel-*
 .ijwb/
 .ensime*
 .metals/
+
+c4cc/target
+**/*.rs.bk
+c4cc/.idea
