@@ -302,6 +302,7 @@ struct SwitchDefCtx {
     ctrl_value_tp: QType,
     case_values: HashSet<u64>,
     default_bb_id: String,
+    default_case_visited: bool,
 }
 
 struct FuncDefCtx {
@@ -310,6 +311,7 @@ struct FuncDefCtx {
 
     // user-provided label name => basic block name
     basic_blocks: HashMap<String, String>,
+    // user-provided label name => first goto usage loc
     unresolved_labels: HashMap<String, ast::Loc>,
 
     switch_stack: Vec<SwitchDefCtx>,
@@ -2188,6 +2190,9 @@ impl Compiler<'_> {
                 self.leave_scope();
                 Ok(())
             }
+            ast::Statement_oneof_stmt::labeled(labeled) => {
+                self.visit_labeled_stmt(labeled, ctx)
+            }
             ast::Statement_oneof_stmt::switch_s(switch_s) => {
                 self.visit_switch_stmt(switch_s, ctx)
             }
@@ -2262,6 +2267,51 @@ impl Compiler<'_> {
             .unwrap_or_else(|| -> R<()> { Ok(()) })
     }
 
+    fn visit_labeled_stmt(
+        &mut self,
+        labeled: &ast::Statement_Labeled,
+        ctx: &mut FuncDefCtx,
+    ) -> R<()> {
+        match labeled.l.clone().unwrap() {
+            ast::Statement_Labeled_oneof_l::id(id) => {
+                let bb_id = match (
+                    ctx.basic_blocks.get(id.get_id()),
+                    ctx.unresolved_labels.get(id.get_id()),
+                ) {
+                    (None, Some(_)) => unreachable!(),
+                    (Some(bb_id), Some(_)) => {
+                        ctx.unresolved_labels.remove(id.get_id());
+                        bb_id.clone()
+                    }
+                    (Some(_), None) => c4_fail!(
+                        id.get_id_loc(),
+                        "Redeclaration of label '{}'",
+                        id.get_id()
+                    ),
+                    (None, None) => {
+                        let bb_id = self.get_next_bb_id();
+                        self.c4ir_builder.create_basic_block(&bb_id);
+                        self.llvm_builder.create_basic_block(&bb_id);
+                        bb_id
+                    }
+                };
+
+                self.c4ir_builder.set_current_basic_block(&bb_id);
+                self.llvm_builder.set_current_basic_block(&bb_id);
+                let stmt =
+                    &self.translation_unit.statements[id.stmt_idx as usize];
+                let stmt = (stmt, id.get_stmt_loc());
+                self.visit_stmt(stmt, ctx)
+            }
+            ast::Statement_Labeled_oneof_l::case_s(case_s) => {
+                unimplemented!() // TODO
+            }
+            ast::Statement_Labeled_oneof_l::default_s(default_s) => {
+                unimplemented!() // TODO
+            }
+        }
+    }
+
     fn visit_switch_stmt(
         &mut self,
         switch_s: &ast::Statement_Switch,
@@ -2299,6 +2349,7 @@ impl Compiler<'_> {
             ctrl_value_tp: tp,
             case_values: HashSet::new(),
             default_bb_id: default_bb.clone(),
+            default_case_visited: false,
         };
 
         ctx.switch_stack.push(switch_def_ctx);
