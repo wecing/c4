@@ -1,4 +1,4 @@
-use protobuf::ProtobufEnum;
+use protobuf::{ProtobufEnum, Message};
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -1632,8 +1632,20 @@ impl Compiler<'_> {
             ast::Expr_oneof_e::func_call(_) => unimplemented!(),
             ast::Expr_oneof_e::dot(_) => unimplemented!(),
             ast::Expr_oneof_e::ptr(_) => unimplemented!(),
-            ast::Expr_oneof_e::sizeof_val(_) => unimplemented!(),
-            ast::Expr_oneof_e::sizeof_tp(_) => unimplemented!(),
+            ast::Expr_oneof_e::sizeof_val(sizeof_val) => {
+                let arg = (
+                    &self.translation_unit.exprs[sizeof_val.e_idx as usize],
+                    sizeof_val.get_e_loc(),
+                );
+                let (tp, _) = self.visit_expr(arg, false, false);
+                let (size, _) = Compiler::get_type_size_and_align_bytes(&tp.tp).unwrap();
+                (QType::from(Type::UnsignedLong), Some(ConstantOrIrValue::U64(size as u64)))
+            }
+            ast::Expr_oneof_e::sizeof_tp(sizeof_tp) => {
+                let tp = self.visit_type_name((sizeof_tp.get_tp(), sizeof_tp.get_tp_loc()));
+                let (size, _) = Compiler::get_type_size_and_align_bytes(&tp.tp).unwrap();
+                (QType::from(Type::UnsignedLong), Some(ConstantOrIrValue::U64(size as u64)))
+            }
             ast::Expr_oneof_e::unary(unary) => {
                 let arg = (
                     &self.translation_unit.exprs[unary.e_idx as usize],
@@ -1716,36 +1728,7 @@ impl Compiler<'_> {
         fold_constant: bool,
         emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
-        let type_specifiers: Vec<L<&ast::TypeSpecifier>> =
-            e.0.get_tp()
-                .get_sp_qls()
-                .into_iter()
-                .flat_map(|spql| match &spql.elem {
-                    Some(ast::TypeName_SpQl_oneof_elem::sp(sp)) => {
-                        Some((sp, spql.get_loc())).into_iter()
-                    }
-                    _ => None.into_iter(),
-                })
-                .collect();
-        let type_qualifiers: Vec<L<ast::TypeQualifier>> =
-            e.0.get_tp()
-                .get_sp_qls()
-                .into_iter()
-                .flat_map(|spql| match &spql.elem {
-                    Some(ast::TypeName_SpQl_oneof_elem::ql(ql)) => {
-                        Some((*ql, spql.get_loc())).into_iter()
-                    }
-                    _ => None.into_iter(),
-                })
-                .collect();
-        let dst_tp = Compiler::qualify_type(
-            &type_qualifiers,
-            self.get_type(&type_specifiers, true),
-        );
-        let dst_tp = self.unwrap_abstract_declarator(
-            dst_tp,
-            (e.0.get_tp().get_ad(), e.0.get_tp().get_ad_loc()),
-        );
+        let dst_tp = self.visit_type_name((e.0.get_tp(), e.0.get_tp_loc()));
 
         let expr = &self.translation_unit.exprs[e.0.e_idx as usize];
         let (src_tp, v) =
@@ -2139,7 +2122,7 @@ impl Compiler<'_> {
             ast::Statement_oneof_stmt::return_s(return_s) => {
                 self.visit_return_stmt((return_s, stmt.1), ctx)
             }
-            _ => unimplemented!(),
+            _ => unimplemented!(), // TODO: implement all statements
         }
     }
 
@@ -2257,6 +2240,43 @@ impl Compiler<'_> {
         self.c4ir_builder.create_return(&ret_ir_id);
         self.llvm_builder.create_return(&ret_ir_id);
         Ok(())
+    }
+
+    fn visit_type_name(&mut self, type_name: L<&ast::TypeName>) -> QType {
+        let type_specifiers: Vec<L<&ast::TypeSpecifier>> =
+            type_name.0
+                .get_sp_qls()
+                .into_iter()
+                .flat_map(|spql| match &spql.elem {
+                    Some(ast::TypeName_SpQl_oneof_elem::sp(sp)) => {
+                        Some((sp, spql.get_loc())).into_iter()
+                    }
+                    _ => None.into_iter(),
+                })
+                .collect();
+        let type_qualifiers: Vec<L<ast::TypeQualifier>> =
+            type_name.0
+                .get_sp_qls()
+                .into_iter()
+                .flat_map(|spql| match &spql.elem {
+                    Some(ast::TypeName_SpQl_oneof_elem::ql(ql)) => {
+                        Some((*ql, spql.get_loc())).into_iter()
+                    }
+                    _ => None.into_iter(),
+                })
+                .collect();
+        let dst_tp = Compiler::qualify_type(
+            &type_qualifiers,
+            self.get_type(&type_specifiers, true),
+        );
+        if type_name.0.get_ad() == ast::AbstractDeclarator::default_instance() {
+            dst_tp
+        } else {
+            self.unwrap_abstract_declarator(
+                dst_tp,
+                (type_name.0.get_ad(), type_name.0.get_ad_loc()),
+            )
+        }
     }
 
     fn get_type(
