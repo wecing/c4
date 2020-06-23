@@ -2694,6 +2694,10 @@ impl Compiler<'_> {
         mut tp: QType,
         dad_idx: i32,
     ) -> QType {
+        if dad_idx == 0 {
+            return tp
+        }
+
         let dad = &self.translation_unit.direct_abstract_declarators
             [dad_idx as usize];
         use ast::DirectAbstractDeclarator_oneof_dad as DAD;
