@@ -1165,7 +1165,7 @@ impl Compiler<'_> {
                     |(decl, decl_loc)| {
                         use ast::StorageClassSpecifier as SCS;
                         let (param_scs, param_base_tp) = self
-                            .visit_declaration_specifiers(decl.get_dss(), true);
+                            .visit_declaration_specifiers(decl.get_dss(), !decl.get_ids().is_empty());
                         let param_is_register =
                             param_scs.map(|(s, _)| s) == Some(SCS::REGISTER);
                         if param_scs.is_some() && !param_is_register {
@@ -1402,13 +1402,10 @@ impl Compiler<'_> {
         }
     }
 
-    // TODO: `size_required` is a bad choice of name. either rename it to
-    //       something like `has_declarator`, or ensure the struct is defined
-    //       in get_su_type().
     fn visit_declaration_specifiers<'a>(
         &mut self,
         dss: &'a [ast::DeclarationSpecifier],
-        size_required: bool,
+        try_ref_su_type: bool, // has declarator or within a cast or sizeof()
     ) -> (Option<L<'a, ast::StorageClassSpecifier>>, QType) {
         let mut storage_class_specifiers: Vec<L<ast::StorageClassSpecifier>> =
             dss.into_iter()
@@ -1438,7 +1435,7 @@ impl Compiler<'_> {
 
         let qualified_type: QType = Compiler::qualify_type(
             &type_qualifiers,
-            self.get_type(&type_specifiers, size_required),
+            self.get_type(&type_specifiers, try_ref_su_type),
         );
 
         (storage_class_specifiers.pop(), qualified_type)
@@ -2282,7 +2279,7 @@ impl Compiler<'_> {
     fn get_type(
         &mut self,
         tss: &Vec<L<&ast::TypeSpecifier>>,
-        size_required: bool,
+        try_ref_su_type: bool,
     ) -> QType {
         let q = QType::from;
         let cases: Vec<&ast::TypeSpecifier_oneof_s> =
@@ -2319,10 +2316,10 @@ impl Compiler<'_> {
             [TS::double(_)] => q(Type::Double),
             [TS::long(_), TS::double(_)] => q(Type::Double),
             [TS::field_struct(s)] => {
-                q(self.get_struct_type((s, tss[0].1), size_required))
+                q(self.get_struct_type((s, tss[0].1), try_ref_su_type))
             }
             [TS::union(u)] => {
-                q(self.get_union_type((u, tss[0].1), size_required))
+                q(self.get_union_type((u, tss[0].1), try_ref_su_type))
             }
             [TS::field_enum(e)] => q(self.get_enum_type((e, tss[0].1))),
             [TS::typedef_name(s)] => self.get_typedef_type((s, tss[0].1)),
@@ -2336,21 +2333,21 @@ impl Compiler<'_> {
     fn get_struct_type(
         &mut self,
         s: L<&ast::TypeSpecifier_Struct>,
-        size_required: bool,
+        try_ref_su_type: bool,
     ) -> Type {
         let name = (s.0.get_name(), s.0.get_name_loc());
         let bodies = s.0.get_bodies().iter().zip(s.0.get_body_locs()).collect();
-        self.get_su_type(name, bodies, size_required, true)
+        self.get_su_type(name, bodies, try_ref_su_type, true)
     }
 
     fn get_union_type(
         &mut self,
         s: L<&ast::TypeSpecifier_Union>,
-        size_required: bool,
+        try_ref_su_type: bool,
     ) -> Type {
         let name = (s.0.get_name(), s.0.get_name_loc());
         let bodies = s.0.get_bodies().iter().zip(s.0.get_body_locs()).collect();
-        self.get_su_type(name, bodies, size_required, false)
+        self.get_su_type(name, bodies, try_ref_su_type, false)
     }
 
     fn get_su_type(
@@ -2358,7 +2355,7 @@ impl Compiler<'_> {
         name: L<&str>,
         // `struct S {}` is illegal syntax
         bodies: Vec<L<&ast::StructDeclaration>>,
-        size_required: bool,
+        try_ref: bool,
         is_struct: bool,
     ) -> Type {
         // this case is invalid:
@@ -2373,7 +2370,7 @@ impl Compiler<'_> {
         // declarator is a reference, instead of declaration... except when
         // there is nothing to refer to. i.e. this case is also valid:
         //      struct S *sp;
-        let try_ref = bodies.is_empty() && size_required;
+        let try_ref = bodies.is_empty() && try_ref;
 
         match self.current_scope.lookup_sue_type(name.0) {
             // sanity checks
@@ -2439,12 +2436,12 @@ impl Compiler<'_> {
             //      struct S {...};
             //      struct S;
             Some((SueType::Struct(su_type), scope))
-                if self.current_scope.same_as(scope) =>
+                if self.current_scope.same_as(scope) && bodies.is_empty() =>
             {
                 Type::Struct(Box::new(*su_type.clone()))
             }
             Some((SueType::Union(su_type), scope))
-                if self.current_scope.same_as(scope) =>
+                if self.current_scope.same_as(scope) && bodies.is_empty() =>
             {
                 Type::Union(Box::new(*su_type.clone()))
             }
