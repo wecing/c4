@@ -1,4 +1,4 @@
-use protobuf::{ProtobufEnum, Message};
+use protobuf::{Message, ProtobufEnum};
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -298,13 +298,23 @@ impl Drop for Scope {
     }
 }
 
+struct SwitchDefCtx {
+    ctrl_value_tp: QType,
+    case_values: HashSet<u64>,
+    default_bb_id: String,
+}
+
 struct FuncDefCtx {
     func_name: String,
     return_type: QType,
 
     // user-provided label name => basic block name
     basic_blocks: HashMap<String, String>,
-    unresolved_labels: HashSet<String>,
+    unresolved_labels: HashMap<String, ast::Loc>,
+
+    switch_stack: Vec<SwitchDefCtx>,
+    break_bb_stack: Vec<String>,
+    continue_bb_stack: Vec<String>,
 }
 
 trait IRBuilder {
@@ -393,6 +403,12 @@ trait IRBuilder {
         left_ir_id: String,
         right_ir_id: String,
     );
+
+    fn enter_switch(&mut self, ir_id: &str, default_bb_id: &str);
+
+    fn leave_switch(&mut self);
+
+    fn create_br(&mut self, bb_id: &str);
 
     fn create_return_void(&mut self);
 
@@ -493,6 +509,12 @@ impl IRBuilder for DummyIRBuilder {
     ) {
     }
 
+    fn enter_switch(&mut self, _ir_id: &str, _default_bb_id: &str) {}
+
+    fn leave_switch(&mut self) {}
+
+    fn create_br(&mut self, _bb_id: &str) {}
+
     fn create_return_void(&mut self) {}
 
     fn create_return(&mut self, _ir_id: &str) {}
@@ -512,6 +534,8 @@ struct LLVMBuilderImpl {
     basic_blocks: HashMap<String, llvm_sys::prelude::LLVMBasicBlockRef>,
     // key: ir_id
     symbol_table: HashMap<String, llvm_sys::prelude::LLVMValueRef>,
+
+    switch_stack: Vec<llvm_sys::prelude::LLVMValueRef>,
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -533,6 +557,7 @@ impl LLVMBuilderImpl {
                 current_function: ptr::null_mut(),
                 basic_blocks: HashMap::new(),
                 symbol_table: HashMap::new(),
+                switch_stack: Vec::new(),
             }
         }
     }
@@ -1042,6 +1067,26 @@ impl IRBuilder for LLVMBuilderImpl {
         self.symbol_table.insert(dst_ir_id, dst);
     }
 
+    fn enter_switch(&mut self, ir_id: &str, default_bb_id: &str) {
+        let v = *self.symbol_table.get(ir_id).unwrap();
+        let default_bb = *self.basic_blocks.get(default_bb_id).unwrap();
+        let switch_inst = unsafe {
+            llvm_sys::core::LLVMBuildSwitch(self.builder, v, default_bb, 10)
+        };
+        self.switch_stack.push(switch_inst);
+    }
+
+    fn leave_switch(&mut self) {
+        self.switch_stack.pop();
+    }
+
+    fn create_br(&mut self, bb_id: &str) {
+        let bb = *self.basic_blocks.get(bb_id).unwrap();
+        unsafe {
+            llvm_sys::core::LLVMBuildBr(self.builder, bb);
+        }
+    }
+
     fn create_return_void(&mut self) {
         unsafe {
             llvm_sys::core::LLVMBuildRetVoid(self.builder);
@@ -1165,7 +1210,10 @@ impl Compiler<'_> {
                     |(decl, decl_loc)| {
                         use ast::StorageClassSpecifier as SCS;
                         let (param_scs, param_base_tp) = self
-                            .visit_declaration_specifiers(decl.get_dss(), !decl.get_ids().is_empty());
+                            .visit_declaration_specifiers(
+                                decl.get_dss(),
+                                !decl.get_ids().is_empty(),
+                            );
                         let param_is_register =
                             param_scs.map(|(s, _)| s) == Some(SCS::REGISTER);
                         if param_scs.is_some() && !param_is_register {
@@ -1280,7 +1328,10 @@ impl Compiler<'_> {
             func_name: fname,
             return_type: rtp,
             basic_blocks: HashMap::new(),
-            unresolved_labels: HashSet::new(),
+            unresolved_labels: HashMap::new(),
+            switch_stack: Vec::new(),
+            break_bb_stack: Vec::new(),
+            continue_bb_stack: Vec::new(),
         };
 
         let err = self.visit_compound_stmt(fd.get_body(), &mut func_def_ctx);
@@ -1288,6 +1339,16 @@ impl Compiler<'_> {
             let err = err.unwrap_err();
             panic!("{}: {}", Compiler::format_loc(&err.loc), err.msg)
         }
+
+        func_def_ctx.unresolved_labels.into_iter().last().map(
+            |(label, loc)| {
+                panic!(
+                    "{}: Label '{}' not declared",
+                    Compiler::format_loc(&loc),
+                    label
+                )
+            },
+        );
 
         self.leave_scope();
     }
@@ -1574,7 +1635,7 @@ impl Compiler<'_> {
                 buf.push(0);
                 let len = buf.len() as u32;
 
-                let ir_id = format!("$.{}", self.get_next_uuid());
+                let ir_id = self.get_next_ir_id();
                 self.global_constants.insert(ir_id.clone(), buf.clone());
 
                 self.c4ir_builder
@@ -1597,7 +1658,7 @@ impl Compiler<'_> {
                 buf.push(0);
                 let len = buf.len() as u32;
 
-                let ir_id = format!("$.{}", self.get_next_uuid());
+                let ir_id = self.get_next_ir_id();
                 self.global_constants.insert(ir_id.clone(), buf.clone());
 
                 self.c4ir_builder
@@ -1635,13 +1696,24 @@ impl Compiler<'_> {
                     sizeof_val.get_e_loc(),
                 );
                 let (tp, _) = self.visit_expr(arg, false, false);
-                let (size, _) = Compiler::get_type_size_and_align_bytes(&tp.tp).unwrap();
-                (QType::from(Type::UnsignedLong), Some(ConstantOrIrValue::U64(size as u64)))
+                let (size, _) =
+                    Compiler::get_type_size_and_align_bytes(&tp.tp).unwrap();
+                (
+                    QType::from(Type::UnsignedLong),
+                    Some(ConstantOrIrValue::U64(size as u64)),
+                )
             }
             ast::Expr_oneof_e::sizeof_tp(sizeof_tp) => {
-                let tp = self.visit_type_name((sizeof_tp.get_tp(), sizeof_tp.get_tp_loc()));
-                let (size, _) = Compiler::get_type_size_and_align_bytes(&tp.tp).unwrap();
-                (QType::from(Type::UnsignedLong), Some(ConstantOrIrValue::U64(size as u64)))
+                let tp = self.visit_type_name((
+                    sizeof_tp.get_tp(),
+                    sizeof_tp.get_tp_loc(),
+                ));
+                let (size, _) =
+                    Compiler::get_type_size_and_align_bytes(&tp.tp).unwrap();
+                (
+                    QType::from(Type::UnsignedLong),
+                    Some(ConstantOrIrValue::U64(size as u64)),
+                )
             }
             ast::Expr_oneof_e::unary(unary) => {
                 let arg = (
@@ -2116,6 +2188,49 @@ impl Compiler<'_> {
                 self.leave_scope();
                 Ok(())
             }
+            ast::Statement_oneof_stmt::switch_s(switch_s) => {
+                self.visit_switch_stmt(switch_s, ctx)
+            }
+            ast::Statement_oneof_stmt::goto_s(goto_s) => {
+                let bb = match ctx.basic_blocks.get(goto_s.get_id()) {
+                    None => {
+                        let bb = self.get_next_bb_id();
+                        self.c4ir_builder.create_basic_block(&bb);
+                        self.llvm_builder.create_basic_block(&bb);
+                        ctx.basic_blocks
+                            .insert(goto_s.get_id().to_string(), bb.clone());
+                        ctx.unresolved_labels.insert(
+                            goto_s.get_id().to_string(),
+                            goto_s.get_id_loc().clone(),
+                        );
+                        bb
+                    }
+                    Some(bb) => bb.clone(),
+                };
+                self.c4ir_builder.create_br(&bb);
+                self.llvm_builder.create_br(&bb);
+                Ok(())
+            }
+            ast::Statement_oneof_stmt::continue_s(_) => {
+                match ctx.continue_bb_stack.last() {
+                    None => c4_fail!(stmt.1, "Illegal continue statement"),
+                    Some(bb_id) => {
+                        self.c4ir_builder.create_br(bb_id);
+                        self.llvm_builder.create_br(bb_id);
+                        Ok(())
+                    }
+                }
+            }
+            ast::Statement_oneof_stmt::break_s(_) => {
+                match ctx.break_bb_stack.last() {
+                    None => c4_fail!(stmt.1, "Illegal break statement"),
+                    Some(bb_id) => {
+                        self.c4ir_builder.create_br(bb_id);
+                        self.llvm_builder.create_br(bb_id);
+                        Ok(())
+                    }
+                }
+            }
             ast::Statement_oneof_stmt::return_s(return_s) => {
                 self.visit_return_stmt((return_s, stmt.1), ctx)
             }
@@ -2145,6 +2260,63 @@ impl Compiler<'_> {
             .filter(|r| r.is_err())
             .next()
             .unwrap_or_else(|| -> R<()> { Ok(()) })
+    }
+
+    fn visit_switch_stmt(
+        &mut self,
+        switch_s: &ast::Statement_Switch,
+        ctx: &mut FuncDefCtx,
+    ) -> R<()> {
+        let default_bb = self.get_next_bb_id();
+        self.c4ir_builder.create_basic_block(&default_bb);
+        self.llvm_builder.create_basic_block(&default_bb);
+        let break_bb = self.get_next_bb_id();
+        self.c4ir_builder.create_basic_block(&break_bb);
+        self.llvm_builder.create_basic_block(&break_bb);
+
+        // at the end of `default_bb`, control flow should fall to `break_bb`
+
+        let e = &self.translation_unit.exprs[switch_s.e_idx as usize];
+        let (tp, v) = self.visit_expr((e, switch_s.get_e_loc()), true, true);
+
+        let (tp, v) =
+            self.convert_lvalue_and_func_designator(tp, v, true, true, true);
+        let v = v.unwrap();
+        let ir_id = match &v {
+            ConstantOrIrValue::IrValue(x, false) => x.clone(),
+            _ => {
+                let ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_constant(ir_id.clone(), &v, &tp);
+                self.llvm_builder.create_constant(ir_id.clone(), &v, &tp);
+                ir_id
+            }
+        };
+        // 3.6.4.2: The integral promotions are performed on the
+        // controlling expression.
+        let (ir_id, tp) = self.do_integral_promotion_ir(ir_id, tp);
+
+        let switch_def_ctx = SwitchDefCtx {
+            ctrl_value_tp: tp,
+            case_values: HashSet::new(),
+            default_bb_id: default_bb.clone(),
+        };
+
+        ctx.switch_stack.push(switch_def_ctx);
+        ctx.break_bb_stack.push(break_bb);
+        self.c4ir_builder.enter_switch(&ir_id, &default_bb);
+        self.llvm_builder.enter_switch(&ir_id, &default_bb);
+
+        let body =
+            &self.translation_unit.statements[switch_s.body_idx as usize];
+        let body = (body, switch_s.get_body_loc());
+        self.visit_stmt(body, ctx)?;
+
+        ctx.switch_stack.pop();
+        ctx.break_bb_stack.pop();
+        self.c4ir_builder.leave_switch();
+        self.llvm_builder.leave_switch();
+
+        Ok(())
     }
 
     fn visit_return_stmt(
@@ -2240,28 +2412,28 @@ impl Compiler<'_> {
     }
 
     fn visit_type_name(&mut self, type_name: L<&ast::TypeName>) -> QType {
-        let type_specifiers: Vec<L<&ast::TypeSpecifier>> =
-            type_name.0
-                .get_sp_qls()
-                .into_iter()
-                .flat_map(|spql| match &spql.elem {
-                    Some(ast::TypeName_SpQl_oneof_elem::sp(sp)) => {
-                        Some((sp, spql.get_loc())).into_iter()
-                    }
-                    _ => None.into_iter(),
-                })
-                .collect();
-        let type_qualifiers: Vec<L<ast::TypeQualifier>> =
-            type_name.0
-                .get_sp_qls()
-                .into_iter()
-                .flat_map(|spql| match &spql.elem {
-                    Some(ast::TypeName_SpQl_oneof_elem::ql(ql)) => {
-                        Some((*ql, spql.get_loc())).into_iter()
-                    }
-                    _ => None.into_iter(),
-                })
-                .collect();
+        let type_specifiers: Vec<L<&ast::TypeSpecifier>> = type_name
+            .0
+            .get_sp_qls()
+            .into_iter()
+            .flat_map(|spql| match &spql.elem {
+                Some(ast::TypeName_SpQl_oneof_elem::sp(sp)) => {
+                    Some((sp, spql.get_loc())).into_iter()
+                }
+                _ => None.into_iter(),
+            })
+            .collect();
+        let type_qualifiers: Vec<L<ast::TypeQualifier>> = type_name
+            .0
+            .get_sp_qls()
+            .into_iter()
+            .flat_map(|spql| match &spql.elem {
+                Some(ast::TypeName_SpQl_oneof_elem::ql(ql)) => {
+                    Some((*ql, spql.get_loc())).into_iter()
+                }
+                _ => None.into_iter(),
+            })
+            .collect();
         let dst_tp = Compiler::qualify_type(
             &type_qualifiers,
             self.get_type(&type_specifiers, true),
@@ -2692,7 +2864,7 @@ impl Compiler<'_> {
         dad_idx: i32,
     ) -> QType {
         if dad_idx == 0 {
-            return tp
+            return tp;
         }
 
         let dad = &self.translation_unit.direct_abstract_declarators
@@ -3955,6 +4127,10 @@ impl Compiler<'_> {
 
     fn get_next_ir_id(&mut self) -> String {
         format!("$.{}", self.get_next_uuid())
+    }
+
+    fn get_next_bb_id(&mut self) -> String {
+        format!("$bb.{}", self.get_next_uuid())
     }
 }
 
