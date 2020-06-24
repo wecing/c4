@@ -406,6 +406,16 @@ trait IRBuilder {
         right_ir_id: String,
     );
 
+    fn create_cmp_op(
+        &mut self,
+        dst_ir_id: String,
+        op: ast::Expr_Binary_Op,
+        is_signed: bool,
+        is_fp: bool,
+        left_ir_id: String,
+        right_ir_id: String,
+    );
+
     fn enter_switch(&mut self, ir_id: &str, default_bb_id: &str);
 
     fn leave_switch(&mut self);
@@ -413,6 +423,13 @@ trait IRBuilder {
     fn add_switch_case(&mut self, c: &ConstantOrIrValue, bb_id: &str);
 
     fn create_br(&mut self, bb_id: &str);
+
+    fn create_cond_br(
+        &mut self,
+        ir_id: &str,
+        then_bb_id: &str,
+        else_bb_id: &str,
+    );
 
     fn create_return_void(&mut self);
 
@@ -513,6 +530,17 @@ impl IRBuilder for DummyIRBuilder {
     ) {
     }
 
+    fn create_cmp_op(
+        &mut self,
+        _dst_ir_id: String,
+        _op: ast::Expr_Binary_Op,
+        _is_signed: bool,
+        _is_fp: bool,
+        _left_ir_id: String,
+        _right_ir_id: String,
+    ) {
+    }
+
     fn enter_switch(&mut self, _ir_id: &str, _default_bb_id: &str) {}
 
     fn leave_switch(&mut self) {}
@@ -520,6 +548,14 @@ impl IRBuilder for DummyIRBuilder {
     fn add_switch_case(&mut self, _c: &ConstantOrIrValue, _bb_id: &str) {}
 
     fn create_br(&mut self, _bb_id: &str) {}
+
+    fn create_cond_br(
+        &mut self,
+        _ir_id: &str,
+        _then_bb_id: &str,
+        _else_bb_id: &str,
+    ) {
+    }
 
     fn create_return_void(&mut self) {}
 
@@ -1073,6 +1109,68 @@ impl IRBuilder for LLVMBuilderImpl {
         self.symbol_table.insert(dst_ir_id, dst);
     }
 
+    fn create_cmp_op(
+        &mut self,
+        dst_ir_id: String,
+        op: ast::Expr_Binary_Op,
+        is_signed: bool,
+        is_fp: bool,
+        left_ir_id: String,
+        right_ir_id: String,
+    ) {
+        let dst_ir_id_c = CString::new(dst_ir_id.clone()).unwrap();
+        let left = *self.symbol_table.get(&left_ir_id).unwrap();
+        let right = *self.symbol_table.get(&right_ir_id).unwrap();
+
+        use ast::Expr_Binary_Op as Op;
+        let dst = if is_fp {
+            use llvm_sys::LLVMRealPredicate as P;
+            let pred = match op {
+                Op::EQ => P::LLVMRealOEQ,
+                Op::NEQ => P::LLVMRealONE,
+                Op::LESS => P::LLVMRealOLT,
+                Op::GT => P::LLVMRealOGT,
+                Op::LEQ => P::LLVMRealOLE,
+                Op::GEQ => P::LLVMRealOGE,
+                _ => unreachable!(),
+            };
+            unsafe {
+                llvm_sys::core::LLVMBuildFCmp(
+                    self.builder,
+                    pred,
+                    left,
+                    right,
+                    dst_ir_id_c.as_ptr(),
+                )
+            }
+        } else {
+            use llvm_sys::LLVMIntPredicate as P;
+            let pred = match op {
+                Op::EQ => P::LLVMIntEQ,
+                Op::NEQ => P::LLVMIntNE,
+                Op::LESS if is_signed => P::LLVMIntSLT,
+                Op::GT if is_signed => P::LLVMIntSGT,
+                Op::LEQ if is_signed => P::LLVMIntSLE,
+                Op::GEQ if is_signed => P::LLVMIntSGE,
+                Op::LESS => P::LLVMIntULT,
+                Op::GT => P::LLVMIntUGT,
+                Op::LEQ => P::LLVMIntULE,
+                Op::GEQ => P::LLVMIntUGE,
+                _ => unreachable!(),
+            };
+            unsafe {
+                llvm_sys::core::LLVMBuildICmp(
+                    self.builder,
+                    pred,
+                    left,
+                    right,
+                    dst_ir_id_c.as_ptr(),
+                )
+            }
+        };
+        self.symbol_table.insert(dst_ir_id, dst);
+    }
+
     fn enter_switch(&mut self, ir_id: &str, default_bb_id: &str) {
         let v = *self.symbol_table.get(ir_id).unwrap();
         let default_bb = *self.basic_blocks.get(default_bb_id).unwrap();
@@ -1099,6 +1197,25 @@ impl IRBuilder for LLVMBuilderImpl {
         let bb = *self.basic_blocks.get(bb_id).unwrap();
         unsafe {
             llvm_sys::core::LLVMBuildBr(self.builder, bb);
+        }
+    }
+
+    fn create_cond_br(
+        &mut self,
+        ir_id: &str,
+        then_bb_id: &str,
+        else_bb_id: &str,
+    ) {
+        let cond = *self.symbol_table.get(ir_id).unwrap();
+        let then_bb = *self.basic_blocks.get(then_bb_id).unwrap();
+        let else_bb = *self.basic_blocks.get(else_bb_id).unwrap();
+        unsafe {
+            llvm_sys::core::LLVMBuildCondBr(
+                self.builder,
+                cond,
+                then_bb,
+                else_bb,
+            );
         }
     }
 
@@ -2214,15 +2331,16 @@ impl Compiler<'_> {
                 }
                 Ok(())
             }
+            ast::Statement_oneof_stmt::if_s(if_s) => {
+                self.visit_if_stmt(if_s, ctx)
+            }
             ast::Statement_oneof_stmt::switch_s(switch_s) => {
                 self.visit_switch_stmt(switch_s, ctx)
             }
             ast::Statement_oneof_stmt::goto_s(goto_s) => {
                 let bb = match ctx.basic_blocks.get(goto_s.get_id()) {
                     None => {
-                        let bb = self.get_next_bb_id();
-                        self.c4ir_builder.create_basic_block(&bb);
-                        self.llvm_builder.create_basic_block(&bb);
+                        let bb = self.create_bb();
                         ctx.basic_blocks
                             .insert(goto_s.get_id().to_string(), bb.clone());
                         ctx.unresolved_labels.insert(
@@ -2309,12 +2427,7 @@ impl Compiler<'_> {
                         "Redeclaration of label '{}'",
                         id.get_id()
                     ),
-                    (None, None) => {
-                        let bb_id = self.get_next_bb_id();
-                        self.c4ir_builder.create_basic_block(&bb_id);
-                        self.llvm_builder.create_basic_block(&bb_id);
-                        bb_id
-                    }
+                    (None, None) => self.create_bb(),
                 };
 
                 self.c4ir_builder.create_br(&bb_id);
@@ -2373,9 +2486,7 @@ impl Compiler<'_> {
                     .last_mut()
                     .map(|s| s.case_values.insert(e_value));
 
-                let bb_id = self.get_next_bb_id();
-                self.c4ir_builder.create_basic_block(&bb_id);
-                self.llvm_builder.create_basic_block(&bb_id);
+                let bb_id = self.create_bb();
                 self.c4ir_builder.create_br(&bb_id);
                 self.llvm_builder.create_br(&bb_id);
                 self.c4ir_builder.set_current_basic_block(&bb_id);
@@ -2416,17 +2527,107 @@ impl Compiler<'_> {
         }
     }
 
+    fn visit_if_stmt(
+        &mut self,
+        if_s: &ast::Statement_If,
+        ctx: &mut FuncDefCtx,
+    ) -> R<()> {
+        let cond = &self.translation_unit.exprs[if_s.cond_idx as usize];
+        let cond = (cond, if_s.get_cond_loc());
+        let (cond_tp, cond) = self.visit_expr(cond, true, true);
+        let (cond_tp, cond) = self.convert_lvalue_and_func_designator(
+            cond_tp, cond, true, true, true,
+        );
+        let cond = self.convert_to_ir_value(&cond_tp, cond.unwrap());
+        let cond_ir_id = match cond {
+            ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+            _ => unreachable!(),
+        };
+        // 3.6.4.1: The controlling expression of an if statement shall have
+        // scalar type.
+        let zero_ir_id = self.get_next_ir_id();
+        if !cond_tp.is_arithmetic_type() && !cond_tp.is_pointer() {
+            c4_fail!(if_s.get_cond_loc(), "Scalar type expected")
+        } else {
+            let zero = ConstantOrIrValue::U64(0);
+            self.c4ir_builder.create_constant(
+                zero_ir_id.clone(),
+                &zero,
+                &cond_tp,
+            );
+            self.llvm_builder.create_constant(
+                zero_ir_id.clone(),
+                &zero,
+                &cond_tp,
+            );
+        }
+        let is_signed = match &cond_tp.tp {
+            Type::UnsignedChar
+            | Type::UnsignedShort
+            | Type::UnsignedInt
+            | Type::UnsignedLong => false,
+            _ => true,
+        };
+        let is_fp = cond_tp.is_arithmetic_type() && !cond_tp.is_integral_type();
+
+        let cmp_ir_id = self.get_next_ir_id();
+        self.c4ir_builder.create_cmp_op(
+            cmp_ir_id.clone(),
+            ast::Expr_Binary_Op::NEQ,
+            is_signed,
+            is_fp,
+            cond_ir_id.clone(),
+            zero_ir_id.clone(),
+        );
+        self.llvm_builder.create_cmp_op(
+            cmp_ir_id.clone(),
+            ast::Expr_Binary_Op::NEQ,
+            is_signed,
+            is_fp,
+            cond_ir_id,
+            zero_ir_id,
+        );
+
+        let then_bb = self.create_bb();
+        let else_bb = self.create_bb();
+        let merge_bb = self.create_bb();
+        self.c4ir_builder
+            .create_cond_br(&cmp_ir_id, &then_bb, &else_bb);
+        self.llvm_builder
+            .create_cond_br(&cmp_ir_id, &then_bb, &else_bb);
+        self.c4ir_builder.set_current_basic_block(&then_bb);
+        self.llvm_builder.set_current_basic_block(&then_bb);
+
+        let then_stmt =
+            &self.translation_unit.statements[if_s.then_idx as usize];
+        let then_stmt = (then_stmt, if_s.get_then_loc());
+        self.visit_stmt(then_stmt, ctx)?;
+        self.c4ir_builder.create_br(&merge_bb);
+        self.llvm_builder.create_br(&merge_bb);
+
+        self.c4ir_builder.set_current_basic_block(&else_bb);
+        self.llvm_builder.set_current_basic_block(&else_bb);
+        if if_s.else_idx != 0 {
+            let else_stmt =
+                &self.translation_unit.statements[if_s.else_idx as usize];
+            let else_stmt = (else_stmt, if_s.get_else_loc());
+            self.visit_stmt(else_stmt, ctx)?;
+        }
+        self.c4ir_builder.create_br(&merge_bb);
+        self.llvm_builder.create_br(&merge_bb);
+
+        self.c4ir_builder.set_current_basic_block(&merge_bb);
+        self.llvm_builder.set_current_basic_block(&merge_bb);
+        Ok(())
+    }
+
     fn visit_switch_stmt(
         &mut self,
         switch_s: &ast::Statement_Switch,
         ctx: &mut FuncDefCtx,
     ) -> R<()> {
-        let default_bb = self.get_next_bb_id();
-        self.c4ir_builder.create_basic_block(&default_bb);
-        self.llvm_builder.create_basic_block(&default_bb);
-        let break_bb = self.get_next_bb_id();
-        self.c4ir_builder.create_basic_block(&break_bb);
-        self.llvm_builder.create_basic_block(&break_bb);
+        let default_bb = self.create_bb();
+        let break_bb = self.create_bb();
 
         let e = &self.translation_unit.exprs[switch_s.e_idx as usize];
         let (tp, v) = self.visit_expr((e, switch_s.get_e_loc()), true, true);
@@ -3890,6 +4091,22 @@ impl Compiler<'_> {
         }
     }
 
+    fn convert_to_ir_value(
+        &mut self,
+        tp: &QType,
+        c: ConstantOrIrValue,
+    ) -> ConstantOrIrValue {
+        match c {
+            ConstantOrIrValue::IrValue(_, _) => c,
+            _ => {
+                let ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_constant(ir_id.clone(), &c, tp);
+                self.llvm_builder.create_constant(ir_id.clone(), &c, tp);
+                ConstantOrIrValue::IrValue(ir_id, false)
+            }
+        }
+    }
+
     fn get_bitmask_size(&mut self, e: L<&ast::Expr>) -> u8 {
         let sz = self.get_array_size(e);
         if sz > 32 {
@@ -4327,8 +4544,11 @@ impl Compiler<'_> {
         format!("$.{}", self.get_next_uuid())
     }
 
-    fn get_next_bb_id(&mut self) -> String {
-        format!("$bb.{}", self.get_next_uuid())
+    fn create_bb(&mut self) -> String {
+        let bb_id = format!("$bb.{}", self.get_next_uuid());
+        self.c4ir_builder.create_basic_block(&bb_id);
+        self.llvm_builder.create_basic_block(&bb_id);
+        bb_id
     }
 }
 
