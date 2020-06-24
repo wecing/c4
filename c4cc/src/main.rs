@@ -2534,59 +2534,7 @@ impl Compiler<'_> {
     ) -> R<()> {
         let cond = &self.translation_unit.exprs[if_s.cond_idx as usize];
         let cond = (cond, if_s.get_cond_loc());
-        let (cond_tp, cond) = self.visit_expr(cond, true, true);
-        let (cond_tp, cond) = self.convert_lvalue_and_func_designator(
-            cond_tp, cond, true, true, true,
-        );
-        let cond = self.convert_to_ir_value(&cond_tp, cond.unwrap());
-        let cond_ir_id = match cond {
-            ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
-            _ => unreachable!(),
-        };
-        // 3.6.4.1: The controlling expression of an if statement shall have
-        // scalar type.
-        let zero_ir_id = self.get_next_ir_id();
-        if !cond_tp.is_arithmetic_type() && !cond_tp.is_pointer() {
-            c4_fail!(if_s.get_cond_loc(), "Scalar type expected")
-        } else {
-            let zero = ConstantOrIrValue::U64(0);
-            self.c4ir_builder.create_constant(
-                zero_ir_id.clone(),
-                &zero,
-                &cond_tp,
-            );
-            self.llvm_builder.create_constant(
-                zero_ir_id.clone(),
-                &zero,
-                &cond_tp,
-            );
-        }
-        let is_signed = match &cond_tp.tp {
-            Type::UnsignedChar
-            | Type::UnsignedShort
-            | Type::UnsignedInt
-            | Type::UnsignedLong => false,
-            _ => true,
-        };
-        let is_fp = cond_tp.is_arithmetic_type() && !cond_tp.is_integral_type();
-
-        let cmp_ir_id = self.get_next_ir_id();
-        self.c4ir_builder.create_cmp_op(
-            cmp_ir_id.clone(),
-            ast::Expr_Binary_Op::NEQ,
-            is_signed,
-            is_fp,
-            cond_ir_id.clone(),
-            zero_ir_id.clone(),
-        );
-        self.llvm_builder.create_cmp_op(
-            cmp_ir_id.clone(),
-            ast::Expr_Binary_Op::NEQ,
-            is_signed,
-            is_fp,
-            cond_ir_id,
-            zero_ir_id,
-        );
+        let cmp_ir_id = self.visit_cond_expr(cond)?;
 
         let then_bb = self.create_bb();
         let else_bb = self.create_bb();
@@ -2768,6 +2716,68 @@ impl Compiler<'_> {
         self.c4ir_builder.create_return(&ret_ir_id);
         self.llvm_builder.create_return(&ret_ir_id);
         Ok(())
+    }
+
+    // could be applied to the control expression of `if`, (`do`) `while`,
+    // `for`, `?:`, and all operands of `&&` and `||`.
+    //
+    // returns ir_id of bool.
+    fn visit_cond_expr(&mut self, cond: L<&ast::Expr>) -> R<String> {
+        let cond_loc = cond.1;
+        let (cond_tp, cond) = self.visit_expr(cond, true, true);
+        let (cond_tp, cond) = self.convert_lvalue_and_func_designator(
+            cond_tp, cond, true, true, true,
+        );
+        let cond = self.convert_to_ir_value(&cond_tp, cond.unwrap());
+        let cond_ir_id = match cond {
+            ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+            _ => unreachable!(),
+        };
+        // 3.6.4.1, 3.6.5, and 3.3.15 require the cond expression to have scalar
+        // type. 3.3.13 and 3.3.14 require both operands to have scalar type.
+        let zero_ir_id = self.get_next_ir_id();
+        if !cond_tp.is_arithmetic_type() && !cond_tp.is_pointer() {
+            c4_fail!(cond_loc, "Scalar type expected")
+        } else {
+            let zero = ConstantOrIrValue::U64(0);
+            self.c4ir_builder.create_constant(
+                zero_ir_id.clone(),
+                &zero,
+                &cond_tp,
+            );
+            self.llvm_builder.create_constant(
+                zero_ir_id.clone(),
+                &zero,
+                &cond_tp,
+            );
+        }
+        let is_signed = match &cond_tp.tp {
+            Type::UnsignedChar
+            | Type::UnsignedShort
+            | Type::UnsignedInt
+            | Type::UnsignedLong => false,
+            _ => true,
+        };
+        let is_fp = cond_tp.is_arithmetic_type() && !cond_tp.is_integral_type();
+
+        let cmp_ir_id = self.get_next_ir_id();
+        self.c4ir_builder.create_cmp_op(
+            cmp_ir_id.clone(),
+            ast::Expr_Binary_Op::NEQ,
+            is_signed,
+            is_fp,
+            cond_ir_id.clone(),
+            zero_ir_id.clone(),
+        );
+        self.llvm_builder.create_cmp_op(
+            cmp_ir_id.clone(),
+            ast::Expr_Binary_Op::NEQ,
+            is_signed,
+            is_fp,
+            cond_ir_id,
+            zero_ir_id,
+        );
+        Ok(cmp_ir_id)
     }
 
     fn visit_type_name(&mut self, type_name: L<&ast::TypeName>) -> QType {
