@@ -2677,7 +2677,38 @@ impl Compiler<'_> {
         do_while_s: &ast::Statement_DoWhile,
         ctx: &mut FuncDefCtx,
     ) -> R<()> {
-        unimplemented!() // TODO
+        let body_bb = self.create_bb();
+        let cond_bb = self.create_bb();
+        let break_bb = self.create_bb();
+        self.c4ir_builder.create_br(&body_bb);
+        self.c4ir_builder.create_br(&body_bb);
+
+        self.c4ir_builder.set_current_basic_block(&body_bb);
+        self.llvm_builder.set_current_basic_block(&body_bb);
+        ctx.break_bb_stack.push(break_bb.clone());
+        ctx.continue_bb_stack.push(cond_bb.clone());
+        let body =
+            &self.translation_unit.statements[do_while_s.body_idx as usize];
+        let body = (body, do_while_s.get_body_loc());
+        self.visit_stmt(body, ctx)?;
+        self.c4ir_builder.create_br(&cond_bb);
+        self.llvm_builder.create_br(&cond_bb);
+
+        self.c4ir_builder.set_current_basic_block(&cond_bb);
+        self.llvm_builder.set_current_basic_block(&cond_bb);
+        ctx.break_bb_stack.pop();
+        ctx.continue_bb_stack.pop();
+        let cond = &self.translation_unit.exprs[do_while_s.e_idx as usize];
+        let cond = (cond, do_while_s.get_e_loc());
+        let cond_ir_id = self.visit_cond_expr(cond)?;
+        self.c4ir_builder
+            .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
+        self.llvm_builder
+            .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
+
+        self.c4ir_builder.set_current_basic_block(&break_bb);
+        self.llvm_builder.set_current_basic_block(&break_bb);
+        Ok(())
     }
 
     fn visit_for_stmt(
