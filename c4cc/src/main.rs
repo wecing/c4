@@ -2337,6 +2337,15 @@ impl Compiler<'_> {
             ast::Statement_oneof_stmt::switch_s(switch_s) => {
                 self.visit_switch_stmt(switch_s, ctx)
             }
+            ast::Statement_oneof_stmt::while_s(while_s) => {
+                self.visit_while_stmt(while_s, ctx)
+            }
+            ast::Statement_oneof_stmt::do_while_s(do_while_s) => {
+                self.visit_do_while_stmt(do_while_s, ctx)
+            }
+            ast::Statement_oneof_stmt::for_s(for_s) => {
+                self.visit_for_stmt(for_s, ctx)
+            }
             ast::Statement_oneof_stmt::goto_s(goto_s) => {
                 let bb = match ctx.basic_blocks.get(goto_s.get_id()) {
                     None => {
@@ -2378,7 +2387,6 @@ impl Compiler<'_> {
             ast::Statement_oneof_stmt::return_s(return_s) => {
                 self.visit_return_stmt((return_s, stmt.1), ctx)
             }
-            _ => unimplemented!(), // TODO: implement all statements
         }
     }
 
@@ -2543,9 +2551,9 @@ impl Compiler<'_> {
             .create_cond_br(&cmp_ir_id, &then_bb, &else_bb);
         self.llvm_builder
             .create_cond_br(&cmp_ir_id, &then_bb, &else_bb);
+
         self.c4ir_builder.set_current_basic_block(&then_bb);
         self.llvm_builder.set_current_basic_block(&then_bb);
-
         let then_stmt =
             &self.translation_unit.statements[if_s.then_idx as usize];
         let then_stmt = (then_stmt, if_s.get_then_loc());
@@ -2624,6 +2632,60 @@ impl Compiler<'_> {
         self.llvm_builder.leave_switch();
 
         Ok(())
+    }
+
+    fn visit_while_stmt(
+        &mut self,
+        while_s: &ast::Statement_While,
+        ctx: &mut FuncDefCtx,
+    ) -> R<()> {
+        let cond_bb = self.create_bb();
+        let body_bb = self.create_bb();
+        let break_bb = self.create_bb();
+        self.c4ir_builder.create_br(&cond_bb);
+        self.llvm_builder.create_br(&cond_bb);
+
+        self.c4ir_builder.set_current_basic_block(&cond_bb);
+        self.llvm_builder.set_current_basic_block(&cond_bb);
+        let cond = &self.translation_unit.exprs[while_s.e_idx as usize];
+        let cond = (cond, while_s.get_e_loc());
+        let cond_ir_id = self.visit_cond_expr(cond)?;
+        self.c4ir_builder
+            .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
+        self.llvm_builder
+            .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
+
+        self.c4ir_builder.set_current_basic_block(&body_bb);
+        self.llvm_builder.set_current_basic_block(&body_bb);
+        ctx.break_bb_stack.push(break_bb.clone());
+        ctx.continue_bb_stack.push(cond_bb.clone());
+        let body = &self.translation_unit.statements[while_s.body_idx as usize];
+        let body = (body, while_s.get_body_loc());
+        self.visit_stmt(body, ctx)?;
+        self.c4ir_builder.create_br(&cond_bb);
+        self.llvm_builder.create_br(&cond_bb);
+
+        self.c4ir_builder.set_current_basic_block(&break_bb);
+        self.llvm_builder.set_current_basic_block(&break_bb);
+        ctx.break_bb_stack.pop();
+        ctx.continue_bb_stack.pop();
+        Ok(())
+    }
+
+    fn visit_do_while_stmt(
+        &mut self,
+        do_while_s: &ast::Statement_DoWhile,
+        ctx: &mut FuncDefCtx,
+    ) -> R<()> {
+        unimplemented!() // TODO
+    }
+
+    fn visit_for_stmt(
+        &mut self,
+        for_s: &ast::Statement_For,
+        ctx: &mut FuncDefCtx,
+    ) -> R<()> {
+        unimplemented!() // TODO
     }
 
     fn visit_return_stmt(
