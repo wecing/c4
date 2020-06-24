@@ -1586,7 +1586,7 @@ impl Compiler<'_> {
                         unimplemented!() // TODO: support enums
                     }
                     Some((OrdinaryIdRef::ObjFnRef(ir_id, tp, _, _), _)) => {
-                        if fold_constant {
+                        if !emit_ir {
                             (tp.clone(), None) // not a constant expr
                         } else {
                             let v =
@@ -2366,6 +2366,8 @@ impl Compiler<'_> {
                 let bb_id = self.get_next_bb_id();
                 self.c4ir_builder.create_basic_block(&bb_id);
                 self.llvm_builder.create_basic_block(&bb_id);
+                self.c4ir_builder.create_br(&bb_id);
+                self.llvm_builder.create_br(&bb_id);
                 self.c4ir_builder.set_current_basic_block(&bb_id);
                 self.llvm_builder.set_current_basic_block(&bb_id);
                 self.c4ir_builder.add_switch_case(&e, &bb_id);
@@ -2414,8 +2416,6 @@ impl Compiler<'_> {
         self.c4ir_builder.create_basic_block(&break_bb);
         self.llvm_builder.create_basic_block(&break_bb);
 
-        // at the end of `default_bb`, control flow should fall to `break_bb`
-
         let e = &self.translation_unit.exprs[switch_s.e_idx as usize];
         let (tp, v) = self.visit_expr((e, switch_s.get_e_loc()), true, true);
 
@@ -2443,7 +2443,7 @@ impl Compiler<'_> {
         };
 
         ctx.switch_stack.push(switch_def_ctx);
-        ctx.break_bb_stack.push(break_bb);
+        ctx.break_bb_stack.push(break_bb.clone());
         self.c4ir_builder.enter_switch(&ir_id, &default_bb);
         self.llvm_builder.enter_switch(&ir_id, &default_bb);
 
@@ -2451,6 +2451,11 @@ impl Compiler<'_> {
             &self.translation_unit.statements[switch_s.body_idx as usize];
         let body = (body, switch_s.get_body_loc());
         self.visit_stmt(body, ctx)?;
+
+        self.c4ir_builder.create_br(&break_bb);
+        self.llvm_builder.create_br(&break_bb);
+        self.c4ir_builder.set_current_basic_block(&break_bb);
+        self.llvm_builder.set_current_basic_block(&break_bb);
 
         ctx.switch_stack.pop();
         ctx.break_bb_stack.pop();
