@@ -2173,6 +2173,8 @@ impl Compiler<'_> {
                     loc_right,
                     true,
                 );
+                let right =
+                    right.map(|c| self.convert_to_ir_value(&tp_left, c));
                 // now store `right` to `left`
                 let dst_ir_id = match left {
                     Some(ConstantOrIrValue::IrValue(ir_id, true)) => ir_id,
@@ -2716,7 +2718,59 @@ impl Compiler<'_> {
         for_s: &ast::Statement_For,
         ctx: &mut FuncDefCtx,
     ) -> R<()> {
-        unimplemented!() // TODO
+        if for_s.e1_idx != 0 {
+            let init = &self.translation_unit.exprs[for_s.e1_idx as usize];
+            let init = (init, for_s.get_e1_loc());
+            self.visit_expr(init, true, true);
+        }
+
+        let cond_bb = self.create_bb();
+        let body_bb = self.create_bb();
+        let incr_bb = self.create_bb();
+        let break_bb = self.create_bb();
+        self.c4ir_builder.create_br(&cond_bb);
+        self.llvm_builder.create_br(&cond_bb);
+
+        self.c4ir_builder.set_current_basic_block(&cond_bb);
+        self.llvm_builder.set_current_basic_block(&cond_bb);
+        if for_s.e2_idx != 0 {
+            let cond = &self.translation_unit.exprs[for_s.e2_idx as usize];
+            let cond = (cond, for_s.get_e2_loc());
+            let cond_ir_id = self.visit_cond_expr(cond)?;
+            self.c4ir_builder
+                .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
+            self.llvm_builder
+                .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
+        } else {
+            self.c4ir_builder.create_br(&body_bb);
+            self.llvm_builder.create_br(&body_bb);
+        }
+
+        self.c4ir_builder.set_current_basic_block(&body_bb);
+        self.llvm_builder.set_current_basic_block(&body_bb);
+        ctx.break_bb_stack.push(break_bb.clone());
+        ctx.continue_bb_stack.push(incr_bb.clone());
+        let body = &self.translation_unit.statements[for_s.body_idx as usize];
+        let body = (body, for_s.get_body_loc());
+        self.visit_stmt(body, ctx)?;
+        ctx.break_bb_stack.pop();
+        ctx.continue_bb_stack.pop();
+        self.c4ir_builder.create_br(&incr_bb);
+        self.llvm_builder.create_br(&incr_bb);
+
+        self.c4ir_builder.set_current_basic_block(&incr_bb);
+        self.llvm_builder.set_current_basic_block(&incr_bb);
+        if for_s.e3_idx != 0 {
+            let incr = &self.translation_unit.exprs[for_s.e3_idx as usize];
+            let incr = (incr, for_s.get_e3_loc());
+            self.visit_expr(incr, true, true);
+        }
+        self.c4ir_builder.create_br(&cond_bb);
+        self.llvm_builder.create_br(&cond_bb);
+
+        self.c4ir_builder.set_current_basic_block(&break_bb);
+        self.llvm_builder.set_current_basic_block(&break_bb);
+        Ok(())
     }
 
     fn visit_return_stmt(
