@@ -410,6 +410,8 @@ trait IRBuilder {
 
     fn leave_switch(&mut self);
 
+    fn add_switch_case(&mut self, c: &ConstantOrIrValue, bb_id: &str);
+
     fn create_br(&mut self, bb_id: &str);
 
     fn create_return_void(&mut self);
@@ -514,6 +516,8 @@ impl IRBuilder for DummyIRBuilder {
     fn enter_switch(&mut self, _ir_id: &str, _default_bb_id: &str) {}
 
     fn leave_switch(&mut self) {}
+
+    fn add_switch_case(&mut self, _c: &ConstantOrIrValue, _bb_id: &str) {}
 
     fn create_br(&mut self, _bb_id: &str) {}
 
@@ -1080,6 +1084,15 @@ impl IRBuilder for LLVMBuilderImpl {
 
     fn leave_switch(&mut self) {
         self.switch_stack.pop();
+    }
+
+    fn add_switch_case(&mut self, c: &ConstantOrIrValue, bb_id: &str) {
+        let inst = *self.switch_stack.last().unwrap();
+        let (value, _) = self.get_llvm_constant(c);
+        let bb = *self.basic_blocks.get(bb_id).unwrap();
+        unsafe {
+            llvm_sys::core::LLVMAddCase(inst, value, bb);
+        }
     }
 
     fn create_br(&mut self, bb_id: &str) {
@@ -2304,10 +2317,87 @@ impl Compiler<'_> {
                 self.visit_stmt(stmt, ctx)
             }
             ast::Statement_Labeled_oneof_l::case_s(case_s) => {
-                unimplemented!() // TODO
+                // 3.6.4.2: The expression of each case label shall be an
+                // integral constant expression... The constant expression in
+                // each case label is converted to the promoted type of the
+                // controlling expression.
+                let switch_ctx = match ctx.switch_stack.last() {
+                    None => c4_fail!(
+                        case_s.get_e_loc(),
+                        "Case labels must be within switch statements"
+                    ),
+                    Some(s) => s,
+                };
+                let e = &self.translation_unit.exprs[case_s.e_idx as usize];
+                let e = (e, case_s.get_e_loc());
+                let (e_tp, e) = self.visit_expr(e, true, false);
+                let (e_tp, e) = self.cast_expression(
+                    e_tp,
+                    e,
+                    switch_ctx.ctrl_value_tp.clone(),
+                    case_s.get_e_loc(),
+                    false,
+                );
+                let e = match e {
+                    None => c4_fail!(
+                        case_s.get_e_loc(),
+                        "Expression does not evaluate to a constant"
+                    ),
+                    Some(c) => c,
+                };
+                if !e_tp.is_integral_type() {
+                    c4_fail!(
+                        case_s.get_e_loc(),
+                        "Case labels must be integral values"
+                    )
+                }
+                let e_value = e.as_constant_u64().unwrap();
+                if switch_ctx.case_values.contains(&e_value) {
+                    c4_fail!(
+                        case_s.get_e_loc(),
+                        "Duplicate case label {}",
+                        e_value
+                    )
+                }
+                ctx.switch_stack
+                    .last_mut()
+                    .map(|s| s.case_values.insert(e_value));
+
+                let bb_id = self.get_next_bb_id();
+                self.c4ir_builder.create_basic_block(&bb_id);
+                self.llvm_builder.create_basic_block(&bb_id);
+                self.c4ir_builder.set_current_basic_block(&bb_id);
+                self.llvm_builder.set_current_basic_block(&bb_id);
+                self.c4ir_builder.add_switch_case(&e, &bb_id);
+                self.llvm_builder.add_switch_case(&e, &bb_id);
+
+                let stmt =
+                    &self.translation_unit.statements[case_s.stmt_idx as usize];
+                let stmt = (stmt, case_s.get_stmt_loc());
+                self.visit_stmt(stmt, ctx)
             }
             ast::Statement_Labeled_oneof_l::default_s(default_s) => {
-                unimplemented!() // TODO
+                let bb_id = match ctx.switch_stack.last() {
+                    None => c4_fail!(
+                        default_s.get_stmt_loc(),
+                        "Default cases must be within switch statements"
+                    ),
+                    Some(s) if s.default_case_visited => c4_fail!(
+                        default_s.get_stmt_loc(),
+                        "Duplicate default case"
+                    ),
+                    Some(s) => s.default_bb_id.clone(),
+                };
+                ctx.switch_stack
+                    .last_mut()
+                    .map(|s| s.default_case_visited = true);
+                self.c4ir_builder.set_current_basic_block(&bb_id);
+                self.llvm_builder.set_current_basic_block(&bb_id);
+
+                let stmt = &self.translation_unit.statements
+                    [default_s.stmt_idx as usize];
+                let stmt = (stmt, default_s.get_stmt_loc());
+                self.visit_stmt(stmt, ctx)
             }
         }
     }
