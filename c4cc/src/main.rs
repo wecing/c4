@@ -2206,6 +2206,14 @@ impl Compiler<'_> {
             ast::Statement_oneof_stmt::labeled(labeled) => {
                 self.visit_labeled_stmt(labeled, ctx)
             }
+            ast::Statement_oneof_stmt::expr(expr) => {
+                if expr.e_idx != 0 {
+                    let e = &self.translation_unit.exprs[expr.e_idx as usize];
+                    let e = (e, expr.get_e_loc());
+                    self.visit_expr(e, true, true);
+                }
+                Ok(())
+            }
             ast::Statement_oneof_stmt::switch_s(switch_s) => {
                 self.visit_switch_stmt(switch_s, ctx)
             }
@@ -2395,6 +2403,8 @@ impl Compiler<'_> {
                 ctx.switch_stack
                     .last_mut()
                     .map(|s| s.default_case_visited = true);
+                self.c4ir_builder.create_br(&bb_id);
+                self.llvm_builder.create_br(&bb_id);
                 self.c4ir_builder.set_current_basic_block(&bb_id);
                 self.llvm_builder.set_current_basic_block(&bb_id);
 
@@ -3997,6 +4007,46 @@ impl Compiler<'_> {
                 let new_x = C::IrValue(new_ir_id_x, false);
                 let new_y = C::IrValue(new_ir_id_y, false);
                 (new_x, new_y, new_tp)
+            }
+            (C::IrValue(_, _), _) => {
+                let new_ir_id_y = self.get_next_ir_id();
+                self.c4ir_builder.create_constant(
+                    new_ir_id_y.clone(),
+                    &y,
+                    &tp_y,
+                );
+                self.llvm_builder.create_constant(
+                    new_ir_id_y.clone(),
+                    &y,
+                    &tp_y,
+                );
+                let (new_x, new_y, new_tp) = self.do_arithmetic_conversion(
+                    tp_x,
+                    Some(x),
+                    tp_y,
+                    Some(C::IrValue(new_ir_id_y, false)),
+                );
+                (new_x.unwrap(), new_y.unwrap(), new_tp)
+            }
+            (_, C::IrValue(_, _)) => {
+                let new_ir_id_x = self.get_next_ir_id();
+                self.c4ir_builder.create_constant(
+                    new_ir_id_x.clone(),
+                    &x,
+                    &tp_x,
+                );
+                self.llvm_builder.create_constant(
+                    new_ir_id_x.clone(),
+                    &x,
+                    &tp_x,
+                );
+                let (new_x, new_y, new_tp) = self.do_arithmetic_conversion(
+                    tp_x,
+                    Some(C::IrValue(new_ir_id_x, false)),
+                    tp_y,
+                    Some(y),
+                );
+                (new_x.unwrap(), new_y.unwrap(), new_tp)
             }
             (C::Double(_), _) => (
                 x,
