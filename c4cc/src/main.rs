@@ -2309,6 +2309,8 @@ impl Compiler<'_> {
                     }
                 };
 
+                self.c4ir_builder.create_br(&bb_id);
+                self.llvm_builder.create_br(&bb_id);
                 self.c4ir_builder.set_current_basic_block(&bb_id);
                 self.llvm_builder.set_current_basic_block(&bb_id);
                 let stmt =
