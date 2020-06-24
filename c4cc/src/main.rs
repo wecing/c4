@@ -55,10 +55,7 @@ enum Type {
     // LongDouble,
     Struct(Box<SuType>),
     Union(Box<SuType>),
-
-    #[allow(dead_code)]
-    Enum(Box<EnumType>),
-
+    // Enum => Int
     Pointer(Box<QType>),
     Array(Box<QType>, Option<u32>),
     Function(Box<QType>, Option<FuncParams>),
@@ -103,7 +100,6 @@ impl QType {
             | Type::UnsignedInt
             | Type::Long
             | Type::UnsignedLong => true,
-            Type::Enum(_) => true, // TODO: support enum
             _ => false,
         }
     }
@@ -143,9 +139,6 @@ struct SuType {
     uuid: u32, // identical su types in different scopes are different types
 }
 
-#[derive(Debug, Clone)]
-struct EnumType {}
-
 #[derive(Debug)] // no copy, no clone
 struct Scope {
     outer_scope: Box<Option<Scope>>,
@@ -157,9 +150,7 @@ struct Scope {
 enum SueType {
     Struct(Box<SuType>),
     Union(Box<SuType>),
-
-    #[allow(dead_code)]
-    Enum(Box<EnumType>),
+    Enum(bool, u32), // is_defined, uuid
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -172,9 +163,9 @@ enum Linkage {
 #[derive(Debug, Clone)]
 enum OrdinaryIdRef {
     TypedefRef(Box<QType>),
-
-    #[allow(dead_code)]
-    EnumRef(Box<EnumType>),
+    // 3.5.2.2: The identifiers in an enumerator list are declared as constants
+    // that have type int and may appear wherever such are permitted.
+    EnumRef(i32), // value
 
     // ObjFnRef(ir_id, tp, linkage, is_defined)
     // since it's a lvalue, the IR id refers to a pointer to `tp`.
@@ -187,7 +178,7 @@ enum ConstantOrIrValue {
     U8(u8),      // UnsignedChar
     I16(i16),    // Short
     U16(u16),    // UnsignedShort
-    I32(i32),    // Int // TODO: enum?
+    I32(i32),    // Int
     U32(u32),    // UnsignedInt
     I64(i64),    // Long
     U64(u64),    // UnsignedLong, Pointer(_)
@@ -635,9 +626,6 @@ impl LLVMBuilderImpl {
                         self.module,
                         type_name.as_ptr(),
                     )
-                }
-                Type::Enum(_) => {
-                    llvm_sys::core::LLVMInt32TypeInContext(self.context)
                 }
                 Type::Pointer(tp) => llvm_sys::core::LLVMPointerType(
                     self.get_llvm_type(&tp.tp),
@@ -1598,7 +1586,7 @@ impl Compiler<'_> {
     fn visit_declaration_specifiers<'a>(
         &mut self,
         dss: &'a [ast::DeclarationSpecifier],
-        try_ref_su_type: bool, // has declarator or within a cast or sizeof()
+        try_ref_sue_type: bool, // has declarator or within a cast or sizeof()
     ) -> (Option<L<'a, ast::StorageClassSpecifier>>, QType) {
         let mut storage_class_specifiers: Vec<L<ast::StorageClassSpecifier>> =
             dss.into_iter()
@@ -1628,7 +1616,7 @@ impl Compiler<'_> {
 
         let qualified_type: QType = Compiler::qualify_type(
             &type_qualifiers,
-            self.get_type(&type_specifiers, try_ref_su_type),
+            self.get_type(&type_specifiers, try_ref_sue_type),
         );
 
         (storage_class_specifiers.pop(), qualified_type)
@@ -1699,9 +1687,10 @@ impl Compiler<'_> {
                         Compiler::format_loc(e.1),
                         id
                     ),
-                    Some((OrdinaryIdRef::EnumRef(_), _)) => {
-                        unimplemented!() // TODO: support enums
-                    }
+                    Some((OrdinaryIdRef::EnumRef(value), _)) => (
+                        QType::from(Type::Int),
+                        Some(ConstantOrIrValue::I32(*value)),
+                    ),
                     Some((OrdinaryIdRef::ObjFnRef(ir_id, tp, _, _), _)) => {
                         if !emit_ir {
                             (tp.clone(), None) // not a constant expr
@@ -2967,7 +2956,7 @@ impl Compiler<'_> {
     fn get_type(
         &mut self,
         tss: &Vec<L<&ast::TypeSpecifier>>,
-        try_ref_su_type: bool,
+        try_ref_sue_type: bool,
     ) -> QType {
         let q = QType::from;
         let cases: Vec<&ast::TypeSpecifier_oneof_s> =
@@ -3004,12 +2993,14 @@ impl Compiler<'_> {
             [TS::double(_)] => q(Type::Double),
             [TS::long(_), TS::double(_)] => q(Type::Double),
             [TS::field_struct(s)] => {
-                q(self.get_struct_type((s, tss[0].1), try_ref_su_type))
+                q(self.get_struct_type((s, tss[0].1), try_ref_sue_type))
             }
             [TS::union(u)] => {
-                q(self.get_union_type((u, tss[0].1), try_ref_su_type))
+                q(self.get_union_type((u, tss[0].1), try_ref_sue_type))
             }
-            [TS::field_enum(e)] => q(self.get_enum_type((e, tss[0].1))),
+            [TS::field_enum(e)] => {
+                q(self.get_enum_type((e, tss[0].1), try_ref_sue_type))
+            }
             [TS::typedef_name(s)] => self.get_typedef_type((s, tss[0].1)),
             _ => panic!(
                 "{}: Illegal type specifiers list",
@@ -3021,21 +3012,21 @@ impl Compiler<'_> {
     fn get_struct_type(
         &mut self,
         s: L<&ast::TypeSpecifier_Struct>,
-        try_ref_su_type: bool,
+        try_ref: bool,
     ) -> Type {
         let name = (s.0.get_name(), s.0.get_name_loc());
         let bodies = s.0.get_bodies().iter().zip(s.0.get_body_locs()).collect();
-        self.get_su_type(name, bodies, try_ref_su_type, true)
+        self.get_su_type(name, bodies, try_ref, true)
     }
 
     fn get_union_type(
         &mut self,
         s: L<&ast::TypeSpecifier_Union>,
-        try_ref_su_type: bool,
+        try_ref: bool,
     ) -> Type {
         let name = (s.0.get_name(), s.0.get_name_loc());
         let bodies = s.0.get_bodies().iter().zip(s.0.get_body_locs()).collect();
-        self.get_su_type(name, bodies, try_ref_su_type, false)
+        self.get_su_type(name, bodies, try_ref, false)
     }
 
     fn get_su_type(
@@ -3110,7 +3101,7 @@ impl Compiler<'_> {
                     name.0
                 )
             }
-            Some((SueType::Enum(_), scope))
+            Some((SueType::Enum(_, _), scope))
                 if self.current_scope.same_as(scope) =>
             {
                 panic!(
@@ -3123,6 +3114,8 @@ impl Compiler<'_> {
             // type reference - another special case:
             //      struct S {...};
             //      struct S;
+            // (which is really just a def which does not conflict with / modify
+            // previous defs in the same scope)
             Some((SueType::Struct(su_type), scope))
                 if self.current_scope.same_as(scope) && bodies.is_empty() =>
             {
@@ -3193,8 +3186,137 @@ impl Compiler<'_> {
         }
     }
 
-    fn get_enum_type(&mut self, _s: L<&ast::TypeSpecifier_Enum>) -> Type {
-        unimplemented!() // TODO: implement enum
+    fn get_enum_type(
+        &mut self,
+        s: L<&ast::TypeSpecifier_Enum>,
+        try_ref: bool,
+    ) -> Type {
+        let uuid = self.get_next_uuid();
+        let tag_name = if s.0.name.is_empty() {
+            format!("$.{}", uuid)
+        } else {
+            s.0.name.clone()
+        };
+        // parser sanity check
+        if s.0.name.is_empty() && s.0.get_bodies().is_empty() {
+            panic!(
+                "{}: enum tag and body cannot both be empty",
+                Compiler::format_loc(s.1)
+            );
+        }
+
+        let try_ref = s.0.get_bodies().is_empty() && try_ref;
+
+        match self.current_scope.lookup_sue_type(&tag_name) {
+            Some(_) if s.0.name.is_empty() => unreachable!(),
+
+            // type ref
+            // 3.5.2.2: Each enumerated type shall be compatible with an integer
+            // type; the choice of type is implementation-defined.
+            Some((SueType::Enum(_, _), _)) if try_ref => Type::Int,
+            Some(_) if try_ref => panic!(
+                "{}: '{}' defined as wrong kind of tag",
+                Compiler::format_loc(s.1),
+                s.0.name
+            ),
+
+            // redef errors
+            Some((SueType::Enum(is_defined, _), scope))
+                if *is_defined
+                    && !s.0.get_bodies().is_empty()
+                    && self.current_scope.same_as(scope) =>
+            {
+                panic!(
+                    "{}: Redefinition of enum '{}'",
+                    Compiler::format_loc(s.1),
+                    tag_name
+                )
+            }
+            Some((SueType::Struct(_), scope))
+            | Some((SueType::Union(_), scope))
+                if self.current_scope.same_as(scope) =>
+            {
+                panic!(
+                    "{}: Redefinition of tag '{}'",
+                    Compiler::format_loc(s.1),
+                    tag_name
+                )
+            }
+
+            // type ref
+            Some((SueType::Enum(_, _), scope))
+                if self.current_scope.same_as(scope)
+                    && s.0.get_bodies().is_empty() =>
+            {
+                Type::Int
+            }
+
+            // type def
+            _ => {
+                self.current_scope.sue_tag_names_ns.insert(
+                    tag_name.clone(),
+                    SueType::Enum(!s.0.get_bodies().is_empty(), uuid),
+                );
+                let mut next_body_value = 0;
+                s.0.get_bodies().into_iter().for_each(|body| {
+                    let name = body.get_name();
+                    if name.is_empty() {
+                        panic!()
+                    }
+                    let value = if body.value != 0 {
+                        let e =
+                            &self.translation_unit.exprs[body.value as usize];
+                        let e = (e, body.get_value_loc());
+                        let (tp, e) = self.visit_expr(e, true, true);
+                        let e = e.unwrap();
+                        if !tp.is_integral_type() {
+                            panic!(
+                                "{}: Integral expression expected",
+                                Compiler::format_loc(body.get_value_loc())
+                            )
+                        }
+                        match e.as_constant_u64() {
+                            None => panic!(
+                                "{}: Constant expression expected",
+                                Compiler::format_loc(body.get_value_loc())
+                            ),
+                            Some(v) => {
+                                let v = v as i64;
+                                if v < -2147483648_i64 || v > 2147483647_i64 {
+                                    panic!(
+                                        "{}: Enumerator value out of bound",
+                                        Compiler::format_loc(
+                                            body.get_value_loc()
+                                        )
+                                    )
+                                }
+                                next_body_value = v as i32 + 1;
+                                v as i32
+                            }
+                        }
+                    } else {
+                        let r = next_body_value;
+                        next_body_value += 1;
+                        r
+                    };
+
+                    match self.current_scope.ordinary_ids_ns.get(name) {
+                        None => {
+                            self.current_scope.ordinary_ids_ns.insert(
+                                name.to_string(),
+                                OrdinaryIdRef::EnumRef(value),
+                            );
+                        }
+                        Some(_) => panic!(
+                            "{}: Redefinition of identifier '{}'",
+                            Compiler::format_loc(body.get_name_loc()),
+                            name
+                        ),
+                    }
+                });
+                Type::Int
+            }
+        }
     }
 
     fn get_typedef_type(&mut self, id: L<&str>) -> QType {
@@ -3717,7 +3839,6 @@ impl Compiler<'_> {
             ),
 
             (_, None, _) => (dst_tp, None),
-            (Type::Enum(_), _, _) | (_, _, Type::Enum(_)) => unimplemented!(),
 
             (Type::Pointer(_), _, Type::Pointer(_)) => (dst_tp, v),
 
@@ -3868,9 +3989,6 @@ impl Compiler<'_> {
                     (Some(_), None) => old.tp.clone(),
                     _ => new.tp.clone(),
                 }
-            }
-            (Type::Enum(_tp_left), Type::Enum(_tp_right)) => {
-                unimplemented!() // TODO: implement enum
             }
             (Type::Pointer(tp_left), Type::Pointer(tp_right)) => Type::Pointer(
                 Box::new(Compiler::get_composite_type(tp_left, tp_right, loc)),
@@ -4078,7 +4196,6 @@ impl Compiler<'_> {
                 let sz = Compiler::align_up(sz, align);
                 Some((sz, align))
             }),
-            Type::Enum(_) => unimplemented!(),
             Type::Pointer(_) => Some((8, 8)),
             Type::Array(elem, elem_cnt_opt) => elem_cnt_opt.map(|elem_cnt| {
                 // elem type completeness is checked in
@@ -4298,7 +4415,6 @@ impl Compiler<'_> {
             | Type::Function(_, _) => {
                 panic!("{}: Illegal expression type", Compiler::format_loc(e.1))
             }
-            Type::Enum(_) => unimplemented!(), // TODO: support enums
             _ => (),
         }
         use ConstantOrIrValue as C;
@@ -4356,7 +4472,6 @@ impl Compiler<'_> {
             Type::UnsignedLong => C::U64(0),
             Type::Float => C::Float(0.0),
             Type::Double => C::Double(0.0),
-            Type::Enum(_) => unimplemented!(), // TODO: support enum
             _ => unreachable!(),
         };
         let (tp_x, x) = self
@@ -4523,9 +4638,6 @@ impl Compiler<'_> {
         };
 
         match (&tp_x.tp, &tp_y.tp) {
-            (Type::Enum(_), _) | (_, Type::Enum(_)) => {
-                unimplemented!() // TODO: support enum
-            }
             // 3.2.1.5: First, if either operand has type long double, the other
             // operand is converted to long double. Otherwise, if either operand
             // has type double, the other operand is converted to double.
@@ -4644,7 +4756,6 @@ impl Compiler<'_> {
             )
         }
         match &tp.tp {
-            Type::Enum(_) => unimplemented!(), // TODO: support enums
             Type::Char
             | Type::UnsignedChar
             | Type::Short
