@@ -1807,10 +1807,37 @@ impl Compiler<'_> {
                 fold_constant,
                 emit_ir,
             ),
-            // TODO: implement all expressions
-            ast::Expr_oneof_e::func_call(_) => unimplemented!(),
-            ast::Expr_oneof_e::dot(_) => unimplemented!(),
-            ast::Expr_oneof_e::ptr(_) => unimplemented!(),
+            ast::Expr_oneof_e::func_call(func_call) => {
+                self.visit_func_call_expr(func_call).unwrap_or_else(|err| {
+                    panic!("{}: {}", Compiler::format_loc(&err.loc), err.msg)
+                })
+            }
+            ast::Expr_oneof_e::dot(dot) => {
+                let left = &self.translation_unit.exprs[dot.e_idx as usize];
+                let left = (left, dot.get_e_loc());
+                let field = (dot.get_field(), dot.get_field_loc());
+                self.visit_member_access_expr(left, field, true)
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "{}: {}",
+                            Compiler::format_loc(&err.loc),
+                            err.msg
+                        )
+                    })
+            }
+            ast::Expr_oneof_e::ptr(ptr) => {
+                let left = &self.translation_unit.exprs[ptr.e_idx as usize];
+                let left = (left, ptr.get_e_loc());
+                let field = (ptr.get_field(), ptr.get_field_loc());
+                self.visit_member_access_expr(left, field, false)
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "{}: {}",
+                            Compiler::format_loc(&err.loc),
+                            err.msg
+                        )
+                    })
+            }
             ast::Expr_oneof_e::sizeof_val(sizeof_val) => {
                 let arg = (
                     &self.translation_unit.exprs[sizeof_val.e_idx as usize],
@@ -2022,6 +2049,22 @@ impl Compiler<'_> {
         (elem_tp, r)
     }
 
+    fn visit_func_call_expr(
+        &mut self,
+        _func_call: &ast::Expr_FuncCall,
+    ) -> R<(QType, Option<ConstantOrIrValue>)> {
+        unimplemented!() // TODO: func call expr
+    }
+
+    fn visit_member_access_expr(
+        &mut self,
+        _left: L<&ast::Expr>,
+        _field: L<&str>,
+        _is_dot: bool,
+    ) -> R<(QType, Option<ConstantOrIrValue>)> {
+        unimplemented!() // TODO: member access expr
+    }
+
     fn visit_unary_op(
         &mut self,
         _tp: &QType,
@@ -2031,7 +2074,7 @@ impl Compiler<'_> {
         _fold_constant: bool,
         _emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
-        unimplemented!() // TODO
+        unimplemented!() // TODO: unary ops
     }
 
     // binary ops except && and ||, which perform short-circuit evaluation
@@ -2272,7 +2315,7 @@ impl Compiler<'_> {
                     (tp, Some(c))
                 }
             }
-            _ => unimplemented!(), // TODO
+            _ => unimplemented!(), // TODO: other binary ops
         }
     }
 
@@ -2285,7 +2328,7 @@ impl Compiler<'_> {
         _fold_constant: bool,
         _emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
-        unimplemented!() // TODO
+        unimplemented!() // TODO: && and ||
     }
 
     fn visit_ternary_op(
@@ -2296,7 +2339,7 @@ impl Compiler<'_> {
         _fold_constant: bool,
         _emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
-        unimplemented!() // TODO
+        unimplemented!() // TODO: ternary op
     }
 
     fn visit_stmt(
