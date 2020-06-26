@@ -1,4 +1,5 @@
 use protobuf::{Message, ProtobufEnum};
+use std::borrow::Borrow;
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -123,6 +124,14 @@ impl QType {
             Type::Pointer(_) => true,
             _ => false,
         }
+    }
+
+    fn char_ptr_tp() -> QType {
+        QType::ptr_tp(QType::from(Type::Char))
+    }
+
+    fn ptr_tp(tp: QType) -> QType {
+        QType::from(Type::Pointer(Box::new(tp)))
     }
 }
 
@@ -407,6 +416,13 @@ trait IRBuilder {
         right_ir_id: String,
     );
 
+    fn create_ptr_add(
+        &mut self,
+        dst_ir_id: &str,    // returns i8*
+        ptr_ir_id: &str,    // must be i8*
+        offset_ir_id: &str, // must be i64
+    );
+
     fn enter_switch(&mut self, ir_id: &str, default_bb_id: &str);
 
     fn leave_switch(&mut self);
@@ -529,6 +545,14 @@ impl IRBuilder for DummyIRBuilder {
         _is_fp: bool,
         _left_ir_id: String,
         _right_ir_id: String,
+    ) {
+    }
+
+    fn create_ptr_add(
+        &mut self,
+        _dst_ir_id: &str,
+        _ptr_ir_id: &str,
+        _offset_ir_id: &str,
     ) {
     }
 
@@ -1157,6 +1181,27 @@ impl IRBuilder for LLVMBuilderImpl {
             }
         };
         self.symbol_table.insert(dst_ir_id, dst);
+    }
+
+    fn create_ptr_add(
+        &mut self,
+        dst_ir_id: &str,
+        ptr_ir_id: &str,
+        offset_ir_id: &str,
+    ) {
+        let dst_ir_id_c = CString::new(dst_ir_id.clone()).unwrap();
+        let ptr = *self.symbol_table.get(ptr_ir_id).unwrap();
+        let mut offset = *self.symbol_table.get(offset_ir_id).unwrap();
+        let dst = unsafe {
+            llvm_sys::core::LLVMBuildGEP(
+                self.builder,
+                ptr,
+                &mut offset,
+                1,
+                dst_ir_id_c.as_ptr(),
+            )
+        };
+        self.symbol_table.insert(dst_ir_id.to_string(), dst);
     }
 
     fn enter_switch(&mut self, ir_id: &str, default_bb_id: &str) {
@@ -1807,36 +1852,40 @@ impl Compiler<'_> {
                 fold_constant,
                 emit_ir,
             ),
-            ast::Expr_oneof_e::func_call(func_call) => {
-                self.visit_func_call_expr(func_call).unwrap_or_else(|err| {
+            ast::Expr_oneof_e::func_call(func_call) => self
+                .visit_func_call_expr(func_call, fold_constant, emit_ir)
+                .unwrap_or_else(|err| {
                     panic!("{}: {}", Compiler::format_loc(&err.loc), err.msg)
-                })
-            }
+                }),
             ast::Expr_oneof_e::dot(dot) => {
                 let left = &self.translation_unit.exprs[dot.e_idx as usize];
                 let left = (left, dot.get_e_loc());
                 let field = (dot.get_field(), dot.get_field_loc());
-                self.visit_member_access_expr(left, field, true)
-                    .unwrap_or_else(|err| {
-                        panic!(
-                            "{}: {}",
-                            Compiler::format_loc(&err.loc),
-                            err.msg
-                        )
-                    })
+                self.visit_member_access_expr(
+                    left,
+                    field,
+                    true,
+                    fold_constant,
+                    emit_ir,
+                )
+                .unwrap_or_else(|err| {
+                    panic!("{}: {}", Compiler::format_loc(&err.loc), err.msg)
+                })
             }
             ast::Expr_oneof_e::ptr(ptr) => {
                 let left = &self.translation_unit.exprs[ptr.e_idx as usize];
                 let left = (left, ptr.get_e_loc());
                 let field = (ptr.get_field(), ptr.get_field_loc());
-                self.visit_member_access_expr(left, field, false)
-                    .unwrap_or_else(|err| {
-                        panic!(
-                            "{}: {}",
-                            Compiler::format_loc(&err.loc),
-                            err.msg
-                        )
-                    })
+                self.visit_member_access_expr(
+                    left,
+                    field,
+                    false,
+                    fold_constant,
+                    emit_ir,
+                )
+                .unwrap_or_else(|err| {
+                    panic!("{}: {}", Compiler::format_loc(&err.loc), err.msg)
+                })
             }
             ast::Expr_oneof_e::sizeof_val(sizeof_val) => {
                 let arg = (
@@ -2052,17 +2101,200 @@ impl Compiler<'_> {
     fn visit_func_call_expr(
         &mut self,
         _func_call: &ast::Expr_FuncCall,
+        _fold_constant: bool,
+        _emit_ir: bool,
     ) -> R<(QType, Option<ConstantOrIrValue>)> {
         unimplemented!() // TODO: func call expr
     }
 
     fn visit_member_access_expr(
         &mut self,
-        _left: L<&ast::Expr>,
-        _field: L<&str>,
-        _is_dot: bool,
+        left: L<&ast::Expr>,
+        field: L<&str>,
+        is_dot: bool,
+        fold_constant: bool,
+        emit_ir: bool,
     ) -> R<(QType, Option<ConstantOrIrValue>)> {
-        unimplemented!() // TODO: member access expr
+        let left_loc = left.1;
+        let (left_tp, left) = self.visit_expr(left, fold_constant, emit_ir);
+        let (left_tp, left) = self.convert_lvalue_and_func_designator(
+            left_tp, left, !is_dot, true, true,
+        );
+        let mut is_const = left_tp.is_const;
+        let mut is_volatile = left_tp.is_volatile;
+        let su_type_is_struct: (&SuType, bool) = match &left_tp.tp {
+            Type::Struct(su_type) if is_dot => (su_type.borrow(), true),
+            Type::Union(su_type) if is_dot => (su_type.borrow(), false),
+            _ if is_dot => c4_fail!(left_loc, "Struct or union expected"),
+
+            Type::Pointer(tp) => {
+                is_const = tp.is_const;
+                is_volatile = tp.is_volatile;
+                match &tp.tp {
+                    Type::Struct(su_type) => (su_type.borrow(), true),
+                    Type::Union(su_type) => (su_type.borrow(), false),
+                    _ => c4_fail!(
+                        left_loc,
+                        "Pointer to struct or union expected"
+                    ),
+                }
+            }
+            _ => c4_fail!(left_loc, "Pointer to struct or union expected"),
+        };
+        let (su_type, is_struct) = su_type_is_struct;
+
+        let fields = match &su_type.fields {
+            None => c4_fail!(
+                left_loc,
+                "Expression has incomplete struct/union type"
+            ),
+            Some(fields) => fields,
+        };
+        // This assumes `field` does not have a bit mask. Things would be more
+        // complicated if otherwise.
+        let (offset, field_tp) = {
+            let prev_fields: Vec<SuField> = fields
+                .into_iter()
+                .take_while(|f| f.name != Some(field.0.to_string()))
+                .map(|f| f.clone())
+                .collect();
+            if prev_fields.len() >= fields.len() {
+                c4_fail!(field.1, "Field '{}' not found", field.0)
+            }
+            let field_tp = &fields[prev_fields.len()].tp;
+            if fields[prev_fields.len()].bit_field_size.is_some() {
+                unimplemented!() // TODO: support bit masks (breaks assumptions)
+            }
+            if is_struct {
+                let (offset, _) = if prev_fields.is_empty() {
+                    (0, 0)
+                } else {
+                    Compiler::get_type_size_and_align_bytes(&Type::Struct(
+                        Box::new(SuType {
+                            fields: Some(prev_fields),
+                            uuid: 0, // unused
+                        }),
+                    ))
+                    .unwrap()
+                };
+                let (_, align) =
+                    Compiler::get_type_size_and_align_bytes(&field_tp.tp)
+                        .unwrap();
+                (Compiler::align_up(offset, align), field_tp)
+            } else {
+                (0, field_tp)
+            }
+        };
+
+        let rtp = QType {
+            is_const,
+            is_volatile,
+            tp: field_tp.tp.clone(),
+        };
+        let r = if left.is_none() || !emit_ir {
+            // looks like even clang does not support constant folding here
+            None
+        } else {
+            let left = self.convert_to_ir_value(&left_tp, left.unwrap());
+            let (ir_value, is_lvalue) = match left {
+                ConstantOrIrValue::IrValue(ir_value, is_lvalue) => {
+                    (ir_value, is_lvalue)
+                }
+                _ => unreachable!(),
+            };
+            if is_lvalue && !is_dot {
+                unreachable!() // convert_lvalue_and_func_designator
+            }
+            // now ir_value is pointer to struct/union head
+
+            let char_ptr_tp = QType::char_ptr_tp();
+            let field_ptr_tp = QType::ptr_tp(rtp.clone());
+
+            let field_ptr_ir_id = {
+                // (char *) ir_value
+                let head_ptr = self.get_next_ir_id();
+                self.c4ir_builder.create_cast(
+                    head_ptr.clone(),
+                    &char_ptr_tp,
+                    ir_value.clone(),
+                    &field_ptr_tp,
+                );
+                self.llvm_builder.create_cast(
+                    head_ptr.clone(),
+                    &char_ptr_tp,
+                    ir_value.clone(),
+                    &field_ptr_tp,
+                );
+
+                // offset: i64
+                let offset = ConstantOrIrValue::I64(offset as i64);
+                let offset =
+                    self.convert_to_ir_value(&QType::from(Type::Long), offset);
+                let offset = match offset {
+                    ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+                    _ => unreachable!(),
+                };
+
+                // (char *) ir_value + offset
+                let field_char_ptr = self.get_next_ir_id();
+                self.c4ir_builder.create_ptr_add(
+                    &field_char_ptr,
+                    &head_ptr,
+                    &offset,
+                );
+                self.llvm_builder.create_ptr_add(
+                    &field_char_ptr,
+                    &head_ptr,
+                    &offset,
+                );
+
+                // (T *) ((char *) ir_value + offset)
+                let field_ptr = self.get_next_ir_id();
+                self.c4ir_builder.create_cast(
+                    field_ptr.clone(),
+                    &field_ptr_tp,
+                    field_char_ptr.clone(),
+                    &char_ptr_tp,
+                );
+                self.llvm_builder.create_cast(
+                    field_ptr.clone(),
+                    &field_ptr_tp,
+                    field_char_ptr.clone(),
+                    &char_ptr_tp,
+                );
+
+                field_ptr
+            };
+
+            if is_dot && !is_lvalue {
+                // 3.3.2.3: (for dot) a member of a structure or union object...
+                // is an lvalue if the first expression is an lvalue.
+                // 3.3.2.3: (for ->) The value... is an lvalue.
+                //
+                // * (T *) ((char *) ir_value + offset)
+                let ir_id = match &rtp.tp {
+                    Type::Struct(_) | Type::Union(_) => field_ptr_ir_id,
+                    _ => {
+                        let derefed = self.get_next_ir_id();
+                        self.c4ir_builder.create_load(
+                            derefed.clone(),
+                            field_ptr_ir_id.clone(),
+                            &field_ptr_tp,
+                        );
+                        self.llvm_builder.create_load(
+                            derefed.clone(),
+                            field_ptr_ir_id.clone(),
+                            &field_ptr_tp,
+                        );
+                        derefed
+                    }
+                };
+                Some(ConstantOrIrValue::IrValue(ir_id, true))
+            } else {
+                Some(ConstantOrIrValue::IrValue(field_ptr_ir_id, true))
+            }
+        };
+        Ok((rtp, r))
     }
 
     fn visit_unary_op(
@@ -4415,6 +4647,11 @@ impl Compiler<'_> {
     ) -> ConstantOrIrValue {
         match c {
             ConstantOrIrValue::IrValue(_, _) => c,
+            ConstantOrIrValue::Address(_, _) => {
+                // This could return lvalue ir values, which breaks a few
+                // assumptions in the code
+                unimplemented!() // TODO: string literals and struct init
+            }
             _ => {
                 let ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_constant(ir_id.clone(), &c, tp);
