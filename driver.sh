@@ -3,10 +3,11 @@
 set -e
 
 if [ `uname` = 'Linux' ]; then
-  export LLVM_SYS_100_PREFIX=$(llvmenv prefix)
+  # `sudo apt install llvm`
   export C4_TARGET_ARCH=k8
 else
-  export LLVM_SYS_100_PREFIX="$HOME/.local/share/llvmenv_fake/llvm-local"
+  # `brew install llvm` (keg-only is fine)
+  export LLVM_SYS_100_PREFIX="/usr/local/opt/llvm"
   export C4_TARGET_ARCH=darwin
 fi
 
