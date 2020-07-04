@@ -3,7 +3,6 @@ use std::borrow::Borrow;
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
@@ -5112,7 +5111,7 @@ fn main() {
     };
     let translation_unit = match protobuf_result {
         Ok(tu) => tu,
-        Err(e) => panic!(String::from(e.description())),
+        Err(e) => panic!(e.to_string()),
     };
     Compiler::visit(translation_unit);
 }
