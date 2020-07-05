@@ -125,6 +125,20 @@ impl QType {
         }
     }
 
+    fn is_array(&self) -> bool {
+        match self.tp {
+            Type::Array(_, _) => true,
+            _ => false,
+        }
+    }
+
+    fn is_function(&self) -> bool {
+        match self.tp {
+            Type::Function(_, _) => true,
+            _ => false,
+        }
+    }
+
     fn char_ptr_tp() -> QType {
         QType::ptr_tp(QType::from(Type::Char))
     }
@@ -1353,8 +1367,7 @@ impl Compiler<'_> {
                     }
                 });
                 if !fd.get_dls().is_empty() {
-                    let msg =
-                        "Function declaration lists shall not be used \
+                    let msg = "Function declaration lists shall not be used \
                          when parameters are typed in function declarator";
                     panic!("{}: {}", Compiler::format_loc(fd.get_d_loc()), msg)
                 }
@@ -2099,10 +2112,27 @@ impl Compiler<'_> {
 
     fn visit_func_call_expr(
         &mut self,
-        _func_call: &ast::Expr_FuncCall,
-        _fold_constant: bool,
-        _emit_ir: bool,
+        func_call: &ast::Expr_FuncCall,
+        fold_constant: bool,
+        emit_ir: bool,
     ) -> R<(QType, Option<ConstantOrIrValue>)> {
+        let func = &self.translation_unit.exprs[func_call.fn_idx as usize];
+        let func = (func, func_call.get_fn_loc());
+        // Implicit function declarations are allowed in C89 but not C99.
+        let (func_tp, func) = self.visit_expr(func, fold_constant, emit_ir);
+        let rtp = match &func_tp.tp {
+            Type::Function(rtp, _) => *rtp.clone(),
+            _ => unreachable!(),
+        };
+        match &rtp.tp {
+            Type::Struct(_) | Type::Union(_) => {
+                unimplemented!() // TODO: return struct / union
+            }
+            _ => (),
+        };
+        let (func_ptr_tp, func) = self.convert_lvalue_and_func_designator(
+            func_tp, func, true, true, true,
+        );
         unimplemented!() // TODO: func call expr
     }
 
@@ -3741,6 +3771,14 @@ impl Compiler<'_> {
                 self.unwrap_direct_declarator(tp, array.dd_idx, false)
             }
             DD::ft(ft) => {
+                if tp.is_function() || tp.is_array() {
+                    // 3.5.4.3: A function declarator shall not specify a return
+                    // type that is a function type or an array type.
+                    panic!(
+                        "{}: Function cannot return function or array",
+                        Compiler::format_loc(ft.get_dd_loc())
+                    )
+                }
                 let pds = ft.get_pds().iter().zip(ft.get_pd_locs()).collect();
                 let func_params_opt = self.get_typed_func_params(
                     pds,
@@ -3751,6 +3789,14 @@ impl Compiler<'_> {
                 self.unwrap_direct_declarator(tp, ft.dd_idx, false)
             }
             DD::ids_list(ids_list) => {
+                if tp.is_function() || tp.is_array() {
+                    // 3.5.4.3: A function declarator shall not specify a return
+                    // type that is a function type or an array type.
+                    panic!(
+                        "{}: Function cannot return function or array",
+                        Compiler::format_loc(ids_list.get_dd_loc())
+                    )
+                }
                 if is_function_definition {
                     self.enter_scope();
                 }
@@ -3807,6 +3853,14 @@ impl Compiler<'_> {
                 self.unwrap_direct_abstract_declarator(tp, array.dad_idx)
             }
             DAD::func(func) => {
+                if tp.is_function() || tp.is_array() {
+                    // 3.5.4.3: A function declarator shall not specify a return
+                    // type that is a function type or an array type.
+                    panic!(
+                        "{}: Function cannot return function or array",
+                        Compiler::format_loc(func.get_dad_loc())
+                    )
+                }
                 let pds =
                     func.get_pds().iter().zip(func.get_pd_locs()).collect();
                 let func_params_opt =
@@ -4294,15 +4348,9 @@ impl Compiler<'_> {
                 // 3.7.1: The return type of a function shall be void or an
                 // object type other than array.
                 match rtp.tp {
-                    Type::Array(_, _) => panic!(
-                        "{}: Function cannot return array types",
-                        Compiler::format_loc(loc)
-                    ),
-                    Type::Function(_, _) => panic!(
-                        "{}: Function cannot return function types",
-                        Compiler::format_loc(loc)
-                    ),
-                    _ => {}
+                    // should have been captured when unwraping declarators
+                    Type::Array(_, _) | Type::Function(_, _) => unreachable!(),
+                    _ => (),
                 }
                 let params_left = Compiler::sanitize_param_types(params_left);
                 let params_right = Compiler::sanitize_param_types(params_right);
@@ -4598,14 +4646,21 @@ impl Compiler<'_> {
     ) -> (QType, Option<ConstantOrIrValue>) {
         use ConstantOrIrValue as C;
         match (tp.tp.clone(), expr.clone()) {
+            // do_arr_to_ptr
             (Type::Array(t, _), Some(C::IrValue(ir_id, true)))
                 if do_arr_to_ptr =>
             {
                 let tp = QType::from(Type::Pointer(t));
                 (tp, Some(C::IrValue(ir_id, false)))
             }
+            (Type::Array(t, _), None) if do_arr_to_ptr => {
+                let tp = QType::from(Type::Pointer(t));
+                (tp, None)
+            }
+            (Type::Array(_, _), _) if do_arr_to_ptr => unreachable!(),
             (Type::Array(_, _), _) => (tp, expr),
 
+            // do_fun_to_ptr
             (Type::Function(_, _), Some(C::IrValue(ir_id, _)))
                 if do_fun_to_ptr =>
             {
@@ -4613,8 +4668,14 @@ impl Compiler<'_> {
                 // ir_id should already have func ptr type in IR
                 (tp, Some(C::IrValue(ir_id, false)))
             }
+            (Type::Function(_, _), None) if do_fun_to_ptr => {
+                let tp = QType::from(Type::Pointer(Box::new(tp)));
+                (tp, None)
+            }
+            (Type::Function(_, _), _) if do_fun_to_ptr => unreachable!(),
             (Type::Function(_, _), _) => (tp, expr),
 
+            // do_deref_lvalue
             (t @ Type::Struct(_), Some(C::IrValue(ir_id, true)))
             | (t @ Type::Union(_), Some(C::IrValue(ir_id, true)))
                 if do_deref_lvalue =>
