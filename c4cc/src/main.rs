@@ -1497,6 +1497,8 @@ impl Compiler<'_> {
             } else {
                 None
             };
+            // insert the mapping from C param decl `int x` to the IR variable
+            // `i32* $.1004` into current_scope.
             self.add_declaration(
                 &param.name.clone().unwrap(),
                 &param_scs,
@@ -1518,8 +1520,8 @@ impl Compiler<'_> {
             _ => unreachable!(),
         };
         let param_ir_ids = typed_func_params
-            .into_iter()
-            .map(|p| p.name.unwrap())
+            .iter()
+            .map(|p| p.name.clone().unwrap())
             .map(|name| match self.current_scope.ordinary_ids_ns.get(&name) {
                 Some(OrdinaryIdRef::ObjFnRef(ir_id, _, _, _)) => ir_id.clone(),
                 _ => unreachable!(),
@@ -1530,11 +1532,57 @@ impl Compiler<'_> {
         self.llvm_builder
             .create_function(&fname, &ftp, linkage, &param_ir_ids);
 
+        // current_scope assumes arguments are all lvalues, but
+        // IRBuilder.create_function creates regular values; i.e. for argument
+        // `int x`:
+        //   current_scope maintains the mapping "x" => `i32* %.1004`
+        //   create_function creates `i32 %.1004`
+        // so once we are in the entry basic block, we need to rewrite
+        //   current_scope: "x" => `i32* %.1004`
+        //   IR: void f(i32 %.1004)
+        // to:
+        //   current_scope: "x" => `i32* %.1005`
+        //   IR: void f(i32 %.1004) {
+        //         i32* %.1005 = alloc i32
+        //         store %.1004 %.1005
+        //       }
+
         let entry_bb_id = format!("$entry.{}", self.get_next_uuid());
         self.c4ir_builder.create_basic_block(&entry_bb_id);
         self.llvm_builder.create_basic_block(&entry_bb_id);
         self.c4ir_builder.set_current_basic_block(&entry_bb_id);
         self.llvm_builder.set_current_basic_block(&entry_bb_id);
+
+        // argument rewrite as mentioned above
+        for param in typed_func_params {
+            let name = param.name.unwrap();
+            let new_ir_id = self.get_next_ir_id();
+            let r = self.current_scope.ordinary_ids_ns.get_mut(&name);
+            match r {
+                Some(OrdinaryIdRef::ObjFnRef(ir_id, _, _, _)) => {
+                    self.c4ir_builder.create_definition(
+                        false,
+                        &new_ir_id,
+                        &param.tp,
+                        Linkage::NONE,
+                        &None,
+                    );
+                    self.llvm_builder.create_definition(
+                        false,
+                        &new_ir_id,
+                        &param.tp,
+                        Linkage::NONE,
+                        &None,
+                    );
+                    self.c4ir_builder
+                        .create_store(new_ir_id.clone(), ir_id.clone());
+                    self.llvm_builder
+                        .create_store(new_ir_id.clone(), ir_id.clone());
+                    mem::replace(ir_id, new_ir_id);
+                }
+                _ => unreachable!(),
+            }
+        }
 
         let rtp = match &ftp.tp {
             Type::Function(rtp, _) => *rtp.clone(),
