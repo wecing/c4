@@ -436,6 +436,13 @@ trait IRBuilder {
         offset_ir_id: &str, // must be i64
     );
 
+    fn create_call(
+        &mut self,
+        dst_ir_id: &str,
+        func_ir_id: &str, // must be func ptr
+        arg_ir_ids: &Vec<String>,
+    );
+
     fn enter_switch(&mut self, ir_id: &str, default_bb_id: &str);
 
     fn leave_switch(&mut self);
@@ -566,6 +573,14 @@ impl IRBuilder for DummyIRBuilder {
         _dst_ir_id: &str,
         _ptr_ir_id: &str,
         _offset_ir_id: &str,
+    ) {
+    }
+
+    fn create_call(
+        &mut self,
+        _dst_ir_id: &str,
+        _func_ir_id: &str,
+        _arg_ir_ids: &Vec<String>,
     ) {
     }
 
@@ -977,10 +992,10 @@ impl IRBuilder for LLVMBuilderImpl {
     }
 
     fn create_store(&mut self, dst_ir_id: String, src_ir_id: String) {
-        let src = self.symbol_table.get(&src_ir_id).unwrap();
-        let dst = self.symbol_table.get(&dst_ir_id).unwrap();
+        let src = *self.symbol_table.get(&src_ir_id).unwrap();
+        let dst = *self.symbol_table.get(&dst_ir_id).unwrap();
         unsafe {
-            llvm_sys::core::LLVMBuildStore(self.builder, *src, *dst);
+            llvm_sys::core::LLVMBuildStore(self.builder, src, dst);
         }
     }
 
@@ -1211,6 +1226,30 @@ impl IRBuilder for LLVMBuilderImpl {
                 ptr,
                 &mut offset,
                 1,
+                dst_ir_id_c.as_ptr(),
+            )
+        };
+        self.symbol_table.insert(dst_ir_id.to_string(), dst);
+    }
+
+    fn create_call(
+        &mut self,
+        dst_ir_id: &str,
+        func_ir_id: &str,
+        arg_ir_ids: &Vec<String>,
+    ) {
+        let dst_ir_id_c = CString::new(dst_ir_id.clone()).unwrap();
+        let func = *self.symbol_table.get(func_ir_id).unwrap();
+        let mut args: Vec<llvm_sys::prelude::LLVMValueRef> = arg_ir_ids
+            .into_iter()
+            .map(|ir_id| *self.symbol_table.get(ir_id).unwrap())
+            .collect();
+        let dst = unsafe {
+            llvm_sys::core::LLVMBuildCall(
+                self.builder,
+                func,
+                args.as_mut_ptr(),
+                args.len() as u32,
                 dst_ir_id_c.as_ptr(),
             )
         };
@@ -2120,20 +2159,200 @@ impl Compiler<'_> {
         let func = (func, func_call.get_fn_loc());
         // Implicit function declarations are allowed in C89 but not C99.
         let (func_tp, func) = self.visit_expr(func, fold_constant, emit_ir);
-        let rtp = match &func_tp.tp {
-            Type::Function(rtp, _) => *rtp.clone(),
+        let (func_ptr_tp, func) = self.convert_lvalue_and_func_designator(
+            func_tp, func, true, true, true,
+        );
+        let func_tp = match func_ptr_tp.tp {
+            Type::Pointer(tp) => *tp,
+            _ => c4_fail!(
+                func_call.get_fn_loc(),
+                "Function pointer type expected"
+            ),
+        };
+        let (rtp, args_decl) = match func_tp.tp {
+            Type::Function(rtp, args_decl) => (*rtp, args_decl),
             _ => unreachable!(),
         };
         match &rtp.tp {
             Type::Struct(_) | Type::Union(_) => {
                 unimplemented!() // TODO: return struct / union
             }
+            // disallowed on construction
+            Type::Function(_, _) | Type::Array(_, _) => unreachable!(),
             _ => (),
         };
-        let (func_ptr_tp, func) = self.convert_lvalue_and_func_designator(
-            func_tp, func, true, true, true,
-        );
-        unimplemented!() // TODO: func call expr
+        let args: Vec<(QType, Option<String>)> = func_call
+            .get_args()
+            .into_iter()
+            .map(|idx| &self.translation_unit.exprs[*idx as usize])
+            .zip(func_call.get_arg_locs())
+            .collect::<Vec<L<&ast::Expr>>>()
+            .into_iter()
+            .map(|arg| {
+                let (arg_tp, arg) =
+                    self.visit_expr(arg, fold_constant, emit_ir);
+                let (arg_tp, arg) = self.convert_lvalue_and_func_designator(
+                    arg_tp, arg, true, true, true,
+                );
+                let arg = arg
+                    .map(|c| self.convert_to_ir_value(&arg_tp, c))
+                    .map(|c| match c {
+                        ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+                        _ => unreachable!(),
+                    });
+                (arg_tp, arg)
+            })
+            .collect();
+        // 3.3.2.2: If the expression that denotes the called function has a
+        // type that does not include a prototype, the integral promotions are
+        // performed on each argument and arguments that have type float are
+        // promoted to double. These are called the default argument promotions.
+        let do_default_arg_promo = |cc: &mut Compiler,
+                                    arg: (QType, Option<String>)|
+         -> Option<String> {
+            let (arg_tp, arg) = arg;
+            arg.map(|arg| {
+                if arg_tp.is_integral_type() {
+                    cc.do_integral_promotion_ir(arg, arg_tp).0
+                } else if arg_tp.is_arithmetic_type() {
+                    let (_, r) = cc.cast_expression(
+                        arg_tp,
+                        Some(ConstantOrIrValue::IrValue(arg, false)),
+                        QType::from(Type::Double),
+                        func_call.get_fn_loc(),
+                        true,
+                    );
+                    match r {
+                        Some(ConstantOrIrValue::IrValue(ir_id, false)) => ir_id,
+                        _ => unreachable!(),
+                    }
+                } else {
+                    arg
+                }
+            })
+        };
+        // 3.3.2.2: If the expression that denotes the called function has a
+        // type that includes a prototype, the arguments are implicitly
+        // converted, as if by assignment, to the types of the corresponding
+        // parameters.
+        let cast_arg = |cc: &mut Compiler,
+                        dst_tp: &QType,
+                        arg: (QType, Option<String>)|
+         -> Option<String> {
+            let (arg_tp, arg) = arg;
+            arg.map(|arg| {
+                let vp_ir_id = cc.get_next_ir_id();
+                cc.c4ir_builder.create_definition(
+                    false,
+                    &vp_ir_id,
+                    dst_tp,
+                    Linkage::NONE,
+                    &None,
+                );
+                cc.llvm_builder.create_definition(
+                    false,
+                    &vp_ir_id,
+                    dst_tp,
+                    Linkage::NONE,
+                    &None,
+                );
+
+                cc.visit_simple_binary_op(
+                    dst_tp,
+                    Some(ConstantOrIrValue::IrValue(vp_ir_id.clone(), true)),
+                    func_call.get_fn_loc(),
+                    &arg_tp,
+                    Some(ConstantOrIrValue::IrValue(arg, false)),
+                    func_call.get_fn_loc(),
+                    ast::Expr_Binary_Op::ASSIGN,
+                    true,
+                    true,
+                );
+
+                let v_ir_id = cc.get_next_ir_id();
+                cc.c4ir_builder.create_load(
+                    v_ir_id.clone(),
+                    vp_ir_id.clone(),
+                    dst_tp,
+                );
+                cc.llvm_builder.create_load(
+                    v_ir_id.clone(),
+                    vp_ir_id.clone(),
+                    dst_tp,
+                );
+                v_ir_id
+            })
+        };
+        let args: Vec<Option<String>> = match args_decl {
+            None => args
+                .into_iter()
+                .map(|arg| do_default_arg_promo(self, arg))
+                .collect(),
+            Some(FuncParams::Typed(typed_params, is_varargs)) => {
+                if args.len() < typed_params.len() {
+                    c4_fail!(
+                        func_call.get_fn_loc(),
+                        "Not enough arguments passed: expecting {}, got {}",
+                        typed_params.len(),
+                        args.len()
+                    )
+                } else if args.len() != typed_params.len() && !is_varargs {
+                    c4_fail!(
+                        func_call.get_fn_loc(),
+                        "Too many arguments passed: expecting {}, got {}",
+                        typed_params.len(),
+                        args.len()
+                    )
+                }
+                let mut to_be_casted_args = args;
+                let to_be_promoted_args =
+                    to_be_casted_args.split_off(typed_params.len());
+
+                let to_be_casted_args: Vec<Option<String>> = to_be_casted_args
+                    .into_iter()
+                    .zip(typed_params)
+                    .map(|(arg, typed_param)| {
+                        cast_arg(self, &typed_param.tp, arg)
+                    })
+                    .collect();
+                to_be_casted_args
+                    .into_iter()
+                    .chain(
+                        to_be_promoted_args
+                            .into_iter()
+                            .map(|arg| do_default_arg_promo(self, arg)),
+                    )
+                    .collect()
+            }
+            Some(FuncParams::Names(names)) => {
+                if args.len() != names.len() {
+                    c4_fail!(
+                        func_call.get_fn_loc(),
+                        "Incorrect number of arguments: expecting {}, got {}",
+                        names.len(),
+                        args.len()
+                    )
+                }
+                args.into_iter()
+                    .map(|arg| do_default_arg_promo(self, arg))
+                    .collect()
+            }
+        };
+
+        if !emit_ir || func.is_none() || args.contains(&None) {
+            Ok((rtp, None))
+        } else {
+            let func = match func.unwrap() {
+                ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+                _ => unreachable!(),
+            };
+            let args: Vec<String> =
+                args.into_iter().map(|arg| arg.unwrap()).collect();
+            let ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_call(&ir_id, &func, &args);
+            self.llvm_builder.create_call(&ir_id, &func, &args);
+            Ok((rtp, Some(ConstantOrIrValue::IrValue(ir_id, false))))
+        }
     }
 
     fn visit_member_access_expr(
@@ -3800,8 +4019,12 @@ impl Compiler<'_> {
                 if is_function_definition {
                     self.enter_scope();
                 }
-                let names = FuncParams::Names(ids_list.ids.clone().into_vec());
-                tp = QType::from(Type::Function(Box::new(tp), Some(names)));
+                let params = if ids_list.ids.is_empty() {
+                    None
+                } else {
+                    Some(FuncParams::Names(ids_list.ids.clone().into_vec()))
+                };
+                tp = QType::from(Type::Function(Box::new(tp), params));
                 self.unwrap_direct_declarator(tp, ids_list.dd_idx, false)
             }
         }
