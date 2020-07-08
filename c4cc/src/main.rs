@@ -2671,6 +2671,56 @@ impl Compiler<'_> {
                     (arg_tp, ret)
                 }
             }
+            Op::REF => {
+                // TODO: the argument must not be a bit-field
+                // TODO: the argument must not be a register variable
+                let ptr_tp = QType::ptr_tp(arg_tp);
+                if !emit_ir || arg.is_none() {
+                    (ptr_tp, None)
+                } else {
+                    match arg.unwrap() {
+                        ConstantOrIrValue::IrValue(ir_id, true) => (
+                            ptr_tp,
+                            Some(ConstantOrIrValue::IrValue(ir_id, false)),
+                        ),
+                        _ => panic!(
+                            "{}: Expression is not a lvalue",
+                            Compiler::format_loc(loc)
+                        ),
+                    }
+                }
+            }
+            Op::DEREF => {
+                let elem_tp = match &arg_tp.tp {
+                    Type::Pointer(tp) => *tp.clone(),
+                    _ => panic!(
+                        "{}: Expression is not a pointer",
+                        Compiler::format_loc(loc)
+                    ),
+                };
+                if !emit_ir || arg.is_none() {
+                    (elem_tp, None)
+                } else {
+                    match arg.unwrap() {
+                        ConstantOrIrValue::IrValue(ir_id, false) => (
+                            elem_tp,
+                            Some(ConstantOrIrValue::IrValue(ir_id, true)),
+                        ),
+                        addr @ ConstantOrIrValue::U64(_) => {
+                            match self.convert_to_ir_value(&arg_tp, addr) {
+                                ConstantOrIrValue::IrValue(ir_id, false) => (
+                                    elem_tp,
+                                    Some(ConstantOrIrValue::IrValue(
+                                        ir_id, true,
+                                    )),
+                                ),
+                                _ => unreachable!(),
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
             _ => unimplemented!(), // TODO: unary ops
         }
     }
