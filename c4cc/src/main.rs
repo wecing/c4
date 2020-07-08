@@ -1406,7 +1406,8 @@ impl Compiler<'_> {
                     }
                 });
                 if !fd.get_dls().is_empty() {
-                    let msg = "Function declaration lists shall not be used \
+                    let msg =
+                        "Function declaration lists shall not be used \
                          when parameters are typed in function declarator";
                     panic!("{}: {}", Compiler::format_loc(fd.get_d_loc()), msg)
                 }
@@ -2595,14 +2596,83 @@ impl Compiler<'_> {
 
     fn visit_unary_op(
         &mut self,
-        _tp: &QType,
-        _arg: Option<ConstantOrIrValue>,
-        _loc: &ast::Loc,
-        _op: ast::Expr_Unary_Op,
-        _fold_constant: bool,
-        _emit_ir: bool,
+        tp: &QType,
+        arg: Option<ConstantOrIrValue>,
+        loc: &ast::Loc,
+        op: ast::Expr_Unary_Op,
+        fold_constant: bool,
+        emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
-        unimplemented!() // TODO: unary ops
+        use ast::Expr_Binary_Op as BinOp;
+        use ast::Expr_Unary_Op as Op;
+        let do_deref_lvalue = match op {
+            Op::PREFIX_INC
+            | Op::PREFIX_DEC
+            | Op::POSTFIX_INC
+            | Op::POSTFIX_DEC
+            | Op::REF => false,
+            _ => true,
+        };
+        let (arg_tp, arg) = self.convert_lvalue_and_func_designator(
+            tp.clone(),
+            arg,
+            do_deref_lvalue,
+            op != Op::REF,
+            op != Op::REF,
+        );
+
+        match op {
+            // ++E is equivalent to (E += 1); --E is analogous to that
+            Op::PREFIX_INC | Op::PREFIX_DEC => {
+                let bin_op = if op == Op::PREFIX_INC {
+                    BinOp::ADD_ASSIGN
+                } else {
+                    BinOp::SUB_ASSIGN
+                };
+                self.visit_simple_binary_op(
+                    &arg_tp,
+                    arg,
+                    loc,
+                    &QType::from(Type::Int),
+                    Some(ConstantOrIrValue::I32(1)),
+                    loc,
+                    bin_op,
+                    fold_constant,
+                    emit_ir,
+                )
+            }
+            Op::POSTFIX_INC | Op::POSTFIX_DEC => {
+                let (_, ret) = self.convert_lvalue_and_func_designator(
+                    arg_tp.clone(),
+                    arg.clone(),
+                    true,
+                    false,
+                    false,
+                );
+                if !emit_ir {
+                    (arg_tp, None)
+                } else {
+                    let bin_op = if op == Op::POSTFIX_INC {
+                        BinOp::ADD_ASSIGN
+                    } else {
+                        BinOp::SUB_ASSIGN
+                    };
+                    self.visit_simple_binary_op(
+                        &arg_tp,
+                        arg,
+                        loc,
+                        &QType::from(Type::Int),
+                        Some(ConstantOrIrValue::I32(1)),
+                        loc,
+                        bin_op,
+                        fold_constant,
+                        emit_ir,
+                    );
+                    (arg_tp, ret)
+                }
+            }
+            _ => unimplemented!(), // TODO: unary ops
+        }
     }
 
     // binary ops except && and ||, which perform short-circuit evaluation
