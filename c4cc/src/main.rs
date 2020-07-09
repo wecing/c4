@@ -409,6 +409,14 @@ trait IRBuilder {
         src_tp: &QType,
     );
 
+    // <dst_ir_id> = sub 0, <ir_id>
+    // <dst_ir_id> = fneg <ir_id>
+    fn create_neg(&mut self, dst_ir_id: &str, is_fp: bool, ir_id: &str);
+
+    // bit-wise not. e.g. for i32:
+    // <dst_ir_id> = xor -1, <ir_id>
+    fn create_not(&mut self, dst_ir_id: &str, ir_id: &str);
+
     fn create_bin_op(
         &mut self,
         dst_ir_id: String,
@@ -545,6 +553,10 @@ impl IRBuilder for DummyIRBuilder {
         _src_tp: &QType,
     ) {
     }
+
+    fn create_neg(&mut self, _dst_ir_id: &str, _is_fp: bool, _ir_id: &str) {}
+
+    fn create_not(&mut self, _dst_ir_id: &str, _ir_id: &str) {}
 
     fn create_bin_op(
         &mut self,
@@ -1100,6 +1112,33 @@ impl IRBuilder for LLVMBuilderImpl {
             },
         };
         self.symbol_table.insert(dst_ir_id, dst);
+    }
+
+    fn create_neg(&mut self, dst_ir_id: &str, is_fp: bool, ir_id: &str) {
+        let src = *self.symbol_table.get(ir_id).unwrap();
+        let dst_ir_id_c = CString::new(dst_ir_id.to_string()).unwrap();
+        let dst = unsafe {
+            let f = if is_fp {
+                llvm_sys::core::LLVMBuildFNeg
+            } else {
+                llvm_sys::core::LLVMBuildNeg
+            };
+            f(self.builder, src, dst_ir_id_c.as_ptr())
+        };
+        self.symbol_table.insert(dst_ir_id.to_string(), dst);
+    }
+
+    fn create_not(&mut self, dst_ir_id: &str, ir_id: &str) {
+        let src = *self.symbol_table.get(ir_id).unwrap();
+        let dst_ir_id_c = CString::new(dst_ir_id.to_string()).unwrap();
+        let dst = unsafe {
+            llvm_sys::core::LLVMBuildNot(
+                self.builder,
+                src,
+                dst_ir_id_c.as_ptr(),
+            )
+        };
+        self.symbol_table.insert(dst_ir_id.to_string(), dst);
     }
 
     fn create_bin_op(
@@ -2721,7 +2760,131 @@ impl Compiler<'_> {
                     }
                 }
             }
-            _ => unimplemented!(), // TODO: unary ops
+            Op::POS | Op::NEG => {
+                if !arg_tp.is_arithmetic_type() {
+                    panic!(
+                        "{}: Expression must have arithmetic type",
+                        Compiler::format_loc(loc)
+                    )
+                }
+                use ConstantOrIrValue as C;
+                let do_neg = op == Op::NEG;
+                match arg {
+                    Some(C::Address(_, _)) => unreachable!(),
+
+                    Some(C::IrValue(_, true)) => unreachable!(),
+                    Some(C::IrValue(ir_id, false)) => {
+                        let is_fp = !arg_tp.is_integral_type();
+                        let (ir_id, tp) = if is_fp {
+                            (ir_id, arg_tp)
+                        } else {
+                            // 3.3.3.3: The integral promotion is performed
+                            self.do_integral_promotion_ir(ir_id, arg_tp)
+                        };
+                        if do_neg {
+                            let new_ir_id = self.get_next_ir_id();
+                            self.c4ir_builder
+                                .create_neg(&new_ir_id, is_fp, &ir_id);
+                            self.llvm_builder
+                                .create_neg(&new_ir_id, is_fp, &ir_id);
+                            (tp, Some(C::IrValue(new_ir_id, false)))
+                        } else {
+                            (tp, Some(C::IrValue(ir_id, false)))
+                        }
+                    }
+
+                    Some(C::Float(v)) if do_neg => (arg_tp, Some(C::Float(-v))),
+                    Some(C::Float(v)) => (arg_tp, Some(C::Float(v))),
+                    Some(C::Double(v)) if do_neg => {
+                        (arg_tp, Some(C::Double(-v)))
+                    }
+                    Some(C::Double(v)) => (arg_tp, Some(C::Double(v))),
+
+                    Some(C::I64(-0x8000_0000_0000_0000)) => {
+                        (arg_tp, Some(C::I64(-0x8000_0000_0000_0000)))
+                    }
+                    Some(C::I64(v)) if do_neg => (arg_tp, Some(C::I64(!v + 1))),
+                    Some(C::I64(v)) => (arg_tp, Some(C::I64(v))),
+                    Some(C::U64(0)) => (arg_tp, Some(C::U64(0))),
+                    Some(C::U64(v)) if do_neg => (arg_tp, Some(C::U64(!v + 1))),
+                    Some(C::U64(v)) => (arg_tp, Some(C::U64(v))),
+
+                    Some(C::U32(v)) if do_neg => {
+                        (arg_tp, Some(C::U32(-(v as i64) as u32)))
+                    }
+                    Some(C::U32(v)) => (arg_tp, Some(C::U32(v))),
+
+                    // 3.3.3.3: The integral promotion is performed
+                    Some(c) if do_neg => {
+                        let v = -(c.as_constant_u64().unwrap() as i64) as i32;
+                        (arg_tp, Some(C::I32(v)))
+                    }
+                    Some(c) => {
+                        let v = c.as_constant_u64().unwrap() as i32;
+                        (arg_tp, Some(C::I32(v)))
+                    }
+
+                    None => match &arg_tp.tp {
+                        Type::Float
+                        | Type::Double
+                        | Type::UnsignedLong
+                        | Type::Long
+                        | Type::UnsignedInt => (arg_tp, None),
+                        _ => (QType::from(Type::Int), None),
+                    },
+                }
+            }
+            Op::BIT_NOT => {
+                if !arg_tp.is_integral_type() {
+                    panic!(
+                        "{}: Cannot apply ~ to non-integral types",
+                        Compiler::format_loc(loc)
+                    )
+                }
+                use ConstantOrIrValue as C;
+                match arg {
+                    None => match &arg_tp.tp {
+                        Type::UnsignedLong | Type::Long | Type::UnsignedInt => {
+                            (arg_tp, None)
+                        }
+                        _ => (QType::from(Type::Int), None),
+                    },
+
+                    Some(C::Address(_, _))
+                    | Some(C::Float(_))
+                    | Some(C::Double(_))
+                    | Some(C::IrValue(_, true)) => unreachable!(),
+
+                    Some(C::IrValue(ir_id, false)) => {
+                        let new_ir_id = self.get_next_ir_id();
+                        self.c4ir_builder.create_not(&new_ir_id, &ir_id);
+                        self.llvm_builder.create_not(&new_ir_id, &ir_id);
+                        (arg_tp, Some(C::IrValue(new_ir_id, false)))
+                    }
+
+                    Some(C::U64(v)) => (arg_tp, Some(C::U64(!v))),
+                    Some(C::I64(v)) => (arg_tp, Some(C::I64(!v))),
+                    Some(C::U32(v)) => (arg_tp, Some(C::U32(!v))),
+                    Some(c) => {
+                        let v = !c.as_constant_u64().unwrap() as i32;
+                        (arg_tp, Some(C::I32(v)))
+                    }
+                }
+            }
+            Op::LOGIC_NOT => {
+                // 3.3.3.3: The expression !E is equivalent to (0==E).
+                self.visit_simple_binary_op(
+                    &QType::from(Type::Int),
+                    Some(ConstantOrIrValue::I32(0)),
+                    loc,
+                    &arg_tp,
+                    arg,
+                    loc,
+                    BinOp::EQ,
+                    fold_constant,
+                    emit_ir,
+                )
+            }
         }
     }
 
