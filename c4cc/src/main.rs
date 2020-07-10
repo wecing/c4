@@ -111,6 +111,13 @@ impl QType {
         }
     }
 
+    fn is_scalar_type(&self) -> bool {
+        match self.tp {
+            Type::Pointer(_) => true,
+            _ => self.is_arithmetic_type(),
+        }
+    }
+
     fn is_void(&self) -> bool {
         match self.tp {
             Type::Void => true,
@@ -358,6 +365,8 @@ trait IRBuilder {
 
     fn set_current_basic_block(&mut self, bb: &str);
 
+    fn get_current_basic_block(&self) -> String;
+
     fn create_definition(
         &mut self,
         is_global: bool,
@@ -506,6 +515,10 @@ impl IRBuilder for DummyIRBuilder {
 
     fn set_current_basic_block(&mut self, _bb: &str) {}
 
+    fn get_current_basic_block(&self) -> String {
+        String::new()
+    }
+
     fn create_definition(
         &mut self,
         _is_global: bool,
@@ -628,6 +641,7 @@ struct LLVMBuilderImpl {
     next_uuid: u32,
 
     current_function: llvm_sys::prelude::LLVMValueRef,
+    current_basic_block: String,
     basic_blocks: HashMap<String, llvm_sys::prelude::LLVMBasicBlockRef>,
     // key: ir_id
     symbol_table: HashMap<String, llvm_sys::prelude::LLVMValueRef>,
@@ -652,6 +666,7 @@ impl LLVMBuilderImpl {
                 builder,
                 next_uuid: 1_000_000,
                 current_function: ptr::null_mut(),
+                current_basic_block: String::new(),
                 basic_blocks: HashMap::new(),
                 symbol_table: HashMap::new(),
                 switch_stack: Vec::new(),
@@ -906,6 +921,13 @@ impl IRBuilder for LLVMBuilderImpl {
         unsafe {
             llvm_sys::core::LLVMPositionBuilderAtEnd(self.builder, bb);
         }
+    }
+
+    fn get_current_basic_block(&self) -> String {
+        if self.current_basic_block.is_empty() {
+            unreachable!()
+        }
+        self.current_basic_block.clone()
     }
 
     fn create_definition(
@@ -3133,13 +3155,89 @@ impl Compiler<'_> {
     // for && and ||
     fn visit_special_binary_op(
         &mut self,
-        _e_left: L<&ast::Expr>,
-        _e_right: L<&ast::Expr>,
-        _op: ast::Expr_Binary_Op,
-        _fold_constant: bool,
-        _emit_ir: bool,
+        e_left: L<&ast::Expr>,
+        e_right: L<&ast::Expr>,
+        op: ast::Expr_Binary_Op,
+        fold_constant: bool,
+        emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
-        unimplemented!() // TODO: && and ||
+        let check_scalar_type = |tp: &QType, loc: &ast::Loc| {
+            if !tp.is_scalar_type() {
+                panic!(
+                    "{}: Expression must have scalar type",
+                    Compiler::format_loc(loc)
+                )
+            }
+        };
+        let (left_tp, left) = self.visit_expr(e_left, fold_constant, emit_ir);
+        let (left_tp, left) = self.convert_lvalue_and_func_designator(
+            left_tp, left, true, true, true,
+        );
+        check_scalar_type(&left_tp, e_left.1);
+
+        if !fold_constant || left.is_none() {
+            // !fold_constant: infer expression type only; ok to return None
+            // left.is_none(): !emit_ir but expr is not constant; must ret None
+            let (right_tp, _) =
+                self.visit_expr(e_right, fold_constant, emit_ir);
+            check_scalar_type(&right_tp, e_right.1);
+            (QType::from(Type::Int), None)
+        } else {
+            // emit_ir could be either true or false
+            let left = left.unwrap();
+            let is_or = op == ast::Expr_Binary_Op::LOGIC_OR;
+            use ConstantOrIrValue as C;
+            match &left {
+                C::I8(_)
+                | C::U8(_)
+                | C::I16(_)
+                | C::U16(_)
+                | C::I32(_)
+                | C::U32(_)
+                | C::I64(_)
+                | C::U64(_)
+                | C::Float(_)
+                | C::Double(_)
+                | C::Address(_, _) => {
+                    let is_true = left
+                        .as_constant_double()
+                        .map(|v| v != 0.0)
+                        .unwrap_or(true); // address must be non-zero
+                    if is_true == is_or {
+                        // 1 || right => 1
+                        // 0 && right => 0
+                        // (but still need to type check `right`)
+                        let (right_tp, _) =
+                            self.visit_expr(e_right, false, false);
+                        check_scalar_type(&right_tp, e_right.1);
+                        (
+                            QType::from(Type::Int),
+                            Some(C::I32(if is_true { 1 } else { 0 })),
+                        )
+                    } else {
+                        // 0 || right => !!right => 0 != right
+                        // 1 && right => !!right => 0 != right
+                        let (right_tp, right) =
+                            self.visit_expr(e_right, fold_constant, emit_ir);
+                        self.visit_simple_binary_op(
+                            &QType::from(Type::Int),
+                            Some(C::I32(0)),
+                            e_right.1,
+                            &right_tp,
+                            right,
+                            e_right.1,
+                            ast::Expr_Binary_Op::NEQ,
+                            fold_constant,
+                            emit_ir,
+                        )
+                    }
+                }
+                C::IrValue(_, true) => unreachable!(),
+                C::IrValue(left_ir_id, false) => {
+                    unimplemented!() // TODO: &&, || when emit_ir == true
+                }
+            }
+        }
     }
 
     fn visit_ternary_op(
@@ -5711,6 +5809,11 @@ impl Compiler<'_> {
         self.c4ir_builder.create_basic_block(&bb_id);
         self.llvm_builder.create_basic_block(&bb_id);
         bb_id
+    }
+
+    fn get_current_bb(&self) -> String {
+        let _ = self.c4ir_builder.get_current_basic_block();
+        self.llvm_builder.get_current_basic_block()
     }
 }
 
