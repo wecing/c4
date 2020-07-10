@@ -321,6 +321,7 @@ struct SwitchDefCtx {
 struct FuncDefCtx {
     func_name: String,
     return_type: QType,
+    current_bb: String,
 
     // user-provided label name => basic block name
     basic_blocks: HashMap<String, String>,
@@ -1631,6 +1632,7 @@ impl Compiler<'_> {
         let mut func_def_ctx = FuncDefCtx {
             func_name: fname,
             return_type: rtp,
+            current_bb: entry_bb_id,
             basic_blocks: HashMap::new(),
             unresolved_labels: HashMap::new(),
             switch_stack: Vec::new(),
@@ -3285,8 +3287,7 @@ impl Compiler<'_> {
 
                 self.c4ir_builder.create_br(&bb_id);
                 self.llvm_builder.create_br(&bb_id);
-                self.c4ir_builder.set_current_basic_block(&bb_id);
-                self.llvm_builder.set_current_basic_block(&bb_id);
+                self.set_current_bb(ctx, &bb_id);
                 let stmt =
                     &self.translation_unit.statements[id.stmt_idx as usize];
                 let stmt = (stmt, id.get_stmt_loc());
@@ -3342,8 +3343,7 @@ impl Compiler<'_> {
                 let bb_id = self.create_bb();
                 self.c4ir_builder.create_br(&bb_id);
                 self.llvm_builder.create_br(&bb_id);
-                self.c4ir_builder.set_current_basic_block(&bb_id);
-                self.llvm_builder.set_current_basic_block(&bb_id);
+                self.set_current_bb(ctx, &bb_id);
                 self.c4ir_builder.add_switch_case(&e, &bb_id);
                 self.llvm_builder.add_switch_case(&e, &bb_id);
 
@@ -3369,8 +3369,7 @@ impl Compiler<'_> {
                     .map(|s| s.default_case_visited = true);
                 self.c4ir_builder.create_br(&bb_id);
                 self.llvm_builder.create_br(&bb_id);
-                self.c4ir_builder.set_current_basic_block(&bb_id);
-                self.llvm_builder.set_current_basic_block(&bb_id);
+                self.set_current_bb(ctx, &bb_id);
 
                 let stmt = &self.translation_unit.statements
                     [default_s.stmt_idx as usize];
@@ -3397,8 +3396,7 @@ impl Compiler<'_> {
         self.llvm_builder
             .create_cond_br(&cmp_ir_id, &then_bb, &else_bb);
 
-        self.c4ir_builder.set_current_basic_block(&then_bb);
-        self.llvm_builder.set_current_basic_block(&then_bb);
+        self.set_current_bb(ctx, &then_bb);
         let then_stmt =
             &self.translation_unit.statements[if_s.then_idx as usize];
         let then_stmt = (then_stmt, if_s.get_then_loc());
@@ -3406,8 +3404,7 @@ impl Compiler<'_> {
         self.c4ir_builder.create_br(&merge_bb);
         self.llvm_builder.create_br(&merge_bb);
 
-        self.c4ir_builder.set_current_basic_block(&else_bb);
-        self.llvm_builder.set_current_basic_block(&else_bb);
+        self.set_current_bb(ctx, &else_bb);
         if if_s.else_idx != 0 {
             let else_stmt =
                 &self.translation_unit.statements[if_s.else_idx as usize];
@@ -3417,8 +3414,7 @@ impl Compiler<'_> {
         self.c4ir_builder.create_br(&merge_bb);
         self.llvm_builder.create_br(&merge_bb);
 
-        self.c4ir_builder.set_current_basic_block(&merge_bb);
-        self.llvm_builder.set_current_basic_block(&merge_bb);
+        self.set_current_bb(ctx, &merge_bb);
         Ok(())
     }
 
@@ -3468,8 +3464,7 @@ impl Compiler<'_> {
 
         self.c4ir_builder.create_br(&break_bb);
         self.llvm_builder.create_br(&break_bb);
-        self.c4ir_builder.set_current_basic_block(&break_bb);
-        self.llvm_builder.set_current_basic_block(&break_bb);
+        self.set_current_bb(ctx, &break_bb);
 
         ctx.switch_stack.pop();
         ctx.break_bb_stack.pop();
@@ -3490,8 +3485,7 @@ impl Compiler<'_> {
         self.c4ir_builder.create_br(&cond_bb);
         self.llvm_builder.create_br(&cond_bb);
 
-        self.c4ir_builder.set_current_basic_block(&cond_bb);
-        self.llvm_builder.set_current_basic_block(&cond_bb);
+        self.set_current_bb(ctx, &cond_bb);
         let cond = &self.translation_unit.exprs[while_s.e_idx as usize];
         let cond = (cond, while_s.get_e_loc());
         let cond_ir_id = self.visit_cond_expr(cond)?;
@@ -3500,8 +3494,7 @@ impl Compiler<'_> {
         self.llvm_builder
             .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
 
-        self.c4ir_builder.set_current_basic_block(&body_bb);
-        self.llvm_builder.set_current_basic_block(&body_bb);
+        self.set_current_bb(ctx, &body_bb);
         ctx.break_bb_stack.push(break_bb.clone());
         ctx.continue_bb_stack.push(cond_bb.clone());
         let body = &self.translation_unit.statements[while_s.body_idx as usize];
@@ -3510,8 +3503,7 @@ impl Compiler<'_> {
         self.c4ir_builder.create_br(&cond_bb);
         self.llvm_builder.create_br(&cond_bb);
 
-        self.c4ir_builder.set_current_basic_block(&break_bb);
-        self.llvm_builder.set_current_basic_block(&break_bb);
+        self.set_current_bb(ctx, &break_bb);
         ctx.break_bb_stack.pop();
         ctx.continue_bb_stack.pop();
         Ok(())
@@ -3528,8 +3520,7 @@ impl Compiler<'_> {
         self.c4ir_builder.create_br(&body_bb);
         self.c4ir_builder.create_br(&body_bb);
 
-        self.c4ir_builder.set_current_basic_block(&body_bb);
-        self.llvm_builder.set_current_basic_block(&body_bb);
+        self.set_current_bb(ctx, &body_bb);
         ctx.break_bb_stack.push(break_bb.clone());
         ctx.continue_bb_stack.push(cond_bb.clone());
         let body =
@@ -3539,8 +3530,7 @@ impl Compiler<'_> {
         self.c4ir_builder.create_br(&cond_bb);
         self.llvm_builder.create_br(&cond_bb);
 
-        self.c4ir_builder.set_current_basic_block(&cond_bb);
-        self.llvm_builder.set_current_basic_block(&cond_bb);
+        self.set_current_bb(ctx, &cond_bb);
         ctx.break_bb_stack.pop();
         ctx.continue_bb_stack.pop();
         let cond = &self.translation_unit.exprs[do_while_s.e_idx as usize];
@@ -3551,8 +3541,7 @@ impl Compiler<'_> {
         self.llvm_builder
             .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
 
-        self.c4ir_builder.set_current_basic_block(&break_bb);
-        self.llvm_builder.set_current_basic_block(&break_bb);
+        self.set_current_bb(ctx, &break_bb);
         Ok(())
     }
 
@@ -3574,8 +3563,7 @@ impl Compiler<'_> {
         self.c4ir_builder.create_br(&cond_bb);
         self.llvm_builder.create_br(&cond_bb);
 
-        self.c4ir_builder.set_current_basic_block(&cond_bb);
-        self.llvm_builder.set_current_basic_block(&cond_bb);
+        self.set_current_bb(ctx, &cond_bb);
         if for_s.e2_idx != 0 {
             let cond = &self.translation_unit.exprs[for_s.e2_idx as usize];
             let cond = (cond, for_s.get_e2_loc());
@@ -3589,8 +3577,7 @@ impl Compiler<'_> {
             self.llvm_builder.create_br(&body_bb);
         }
 
-        self.c4ir_builder.set_current_basic_block(&body_bb);
-        self.llvm_builder.set_current_basic_block(&body_bb);
+        self.set_current_bb(ctx, &body_bb);
         ctx.break_bb_stack.push(break_bb.clone());
         ctx.continue_bb_stack.push(incr_bb.clone());
         let body = &self.translation_unit.statements[for_s.body_idx as usize];
@@ -3601,8 +3588,7 @@ impl Compiler<'_> {
         self.c4ir_builder.create_br(&incr_bb);
         self.llvm_builder.create_br(&incr_bb);
 
-        self.c4ir_builder.set_current_basic_block(&incr_bb);
-        self.llvm_builder.set_current_basic_block(&incr_bb);
+        self.set_current_bb(ctx, &incr_bb);
         if for_s.e3_idx != 0 {
             let incr = &self.translation_unit.exprs[for_s.e3_idx as usize];
             let incr = (incr, for_s.get_e3_loc());
@@ -3611,8 +3597,7 @@ impl Compiler<'_> {
         self.c4ir_builder.create_br(&cond_bb);
         self.llvm_builder.create_br(&cond_bb);
 
-        self.c4ir_builder.set_current_basic_block(&break_bb);
-        self.llvm_builder.set_current_basic_block(&break_bb);
+        self.set_current_bb(ctx, &break_bb);
         Ok(())
     }
 
@@ -5711,6 +5696,12 @@ impl Compiler<'_> {
         self.c4ir_builder.create_basic_block(&bb_id);
         self.llvm_builder.create_basic_block(&bb_id);
         bb_id
+    }
+
+    fn set_current_bb(&mut self, ctx: &mut FuncDefCtx, bb_id: &str) {
+        ctx.current_bb = bb_id.to_string();
+        self.c4ir_builder.set_current_basic_block(&bb_id);
+        self.llvm_builder.set_current_basic_block(&bb_id);
     }
 }
 
