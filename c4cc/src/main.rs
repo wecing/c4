@@ -18,6 +18,12 @@ struct SemanticError {
     loc: ast::Loc,
 }
 
+impl SemanticError {
+    fn panic<T>(&self) -> T {
+        panic!("{}: {}", Compiler::format_loc(&self.loc), self.msg)
+    }
+}
+
 type R<T> = Result<T, SemanticError>;
 
 macro_rules! c4_fail {
@@ -418,6 +424,8 @@ trait IRBuilder {
         src_tp: &QType,
     );
 
+    fn create_zext_i1_to_i32(&mut self, dst_ir_id: &str, src_ir_id: &str);
+
     // <dst_ir_id> = sub 0, <ir_id>
     // <dst_ir_id> = fneg <ir_id>
     fn create_neg(&mut self, dst_ir_id: &str, is_fp: bool, ir_id: &str);
@@ -566,6 +574,8 @@ impl IRBuilder for DummyIRBuilder {
         _src_tp: &QType,
     ) {
     }
+
+    fn create_zext_i1_to_i32(&mut self, _dst_ir_id: &str, _src_ir_id: &str) {}
 
     fn create_neg(&mut self, _dst_ir_id: &str, _is_fp: bool, _ir_id: &str) {}
 
@@ -1136,6 +1146,21 @@ impl IRBuilder for LLVMBuilderImpl {
         self.symbol_table.insert(dst_ir_id, dst);
     }
 
+    fn create_zext_i1_to_i32(&mut self, dst_ir_id: &str, src_ir_id: &str) {
+        let src = *self.symbol_table.get(src_ir_id).unwrap();
+        let dst_ir_id_c = CString::new(dst_ir_id.to_string()).unwrap();
+        let dst = unsafe {
+            llvm_sys::core::LLVMBuildCast(
+                self.builder,
+                llvm_sys::LLVMOpcode::LLVMZExt,
+                src,
+                self.get_llvm_type(&Type::Int),
+                dst_ir_id_c.as_ptr(),
+            )
+        };
+        self.symbol_table.insert(dst_ir_id.to_string(), dst);
+    }
+
     fn create_neg(&mut self, dst_ir_id: &str, is_fp: bool, ir_id: &str) {
         let src = *self.symbol_table.get(ir_id).unwrap();
         let dst_ir_id_c = CString::new(dst_ir_id.to_string()).unwrap();
@@ -1467,8 +1492,7 @@ impl Compiler<'_> {
                     }
                 });
                 if !fd.get_dls().is_empty() {
-                    let msg =
-                        "Function declaration lists shall not be used \
+                    let msg = "Function declaration lists shall not be used \
                          when parameters are typed in function declarator";
                     panic!("{}: {}", Compiler::format_loc(fd.get_d_loc()), msg)
                 }
@@ -2015,9 +2039,7 @@ impl Compiler<'_> {
             ),
             ast::Expr_oneof_e::func_call(func_call) => self
                 .visit_func_call_expr(func_call, fold_constant, emit_ir)
-                .unwrap_or_else(|err| {
-                    panic!("{}: {}", Compiler::format_loc(&err.loc), err.msg)
-                }),
+                .unwrap_or_else(|err| err.panic()),
             ast::Expr_oneof_e::dot(dot) => {
                 let left = &self.translation_unit.exprs[dot.e_idx as usize];
                 let left = (left, dot.get_e_loc());
@@ -2029,9 +2051,7 @@ impl Compiler<'_> {
                     fold_constant,
                     emit_ir,
                 )
-                .unwrap_or_else(|err| {
-                    panic!("{}: {}", Compiler::format_loc(&err.loc), err.msg)
-                })
+                .unwrap_or_else(|err| err.panic())
             }
             ast::Expr_oneof_e::ptr(ptr) => {
                 let left = &self.translation_unit.exprs[ptr.e_idx as usize];
@@ -2044,9 +2064,7 @@ impl Compiler<'_> {
                     fold_constant,
                     emit_ir,
                 )
-                .unwrap_or_else(|err| {
-                    panic!("{}: {}", Compiler::format_loc(&err.loc), err.msg)
-                })
+                .unwrap_or_else(|err| err.panic())
             }
             ast::Expr_oneof_e::sizeof_val(sizeof_val) => {
                 let arg = (
@@ -3234,7 +3252,122 @@ impl Compiler<'_> {
                 }
                 C::IrValue(_, true) => unreachable!(),
                 C::IrValue(left_ir_id, false) => {
-                    unimplemented!() // TODO: &&, || when emit_ir == true
+                    // i32* r = alloca i32
+                    let result_ir_id = self.get_next_ir_id();
+                    self.c4ir_builder.create_definition(
+                        false,
+                        &result_ir_id,
+                        &QType::from(Type::Int),
+                        Linkage::NONE,
+                        &None,
+                    );
+                    self.llvm_builder.create_definition(
+                        false,
+                        &result_ir_id,
+                        &QType::from(Type::Int),
+                        Linkage::NONE,
+                        &None,
+                    );
+
+                    // bool left = eval(left) != 0
+                    let left_ir_id = self
+                        .visit_cond_expr_ir(
+                            left_tp,
+                            left_ir_id.clone(),
+                            e_left.1,
+                        )
+                        .unwrap_or_else(|e| e.panic());
+
+                    // true || ... = true
+                    // false && ... = false
+                    let cond_ir_id = if is_or {
+                        left_ir_id
+                    } else {
+                        let cond_ir_id = self.get_next_ir_id();
+                        self.c4ir_builder.create_not(&cond_ir_id, &left_ir_id);
+                        self.llvm_builder.create_not(&cond_ir_id, &left_ir_id);
+                        cond_ir_id
+                    };
+                    let short_bb = self.create_bb();
+                    let long_bb = self.create_bb();
+                    let merge_bb = self.create_bb();
+                    self.c4ir_builder.create_cond_br(
+                        &cond_ir_id,
+                        &short_bb,
+                        &long_bb,
+                    );
+                    self.llvm_builder.create_cond_br(
+                        &cond_ir_id,
+                        &short_bb,
+                        &long_bb,
+                    );
+
+                    // short-circuit path: || => 1, && => 0
+                    self.c4ir_builder.set_current_basic_block(&short_bb);
+                    self.llvm_builder.set_current_basic_block(&short_bb);
+                    let short_value = self.convert_to_ir_value(
+                        &QType::from(Type::Int),
+                        ConstantOrIrValue::I32(if is_or { 1 } else { 0 }),
+                    );
+                    let short_value_ir_id = match short_value {
+                        ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+                        _ => unreachable!(),
+                    };
+                    self.c4ir_builder.create_store(
+                        result_ir_id.clone(),
+                        short_value_ir_id.clone(),
+                    );
+                    self.llvm_builder.create_store(
+                        result_ir_id.clone(),
+                        short_value_ir_id.clone(),
+                    );
+                    self.c4ir_builder.create_br(&merge_bb);
+                    self.llvm_builder.create_br(&merge_bb);
+
+                    // long path: bool right = eval(right) != 0
+                    self.c4ir_builder.set_current_basic_block(&long_bb);
+                    self.llvm_builder.set_current_basic_block(&long_bb);
+                    let right_ir_id = self
+                        .visit_cond_expr(e_right)
+                        .unwrap_or_else(|e| e.panic());
+                    let right_i32_ir_id = self.get_next_ir_id();
+                    self.c4ir_builder
+                        .create_zext_i1_to_i32(&right_i32_ir_id, &right_ir_id);
+                    self.llvm_builder
+                        .create_zext_i1_to_i32(&right_i32_ir_id, &right_ir_id);
+                    self.c4ir_builder.create_store(
+                        result_ir_id.clone(),
+                        right_i32_ir_id.clone(),
+                    );
+                    self.llvm_builder.create_store(
+                        result_ir_id.clone(),
+                        right_i32_ir_id.clone(),
+                    );
+                    self.c4ir_builder.create_br(&merge_bb);
+                    self.llvm_builder.create_br(&merge_bb);
+
+                    self.c4ir_builder.set_current_basic_block(&merge_bb);
+                    self.llvm_builder.set_current_basic_block(&merge_bb);
+
+                    // i32 result = load i32* r
+                    let result_rvalue_ir_id = self.get_next_ir_id();
+                    self.c4ir_builder.create_load(
+                        result_rvalue_ir_id.clone(),
+                        result_ir_id.clone(),
+                        &QType::from(Type::Int),
+                    );
+                    self.llvm_builder.create_load(
+                        result_rvalue_ir_id.clone(),
+                        result_ir_id.clone(),
+                        &QType::from(Type::Int),
+                    );
+                    (
+                        QType::from(Type::Int),
+                        Some(ConstantOrIrValue::IrValue(
+                            result_rvalue_ir_id,
+                            false,
+                        )),
+                    )
                 }
             }
         }
@@ -3821,6 +3954,15 @@ impl Compiler<'_> {
             ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
             _ => unreachable!(),
         };
+        self.visit_cond_expr_ir(cond_tp, cond_ir_id, cond_loc)
+    }
+
+    fn visit_cond_expr_ir(
+        &mut self,
+        cond_tp: QType,
+        cond_ir_id: String,
+        cond_loc: &ast::Loc,
+    ) -> R<String> {
         // 3.6.4.1, 3.6.5, and 3.3.15 require the cond expression to have scalar
         // type. 3.3.13 and 3.3.14 require both operands to have scalar type.
         let zero_ir_id = self.get_next_ir_id();
