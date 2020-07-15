@@ -2942,10 +2942,24 @@ impl Compiler<'_> {
         emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
         use ast::Expr_Binary_Op as Op;
+        let has_assign = match op {
+            Op::ASSIGN
+            | Op::MUL_ASSIGN
+            | Op::DIV_ASSIGN
+            | Op::MOD_ASSIGN
+            | Op::ADD_ASSIGN
+            | Op::SUB_ASSIGN
+            | Op::L_SHIFT_ASSIGN
+            | Op::R_SHIFT_ASSIGN
+            | Op::BINARY_AND_ASSIGN
+            | Op::XOR_ASSIGN
+            | Op::BINARY_OR_ASSIGN => true,
+            _ => false,
+        };
         let (tp_left, left) = self.convert_lvalue_and_func_designator(
             tp_left.clone(),
             left,
-            op != Op::ASSIGN,
+            !has_assign,
             true,
             true,
         );
@@ -2971,12 +2985,6 @@ impl Compiler<'_> {
 
         match op {
             Op::ASSIGN => {
-                if !emit_ir {
-                    panic!(
-                        "{}: Expression is not a compiler time constant",
-                        Compiler::format_loc(loc_left)
-                    )
-                }
                 if tp_left.is_const {
                     panic!(
                         "{}: Cannot modify const-qualified variables",
@@ -3054,8 +3062,11 @@ impl Compiler<'_> {
                     right,
                     tp_left.clone(),
                     loc_right,
-                    true,
+                    emit_ir,
                 );
+                if !emit_ir {
+                    return (QType::from(tp_left.tp), None);
+                }
                 let right =
                     right.map(|c| self.convert_to_ir_value(&tp_left, c));
                 // now store `right` to `left`
@@ -3098,6 +3109,77 @@ impl Compiler<'_> {
                         (QType::from(tp_left.tp), right)
                     }
                 }
+            }
+            Op::MUL_ASSIGN
+            | Op::DIV_ASSIGN
+            | Op::MOD_ASSIGN
+            | Op::ADD_ASSIGN
+            | Op::SUB_ASSIGN
+            | Op::L_SHIFT_ASSIGN
+            | Op::R_SHIFT_ASSIGN
+            | Op::BINARY_AND_ASSIGN
+            | Op::XOR_ASSIGN
+            | Op::BINARY_OR_ASSIGN => {
+                // 3.3.16.2: For the operators += and -= only, either the left
+                // operand shall be a pointer to an object type and the right
+                // shall have integral type, or the left operand shall have
+                // qualified or unqualified arithmetic type and the right shall
+                // have arithmetic type.
+                // For the other operators, each operand shall have arithmetic
+                // type consistent with those allowed by the corresponding
+                // binary operator.
+                if op == Op::ADD_ASSIGN || op == Op::SUB_ASSIGN {
+                    // it's okay to not check the pointed-to type; if it's not
+                    // an object, the add/sub operation would fail.
+                    if !(tp_left.is_pointer() && tp_right.is_integral_type())
+                        && !(tp_left.is_arithmetic_type()
+                            && tp_right.is_arithmetic_type())
+                    {
+                        panic!(
+                            "{}: Illegal operand type",
+                            Compiler::format_loc(loc_left)
+                        )
+                    }
+                }
+
+                // 3.3.16.2: A compound assignment of the form E1 op = E2
+                // differs from the simple assignment expression E1 = E1 op (E2)
+                // only in that the lvalue E1 is evaluated only once.
+                let simple_op = match op {
+                    Op::MUL_ASSIGN => Op::MUL,
+                    Op::DIV_ASSIGN => Op::DIV,
+                    Op::MOD_ASSIGN => Op::MOD,
+                    Op::ADD_ASSIGN => Op::ADD,
+                    Op::SUB_ASSIGN => Op::SUB,
+                    Op::L_SHIFT_ASSIGN => Op::L_SHIFT,
+                    Op::R_SHIFT_ASSIGN => Op::R_SHIFT,
+                    Op::BINARY_AND_ASSIGN => Op::BIT_AND,
+                    Op::XOR_ASSIGN => Op::XOR,
+                    Op::BINARY_OR_ASSIGN => Op::BIT_OR,
+                    _ => unreachable!(),
+                };
+                let (tp_result, result) = self.visit_simple_binary_op(
+                    &tp_left,
+                    left.clone(),
+                    loc_left,
+                    &tp_right,
+                    right,
+                    loc_right,
+                    simple_op,
+                    fold_constant,
+                    emit_ir,
+                );
+                self.visit_simple_binary_op(
+                    &tp_left,
+                    left,
+                    loc_left,
+                    &tp_result,
+                    result,
+                    loc_left, // left instead of right
+                    Op::ASSIGN,
+                    fold_constant,
+                    emit_ir,
+                )
             }
             Op::DIV => {
                 if !tp_left.is_arithmetic_type() {
