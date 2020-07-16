@@ -3181,6 +3181,13 @@ impl Compiler<'_> {
                     emit_ir,
                 )
             }
+            Op::COMMA => {
+                if !emit_ir {
+                    (tp_right, None)
+                } else {
+                    (tp_right, right)
+                }
+            }
             Op::DIV => {
                 if !tp_left.is_arithmetic_type() {
                     panic!(
