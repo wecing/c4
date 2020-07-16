@@ -3188,6 +3188,86 @@ impl Compiler<'_> {
                     (tp_right, right)
                 }
             }
+            Op::BIT_OR | Op::XOR | Op::BIT_AND => {
+                let err_loc = if !tp_left.is_integral_type() {
+                    Some(loc_left)
+                } else if !tp_right.is_integral_type() {
+                    Some(loc_right)
+                } else {
+                    None
+                };
+                err_loc.map(|loc| {
+                    panic!(
+                        "{}: Operand must have integral type",
+                        Compiler::format_loc(loc)
+                    )
+                });
+
+                fn calc<
+                    T: std::ops::BitAnd<Output = T>
+                        + std::ops::BitXor<Output = T>
+                        + std::ops::BitOr<Output = T>,
+                >(
+                    op: Op,
+                    x: T,
+                    y: T,
+                ) -> T {
+                    if op == Op::BIT_OR {
+                        x | y
+                    } else if op == Op::XOR {
+                        x ^ y
+                    } else {
+                        x & y
+                    }
+                }
+
+                use ConstantOrIrValue as C;
+                match self
+                    .do_arithmetic_conversion(tp_left, left, tp_right, right)
+                {
+                    (None, None, tp) => (tp, None),
+
+                    (Some(C::I32(x)), Some(C::I32(y)), tp) => {
+                        (tp, Some(C::I32(calc(op, x, y))))
+                    }
+                    (Some(C::U32(x)), Some(C::U32(y)), tp) => {
+                        (tp, Some(C::U32(calc(op, x, y))))
+                    }
+                    (Some(C::I64(x)), Some(C::I64(y)), tp) => {
+                        (tp, Some(C::I64(calc(op, x, y))))
+                    }
+                    (Some(C::U64(x)), Some(C::U64(y)), tp) => {
+                        (tp, Some(C::U64(calc(op, x, y))))
+                    }
+
+                    (
+                        Some(C::IrValue(x_ir_id, false)),
+                        Some(C::IrValue(y_ir_id, false)),
+                        tp,
+                    ) => {
+                        let ir_id = self.get_next_ir_id();
+                        self.c4ir_builder.create_bin_op(
+                            ir_id.clone(),
+                            op,
+                            is_signed(&tp),
+                            is_fp(&tp),
+                            x_ir_id.clone(),
+                            y_ir_id.clone(),
+                        );
+                        self.llvm_builder.create_bin_op(
+                            ir_id.clone(),
+                            op,
+                            is_signed(&tp),
+                            is_fp(&tp),
+                            x_ir_id,
+                            y_ir_id,
+                        );
+                        (tp, Some(C::IrValue(ir_id, false)))
+                    }
+
+                    _ => unreachable!(),
+                }
+            }
             Op::DIV => {
                 if !tp_left.is_arithmetic_type() {
                     panic!(
