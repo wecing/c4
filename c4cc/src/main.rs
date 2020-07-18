@@ -223,6 +223,12 @@ enum ConstantOrIrValue {
     //
     // Unlike IrValue, the ir_id of Address could be looked up in
     // Compiler::global_constants and is guaranteed to exist.
+    //
+    // TODO: allow link-time constants here. this would (only) be useful for
+    // a few corner cases in constant folding, e.g.:
+    //     int n;
+    //     char s[&n != 0];
+    //     int main(...) {...}
     Address(String, i64), // ir_id, offset_bytes
     // For struct/union/array, ir_id is a pointer even when is_lvalue=false.
     IrValue(String, bool), // ir_id, is_lvalue
@@ -258,6 +264,13 @@ impl ConstantOrIrValue {
             ConstantOrIrValue::Float(v) => Some(*v as u64),
             ConstantOrIrValue::Double(v) => Some(*v as u64),
             _ => None,
+        }
+    }
+
+    fn is_ir_value(&self) -> bool {
+        match self {
+            ConstantOrIrValue::IrValue(_, _) => true,
+            _ => false,
         }
     }
 }
@@ -3264,6 +3277,158 @@ impl Compiler<'_> {
                         );
                         (tp, Some(C::IrValue(ir_id, false)))
                     }
+
+                    _ => unreachable!(),
+                }
+            }
+            Op::EQ | Op::NEQ | Op::LESS | Op::GT | Op::LEQ | Op::GEQ => {
+                use ConstantOrIrValue as C;
+                let is_equality_op = op == Op::EQ || op == Op::NEQ;
+                let is_null = |c: &Option<C>| match c {
+                    Some(C::U64(0)) => true,
+                    _ => false,
+                };
+                fn cmp<T: PartialEq<T> + PartialOrd<T>>(
+                    op: Op,
+                    x: T,
+                    y: T,
+                ) -> (QType, Option<C>) {
+                    let c = match op {
+                        Op::EQ => x == y,
+                        Op::NEQ => x != y,
+                        Op::LESS => x < y,
+                        Op::GT => x > y,
+                        Op::LEQ => x <= y,
+                        _ => x >= y,
+                    };
+                    (QType::from(Type::Int), Some(C::I32(c as i32)))
+                }
+                let (tp_left, left, tp_right, right) =
+                    match (&tp_left.tp, &tp_right.tp) {
+                        _ if tp_left.is_arithmetic_type()
+                            && tp_right.is_arithmetic_type() =>
+                        {
+                            let (left, right, tp) = self
+                                .do_arithmetic_conversion(
+                                    tp_left, left, tp_right, right,
+                                );
+                            (tp.clone(), left, tp, right)
+                        }
+                        (Type::Pointer(tp_el), Type::Pointer(tp_er))
+                            if Compiler::try_get_composite_type(
+                                tp_el, tp_er, loc_left,
+                            )
+                            .is_ok() =>
+                        {
+                            // 3.3.8 specifies the operands of relational
+                            // operators (LESS, GT, LEQ, GEQ) must not be
+                            // pointer to functions; but that is allowed for
+                            // equality operators (EQ, NEQ) as specified in
+                            // 3.3.9.
+                            if !is_equality_op && tp_el.is_function() {
+                                panic!(
+                                    "{}: Illegal type of operands",
+                                    Compiler::format_loc(loc_left)
+                                );
+                            }
+                            (tp_left, left, tp_right, right)
+                        }
+                        (Type::Pointer(tp_el), Type::Pointer(tp_er))
+                            if is_equality_op
+                                && (tp_el.is_void() || tp_er.is_void()) =>
+                        {
+                            let (tp_right, right) = self.cast_expression(
+                                tp_right,
+                                right,
+                                tp_left.clone(),
+                                loc_right,
+                                emit_ir,
+                            );
+                            (tp_left, left, tp_right, right)
+                        }
+                        _ if is_equality_op
+                            && ((tp_left.is_pointer() && is_null(&right))
+                                || (tp_right.is_pointer()
+                                    && is_null(&left))) =>
+                        {
+                            (tp_left, left, tp_right, right)
+                        }
+                        _ => panic!(
+                            "{}: Illegal type of operands",
+                            Compiler::format_loc(loc_left)
+                        ),
+                    };
+                if left.is_none() || right.is_none() {
+                    return (QType::from(Type::Int), None);
+                }
+                let (left, right) = (left.unwrap(), right.unwrap());
+                let (left, right) = if left.is_ir_value() || right.is_ir_value()
+                {
+                    (
+                        self.convert_to_ir_value(&tp_left, left),
+                        self.convert_to_ir_value(&tp_right, right),
+                    )
+                } else {
+                    (left, right)
+                };
+                let (left, right) = match (&left, &right) {
+                    (C::Address(addr_left, _), C::Address(addr_right, _))
+                        if addr_left != addr_right =>
+                    {
+                        if emit_ir {
+                            (
+                                self.convert_to_ir_value(&tp_left, left),
+                                self.convert_to_ir_value(&tp_right, right),
+                            )
+                        } else {
+                            return (QType::from(Type::Int), None);
+                        }
+                    }
+                    _ => (left, right),
+                };
+                match (left, right) {
+                    (C::IrValue(left, false), C::IrValue(right, false)) => {
+                        let i1_ir_id = self.get_next_ir_id();
+                        self.c4ir_builder.create_cmp_op(
+                            i1_ir_id.clone(),
+                            op,
+                            false,
+                            false,
+                            left.clone(),
+                            right.clone(),
+                        );
+                        self.llvm_builder.create_cmp_op(
+                            i1_ir_id.clone(),
+                            op,
+                            false,
+                            false,
+                            left,
+                            right,
+                        );
+                        let ir_id = self.get_next_ir_id();
+                        self.c4ir_builder
+                            .create_zext_i1_to_i32(&ir_id, &i1_ir_id);
+                        self.llvm_builder
+                            .create_zext_i1_to_i32(&ir_id, &i1_ir_id);
+                        (QType::from(Type::Int), Some(C::IrValue(ir_id, false)))
+                    }
+                    (C::IrValue(_, _), _) => unreachable!(),
+                    (_, C::IrValue(_, _)) => unreachable!(),
+
+                    (C::I8(x), C::I8(y)) => cmp(op, x, y),
+                    (C::U8(x), C::U8(y)) => cmp(op, x, y),
+                    (C::I16(x), C::I16(y)) => cmp(op, x, y),
+                    (C::U16(x), C::U16(y)) => cmp(op, x, y),
+                    (C::I32(x), C::I32(y)) => cmp(op, x, y),
+                    (C::U32(x), C::U32(y)) => cmp(op, x, y),
+                    (C::I64(x), C::I64(y)) => cmp(op, x, y),
+                    (C::U64(x), C::U64(y)) => cmp(op, x, y),
+                    (C::Float(x), C::Float(y)) => cmp(op, x, y),
+                    (C::Double(x), C::Double(y)) => cmp(op, x, y),
+
+                    (C::Address(_, x), C::Address(_, y)) => cmp(op, x, y),
+                    (C::Address(_, _), C::I64(0)) => cmp(op, 999, 0),
+                    (C::I64(0), C::Address(_, _)) => cmp(op, 0, 999),
 
                     _ => unreachable!(),
                 }
