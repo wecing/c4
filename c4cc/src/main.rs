@@ -3433,6 +3433,133 @@ impl Compiler<'_> {
                     _ => unreachable!(),
                 }
             }
+            Op::L_SHIFT | Op::R_SHIFT => {
+                let err_loc = if !tp_left.is_integral_type() {
+                    Some(loc_left)
+                } else if !tp_right.is_integral_type() {
+                    Some(loc_right)
+                } else {
+                    None
+                };
+                err_loc.map(|loc| {
+                    panic!(
+                        "{}: Operand must have integral type",
+                        Compiler::format_loc(loc)
+                    )
+                });
+
+                let (tp_left, left) = self.do_integral_promotion(tp_left, left);
+                let (tp_right, right) =
+                    self.do_integral_promotion(tp_right, right);
+                // LLVM requires shl/shr operands to have the same type
+                let (tp_right, right) = self.cast_expression(
+                    tp_right,
+                    right,
+                    tp_left.clone(),
+                    loc_right,
+                    emit_ir,
+                );
+
+                if left.is_none() || right.is_none() {
+                    return (tp_left, None);
+                }
+                let (left, right) = (left.unwrap(), right.unwrap());
+                let (left, right) = if left.is_ir_value() || right.is_ir_value()
+                {
+                    (
+                        self.convert_to_ir_value(&tp_left, left),
+                        self.convert_to_ir_value(&tp_right, right),
+                    )
+                } else {
+                    (left, right)
+                };
+
+                let is_shl = op == Op::L_SHIFT;
+
+                use ConstantOrIrValue as C;
+                match (left, right) {
+                    (
+                        C::IrValue(left_ir_id, false),
+                        C::IrValue(right_ir_id, false),
+                    ) => {
+                        let ir_id = self.get_next_ir_id();
+                        self.c4ir_builder.create_bin_op(
+                            ir_id.clone(),
+                            op,
+                            is_signed(&tp_left),
+                            false,
+                            left_ir_id.clone(),
+                            right_ir_id.clone(),
+                        );
+                        self.llvm_builder.create_bin_op(
+                            ir_id.clone(),
+                            op,
+                            is_signed(&tp_left),
+                            false,
+                            left_ir_id.clone(),
+                            right_ir_id.clone(),
+                        );
+                        (tp_left, Some(C::IrValue(ir_id, false)))
+                    }
+
+                    // int
+                    (C::I32(x), C::I32(y)) if is_shl => (
+                        QType::from(Type::Int),
+                        Some(C::I32(x.checked_shl(y as u32).unwrap_or(0))),
+                    ),
+                    (C::I32(x), C::I32(y)) => (
+                        QType::from(Type::Int),
+                        Some(C::I32(
+                            x.checked_shr(y as u32).unwrap_or(if x >= 0 {
+                                0
+                            } else {
+                                -1
+                            }),
+                        )),
+                    ),
+                    // unsigned int
+                    (C::U32(x), C::U32(y)) if is_shl => (
+                        QType::from(Type::Int),
+                        Some(C::U32(x.checked_shl(y).unwrap_or(0))),
+                    ),
+                    (C::U32(x), C::U32(y)) => (
+                        QType::from(Type::Int),
+                        Some(C::U32(x.checked_shr(y).unwrap_or(0))),
+                    ),
+                    // long
+                    (C::I64(x), C::I64(y)) if is_shl => (
+                        QType::from(Type::Int),
+                        Some(C::I64(
+                            x.checked_shl(y as u32).unwrap_or(if x >= 0 {
+                                0
+                            } else {
+                                -1
+                            }),
+                        )),
+                    ),
+                    (C::I64(x), C::I64(y)) => (
+                        QType::from(Type::Int),
+                        Some(C::I64(
+                            x.checked_shr(y as u32).unwrap_or(if x >= 0 {
+                                0
+                            } else {
+                                -1
+                            }),
+                        )),
+                    ),
+                    // unsigned long
+                    (C::U64(x), C::U64(y)) if is_shl => (
+                        QType::from(Type::Int),
+                        Some(C::U64(x.checked_shl(y as u32).unwrap_or(0))),
+                    ),
+                    (C::U64(x), C::U64(y)) => (
+                        QType::from(Type::Int),
+                        Some(C::U64(x.checked_shr(y as u32).unwrap_or(0))),
+                    ),
+
+                    _ => unreachable!(),
+                }
+            }
             Op::DIV => {
                 if !tp_left.is_arithmetic_type() {
                     panic!(
@@ -6204,6 +6331,48 @@ impl Compiler<'_> {
                     _ => (ir_id_x, ir_id_y, QType::from(Type::Int)),
                 }
             }
+        }
+    }
+
+    fn do_integral_promotion(
+        &mut self,
+        tp: QType,
+        c: Option<ConstantOrIrValue>,
+    ) -> (QType, Option<ConstantOrIrValue>) {
+        if !tp.is_integral_type() {
+            panic!(
+                "programming error: cannot do integral promotion on \
+                 non-integral types"
+            )
+        }
+        let (tp, c) =
+            self.convert_lvalue_and_func_designator(tp, c, true, true, true);
+        let int_tp = QType::from(Type::Int);
+        use ConstantOrIrValue as C;
+        match c {
+            None => {
+                let tp = match &tp.tp {
+                    Type::Char
+                    | Type::UnsignedChar
+                    | Type::Short
+                    | Type::UnsignedShort => Type::Int,
+                    _ => tp.tp,
+                };
+                (QType::from(tp), None)
+            }
+
+            Some(C::IrValue(ir_id, false)) => {
+                let (ir_id, tp) = self.do_integral_promotion_ir(ir_id, tp);
+                (tp, Some(C::IrValue(ir_id, false)))
+            }
+            Some(C::IrValue(_, true)) => unreachable!(),
+
+            Some(C::I8(x)) => (int_tp, Some(C::I32(x as i32))),
+            Some(C::U8(x)) => (int_tp, Some(C::I32(x as i32))),
+            Some(C::I16(x)) => (int_tp, Some(C::I32(x as i32))),
+            Some(C::U16(x)) => (int_tp, Some(C::I32(x as i32))),
+
+            c => (tp, c),
         }
     }
 
