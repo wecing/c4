@@ -3560,19 +3560,31 @@ impl Compiler<'_> {
                     _ => unreachable!(),
                 }
             }
-            Op::DIV => {
-                if !tp_left.is_arithmetic_type() {
+            Op::ADD | Op::SUB => {
+                unimplemented!() // TODO: add, sub
+            }
+            Op::MUL | Op::DIV | Op::MOD => {
+                let is_div = op == Op::DIV;
+                let is_mod = op == Op::MOD;
+
+                let err_loc = if is_mod && !tp_left.is_integral_type() {
+                    Some(loc_left)
+                } else if is_mod && !tp_right.is_integral_type() {
+                    Some(loc_right)
+                } else if !tp_left.is_arithmetic_type() {
+                    Some(loc_left)
+                } else if !tp_right.is_arithmetic_type() {
+                    Some(loc_right)
+                } else {
+                    None
+                };
+                err_loc.map(|loc| {
                     panic!(
                         "{}: Invalid operand type",
-                        Compiler::format_loc(loc_left)
+                        Compiler::format_loc(loc)
                     )
-                }
-                if !tp_right.is_arithmetic_type() {
-                    panic!(
-                        "{}: Invalid operand type",
-                        Compiler::format_loc(loc_right)
-                    )
-                }
+                });
+
                 let (left, right, tp) = self
                     .do_arithmetic_conversion(tp_left, left, tp_right, right);
                 if left.is_none() || right.is_none() || !fold_constant {
@@ -3580,28 +3592,60 @@ impl Compiler<'_> {
                 } else {
                     let left = left.unwrap();
                     let right = right.unwrap();
-                    if (tp.is_integral_type()
-                        && right.as_constant_u64() == Some(0 as u64))
-                        || (!tp.is_integral_type()
-                            && right.as_constant_double() == Some(0.0))
-                    {
-                        panic!(
-                            "{}: Divisor is 0",
-                            Compiler::format_loc(loc_right)
-                        )
+                    if is_div || is_mod {
+                        if (tp.is_integral_type()
+                            && right.as_constant_u64() == Some(0 as u64))
+                            || (!tp.is_integral_type()
+                                && right.as_constant_double() == Some(0.0))
+                        {
+                            panic!(
+                                "{}: Divisor is 0",
+                                Compiler::format_loc(loc_right)
+                            )
+                        }
                     }
                     use ConstantOrIrValue as C;
                     let c = match (left, right) {
-                        (C::I8(x), C::I8(y)) => C::I8(x / y),
-                        (C::U8(x), C::U8(y)) => C::U8(x / y),
-                        (C::I16(x), C::I16(y)) => C::I16(x / y),
-                        (C::U16(x), C::U16(y)) => C::U16(x / y),
-                        (C::I32(x), C::I32(y)) => C::I32(x / y),
-                        (C::U32(x), C::U32(y)) => C::U32(x / y),
-                        (C::I64(x), C::I64(y)) => C::I64(x / y),
-                        (C::U64(x), C::U64(y)) => C::U64(x / y),
-                        (C::Float(x), C::Float(y)) => C::Float(x / y),
-                        (C::Double(x), C::Double(y)) => C::Double(x / y),
+                        (C::I8(x), C::I8(y)) if is_div => C::I8(x / y),
+                        (C::I8(x), C::I8(y)) if is_mod => C::I8(x % y),
+                        (C::I8(x), C::I8(y)) => C::I8(x * y),
+
+                        (C::U8(x), C::U8(y)) if is_div => C::U8(x / y),
+                        (C::U8(x), C::U8(y)) if is_mod => C::U8(x % y),
+                        (C::U8(x), C::U8(y)) => C::U8(x * y),
+
+                        (C::I16(x), C::I16(y)) if is_div => C::I16(x / y),
+                        (C::I16(x), C::I16(y)) if is_mod => C::I16(x % y),
+                        (C::I16(x), C::I16(y)) => C::I16(x * y),
+
+                        (C::U16(x), C::U16(y)) if is_div => C::U16(x / y),
+                        (C::U16(x), C::U16(y)) if is_mod => C::U16(x % y),
+                        (C::U16(x), C::U16(y)) => C::U16(x * y),
+
+                        (C::I32(x), C::I32(y)) if is_div => C::I32(x / y),
+                        (C::I32(x), C::I32(y)) if is_mod => C::I32(x % y),
+                        (C::I32(x), C::I32(y)) => C::I32(x * y),
+
+                        (C::U32(x), C::U32(y)) if is_div => C::U32(x / y),
+                        (C::U32(x), C::U32(y)) if is_mod => C::U32(x % y),
+                        (C::U32(x), C::U32(y)) => C::U32(x * y),
+
+                        (C::I64(x), C::I64(y)) if is_div => C::I64(x / y),
+                        (C::I64(x), C::I64(y)) if is_mod => C::I64(x % y),
+                        (C::I64(x), C::I64(y)) => C::I64(x * y),
+
+                        (C::U64(x), C::U64(y)) if is_div => C::U64(x / y),
+                        (C::U64(x), C::U64(y)) if is_mod => C::U64(x % y),
+                        (C::U64(x), C::U64(y)) => C::U64(x * y),
+
+                        (C::Float(x), C::Float(y)) if is_div => C::Float(x / y),
+                        (C::Float(x), C::Float(y)) => C::Float(x * y),
+
+                        (C::Double(x), C::Double(y)) if is_div => {
+                            C::Double(x / y)
+                        }
+                        (C::Double(x), C::Double(y)) => C::Double(x * y),
+
                         (C::IrValue(x, false), C::IrValue(y, false)) => {
                             let ir_id = self.get_next_ir_id();
                             self.c4ir_builder.create_bin_op(
@@ -3627,7 +3671,7 @@ impl Compiler<'_> {
                     (tp, Some(c))
                 }
             }
-            _ => unimplemented!(), // TODO: other binary ops
+            Op::LOGIC_OR | Op::LOGIC_AND => unreachable!(),
         }
     }
 
