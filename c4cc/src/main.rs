@@ -5677,6 +5677,26 @@ impl Compiler<'_> {
 
             (_, None, _) => (dst_tp, None),
 
+            (
+                Type::Pointer(_),
+                Some(ConstantOrIrValue::IrValue(src_ir_id, false)),
+                Type::Pointer(_),
+            ) => {
+                let dst_ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_cast(
+                    dst_ir_id.clone(),
+                    &dst_tp,
+                    src_ir_id.clone(),
+                    &src_tp,
+                );
+                self.llvm_builder.create_cast(
+                    dst_ir_id.clone(),
+                    &dst_tp,
+                    src_ir_id.clone(),
+                    &src_tp,
+                );
+                (dst_tp, Some(ConstantOrIrValue::IrValue(dst_ir_id, false)))
+            }
             (Type::Pointer(_), _, Type::Pointer(_)) => (dst_tp, v),
 
             (_, Some(p @ ConstantOrIrValue::Address(_, _)), _)
