@@ -227,7 +227,7 @@ enum ConstantOrIrValue {
     // TODO: allow link-time constants here. this would (only) be useful for
     // a few corner cases in constant folding, e.g.:
     //     int n;
-    //     char s[&n != 0];
+    //     char s[&n != 0]; // or &n + 10 - &n, etc
     //     int main(...) {...}
     Address(String, i64), // ir_id, offset_bytes
     // For struct/union/array, ir_id is a pointer even when is_lvalue=false.
@@ -3631,12 +3631,136 @@ impl Compiler<'_> {
                         _ => unreachable!(),
                     }
                 } else if tp_left.is_pointer() && tp_right.is_integral_type() {
-                    unimplemented!() // TODO
+                    let tp_elem = match &tp_left.tp {
+                        Type::Pointer(elem) => *elem.clone(),
+                        _ => unreachable!(),
+                    };
+                    let sz_elem = match Compiler::get_type_size_and_align_bytes(
+                        &tp_elem.tp,
+                    ) {
+                        Some((sz, _)) => sz,
+                        None => panic!(
+                            "{}: Complete object element type expected",
+                            Compiler::format_loc(loc_left)
+                        ),
+                    };
+                    let sz_elem =
+                        sz_elem as i64 * if op == Op::ADD { 1 } else { -1 };
+
+                    let (tp_right, right) = self.cast_expression(
+                        tp_right,
+                        right,
+                        QType::from(Type::Long),
+                        loc_right,
+                        emit_ir,
+                    );
+
+                    if left.is_none() || right.is_none() {
+                        return (tp_left, None);
+                    }
+                    let (left, right) = (left.unwrap(), right.unwrap());
+                    let (left, right) =
+                        if left.is_ir_value() || right.is_ir_value() {
+                            (
+                                self.convert_to_ir_value(&tp_left, left),
+                                self.convert_to_ir_value(&tp_right, right),
+                            )
+                        } else {
+                            (left, right)
+                        };
+
+                    use ConstantOrIrValue as C;
+                    match (left, right) {
+                        (C::IrValue(left, false), C::IrValue(right, false)) => {
+                            // ptr + n => (T*) ((void*) ptr + n * sizeof(T))
+                            let ptr_ir_id = self.get_next_ir_id();
+                            self.c4ir_builder.create_cast(
+                                ptr_ir_id.clone(),
+                                &QType::char_ptr_tp(),
+                                left.clone(),
+                                &tp_left,
+                            );
+                            self.llvm_builder.create_cast(
+                                ptr_ir_id.clone(),
+                                &QType::char_ptr_tp(),
+                                left.clone(),
+                                &tp_left,
+                            );
+
+                            let sz_ir_id = self.get_next_ir_id();
+                            self.c4ir_builder.create_constant(
+                                sz_ir_id.clone(),
+                                &ConstantOrIrValue::I64(sz_elem),
+                                &QType::from(Type::Long),
+                            );
+                            self.llvm_builder.create_constant(
+                                sz_ir_id.clone(),
+                                &ConstantOrIrValue::I64(sz_elem),
+                                &QType::from(Type::Long),
+                            );
+
+                            let offset_ir_id = self.get_next_ir_id();
+                            self.c4ir_builder.create_bin_op(
+                                offset_ir_id.clone(),
+                                Op::MUL,
+                                true,
+                                false,
+                                right.clone(),
+                                sz_ir_id.clone(),
+                            );
+                            self.llvm_builder.create_bin_op(
+                                offset_ir_id.clone(),
+                                Op::MUL,
+                                true,
+                                false,
+                                right.clone(),
+                                sz_ir_id.clone(),
+                            );
+
+                            let ir_id = self.get_next_ir_id();
+                            self.c4ir_builder.create_ptr_add(
+                                &ir_id,
+                                &ptr_ir_id,
+                                &offset_ir_id,
+                            );
+                            self.llvm_builder.create_ptr_add(
+                                &ir_id,
+                                &ptr_ir_id,
+                                &offset_ir_id,
+                            );
+
+                            self.cast_expression(
+                                QType::char_ptr_tp(),
+                                Some(C::IrValue(ir_id, false)),
+                                tp_left,
+                                loc_left,
+                                true,
+                            )
+                        }
+                        (C::Address(ir_id, offset), C::I64(y)) => {
+                            (tp_left, Some(C::Address(ir_id, offset + y)))
+                        }
+                        (C::U64(x), C::I64(y)) => {
+                            (tp_left, Some(C::U64(x + y as u64)))
+                        }
+                        _ => unreachable!(),
+                    }
                 } else if tp_left.is_integral_type()
                     && tp_right.is_pointer()
                     && op == Op::ADD
                 {
-                    unimplemented!() // TODO
+                    // n + ptr => ptr + n
+                    self.visit_simple_binary_op(
+                        &tp_right,
+                        right,
+                        loc_right,
+                        &tp_left,
+                        left,
+                        loc_left,
+                        op,
+                        fold_constant,
+                        emit_ir,
+                    )
                 } else if tp_left.is_pointer()
                     && tp_right.is_pointer()
                     && op == Op::SUB
