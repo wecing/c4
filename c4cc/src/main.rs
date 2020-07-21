@@ -3561,7 +3561,93 @@ impl Compiler<'_> {
                 }
             }
             Op::ADD | Op::SUB => {
-                unimplemented!() // TODO: add, sub
+                if tp_left.is_arithmetic_type() && tp_right.is_arithmetic_type()
+                {
+                    let (left, right, tp) = self.do_arithmetic_conversion(
+                        tp_left, left, tp_right, right,
+                    );
+                    if left.is_none() || right.is_none() {
+                        return (tp, None);
+                    }
+                    let (left, right) = (left.unwrap(), right.unwrap());
+
+                    fn calc<
+                        T: std::ops::Add<Output = T> + std::ops::Sub<Output = T>,
+                    >(
+                        op: Op,
+                        x: T,
+                        y: T,
+                    ) -> T {
+                        if op == Op::ADD {
+                            x + y
+                        } else {
+                            x - y
+                        }
+                    }
+
+                    use ConstantOrIrValue as C;
+                    match (left, right) {
+                        (C::I32(x), C::I32(y)) => {
+                            (tp, Some(C::I32(calc(op, x, y))))
+                        }
+                        (C::U32(x), C::U32(y)) => {
+                            (tp, Some(C::U32(calc(op, x, y))))
+                        }
+                        (C::I64(x), C::I64(y)) => {
+                            (tp, Some(C::I64(calc(op, x, y))))
+                        }
+                        (C::U64(x), C::U64(y)) => {
+                            (tp, Some(C::U64(calc(op, x, y))))
+                        }
+                        (C::Float(x), C::Float(y)) => {
+                            (tp, Some(C::Float(calc(op, x, y))))
+                        }
+                        (C::Double(x), C::Double(y)) => {
+                            (tp, Some(C::Double(calc(op, x, y))))
+                        }
+                        (
+                            C::IrValue(x_ir_id, false),
+                            C::IrValue(y_ir_id, false),
+                        ) => {
+                            let ir_id = self.get_next_ir_id();
+                            self.c4ir_builder.create_bin_op(
+                                ir_id.clone(),
+                                op,
+                                is_signed(&tp),
+                                is_fp(&tp),
+                                x_ir_id.clone(),
+                                y_ir_id.clone(),
+                            );
+                            self.llvm_builder.create_bin_op(
+                                ir_id.clone(),
+                                op,
+                                is_signed(&tp),
+                                is_fp(&tp),
+                                x_ir_id.clone(),
+                                y_ir_id.clone(),
+                            );
+                            (tp, Some(C::IrValue(ir_id, false)))
+                        }
+                        _ => unreachable!(),
+                    }
+                } else if tp_left.is_pointer() && tp_right.is_integral_type() {
+                    unimplemented!() // TODO
+                } else if tp_left.is_integral_type()
+                    && tp_right.is_pointer()
+                    && op == Op::ADD
+                {
+                    unimplemented!() // TODO
+                } else if tp_left.is_pointer()
+                    && tp_right.is_pointer()
+                    && op == Op::SUB
+                {
+                    unimplemented!() // TODO
+                } else {
+                    panic!(
+                        "{}: Invalid operand types",
+                        Compiler::format_loc(loc_left)
+                    );
+                }
             }
             Op::MUL | Op::DIV | Op::MOD => {
                 let is_div = op == Op::DIV;
