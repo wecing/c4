@@ -3765,7 +3765,153 @@ impl Compiler<'_> {
                     && tp_right.is_pointer()
                     && op == Op::SUB
                 {
-                    unimplemented!() // TODO
+                    let long_tp = QType::from(Type::Long);
+                    let tp = Compiler::get_composite_type(
+                        &tp_left, &tp_right, loc_left,
+                    );
+                    let tp_elem = match &tp.tp {
+                        Type::Pointer(elem) => *elem.clone(),
+                        _ => unreachable!(),
+                    };
+                    let sz_elem = match Compiler::get_type_size_and_align_bytes(
+                        &tp_elem.tp,
+                    ) {
+                        Some((sz, _)) => sz,
+                        None => panic!(
+                            "{}: Complete object element type expected",
+                            Compiler::format_loc(loc_left)
+                        ),
+                    };
+
+                    if left.is_none() || right.is_none() {
+                        return (long_tp, None);
+                    }
+                    let (left, right) = (left.unwrap(), right.unwrap());
+                    let (left, right) =
+                        if left.is_ir_value() || right.is_ir_value() {
+                            (
+                                self.convert_to_ir_value(&tp_left, left),
+                                self.convert_to_ir_value(&tp_right, right),
+                            )
+                        } else {
+                            (left, right)
+                        };
+
+                    use ConstantOrIrValue as C;
+                    match (left, right) {
+                        (C::U64(_), C::Address(_, _)) => (long_tp, None),
+                        (C::Address(_, _), C::U64(_)) => (long_tp, None),
+
+                        (C::U64(x), C::U64(y)) => (
+                            long_tp,
+                            Some(C::I64(
+                                x.overflowing_sub(y).0 as i64 / sz_elem as i64,
+                            )),
+                        ),
+
+                        (C::Address(ir_id_x, _), C::Address(ir_id_y, _))
+                            if ir_id_x != ir_id_y =>
+                        {
+                            (long_tp, None)
+                        }
+                        (
+                            C::Address(ir_id, offset_x),
+                            C::Address(_, offset_y),
+                        ) => (
+                            long_tp,
+                            Some(C::Address(
+                                ir_id,
+                                offset_x.overflowing_sub(offset_y).0
+                                    / sz_elem as i64,
+                            )),
+                        ),
+
+                        (
+                            C::IrValue(ir_id_x, false),
+                            C::IrValue(ir_id_y, false),
+                        ) => {
+                            // p1 - p2 => ((long*)p1 - (long*)p2) / sizeof(T)
+                            let p1 = self.get_next_ir_id();
+                            self.c4ir_builder.create_cast(
+                                p1.clone(),
+                                &long_tp,
+                                ir_id_x.clone(),
+                                &tp_left,
+                            );
+                            self.llvm_builder.create_cast(
+                                p1.clone(),
+                                &long_tp,
+                                ir_id_x.clone(),
+                                &tp_left,
+                            );
+
+                            let p2 = self.get_next_ir_id();
+                            self.c4ir_builder.create_cast(
+                                p2.clone(),
+                                &long_tp,
+                                ir_id_y.clone(),
+                                &tp_right,
+                            );
+                            self.llvm_builder.create_cast(
+                                p2.clone(),
+                                &long_tp,
+                                ir_id_y.clone(),
+                                &tp_right,
+                            );
+
+                            let diff = self.get_next_ir_id();
+                            self.c4ir_builder.create_bin_op(
+                                diff.clone(),
+                                Op::SUB,
+                                true,
+                                false,
+                                p1.clone(),
+                                p2.clone(),
+                            );
+                            self.llvm_builder.create_bin_op(
+                                diff.clone(),
+                                Op::SUB,
+                                true,
+                                false,
+                                p1.clone(),
+                                p2.clone(),
+                            );
+
+                            let sz = self.get_next_ir_id();
+                            self.c4ir_builder.create_constant(
+                                sz.clone(),
+                                &C::I64(sz_elem as i64),
+                                &long_tp,
+                            );
+                            self.llvm_builder.create_constant(
+                                sz.clone(),
+                                &C::I64(sz_elem as i64),
+                                &long_tp,
+                            );
+
+                            let ir_id = self.get_next_ir_id();
+                            self.c4ir_builder.create_bin_op(
+                                ir_id.clone(),
+                                Op::DIV,
+                                true,
+                                false,
+                                diff.clone(),
+                                sz.clone(),
+                            );
+                            self.llvm_builder.create_bin_op(
+                                ir_id.clone(),
+                                Op::DIV,
+                                true,
+                                false,
+                                diff.clone(),
+                                sz.clone(),
+                            );
+
+                            (long_tp, Some(C::IrValue(ir_id, false)))
+                        }
+
+                        _ => unreachable!(),
+                    }
                 } else {
                     panic!(
                         "{}: Invalid operand types",
