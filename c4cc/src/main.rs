@@ -278,7 +278,7 @@ impl ConstantOrIrValue {
 #[derive(Debug, Clone)]
 enum Initializer {
     Expr(QType, ConstantOrIrValue), // does not contain lvalues
-    Struct(Vec<Initializer>),
+    Struct(Vec<Initializer>, u32),  // zero_padding_bytes: u32
 }
 
 impl Scope {
@@ -843,6 +843,42 @@ impl LLVMBuilderImpl {
         }
     }
 
+    fn get_llvm_constant_init(
+        &mut self,
+        init: &Initializer,
+    ) -> llvm_sys::prelude::LLVMValueRef {
+        use ConstantOrIrValue as C;
+        match init {
+            Initializer::Expr(_, C::IrValue(ir_id, false)) => {
+                *self.symbol_table.get(ir_id).unwrap()
+            }
+            Initializer::Expr(_, c) => self.get_llvm_constant(c).0,
+            Initializer::Struct(inits, zero_padding_bytes) => {
+                let mut vals: Vec<llvm_sys::prelude::LLVMValueRef> = inits
+                    .into_iter()
+                    .map(|init| self.get_llvm_constant_init(init))
+                    .collect();
+                if *zero_padding_bytes > 0 {
+                    let zero_padding_tp = self.get_llvm_type(&Type::Array(
+                        Box::new(QType::from(Type::Char)),
+                        Some(*zero_padding_bytes),
+                    ));
+                    let zero_padding = unsafe {
+                        llvm_sys::core::LLVMConstNull(zero_padding_tp)
+                    };
+                    vals.push(zero_padding);
+                }
+                unsafe {
+                    llvm_sys::core::LLVMConstStruct(
+                        vals.as_mut_ptr(),
+                        vals.len() as u32,
+                        1,
+                    )
+                }
+            }
+        }
+    }
+
     fn get_next_tmp_ir_id(&mut self) -> String {
         let r = self.next_uuid;
         self.next_uuid += 1;
@@ -986,22 +1022,17 @@ impl IRBuilder for LLVMBuilderImpl {
         };
         linkage_llvm.map(|ln| unsafe { llvm_sys::core::LLVMSetLinkage(v, ln) });
 
-        use ConstantOrIrValue as C;
-        init.as_ref()
-            .map(|x| match x {
-                Initializer::Struct(_) => unimplemented!(), // TODO: {...} init
-                Initializer::Expr(_, C::IrValue(ir_id, false)) => {
-                    *self.symbol_table.get(ir_id).unwrap()
-                }
-                Initializer::Expr(_, c) => self.get_llvm_constant(c).0,
-            })
-            .map(|value| unsafe {
+        init.as_ref().map(|x| self.get_llvm_constant_init(x)).map(
+            |value| unsafe {
                 if is_global {
                     llvm_sys::core::LLVMSetInitializer(v, value);
                 } else {
+                    // Looks like store works even for aggregate types. Another
+                    // option would be to create a global const and memcpy.
                     llvm_sys::core::LLVMBuildStore(self.builder, value, v);
                 }
-            });
+            },
+        );
 
         self.symbol_table.insert(String::from(name), v);
     }
@@ -1774,8 +1805,8 @@ impl Compiler<'_> {
                 // 3.1.2.4: An object declared with external or internal
                 // linkage, or with the storage-class specifier static has
                 // static storage duration
-                let is_global = self.current_scope.outer_scope.is_none()
-                    || scs == Some(SCS::STATIC);
+                let is_global =
+                    linkage != Linkage::NONE || scs == Some(SCS::STATIC);
 
                 let init = if id.init_idx == 0 {
                     Option::None
@@ -1806,6 +1837,7 @@ impl Compiler<'_> {
 
                 // TODO: check if `init` is compatible with `qtype`
                 // TODO: `qtype` could still change at this point
+                // TODO: pack+cast `init` for non-scalar types
                 //
                 // 3.5: If an identifier for an object is declared with no
                 // linkage, the type for the object shall be complete by the end
@@ -1865,6 +1897,12 @@ impl Compiler<'_> {
         (storage_class_specifiers.pop(), qualified_type)
     }
 
+    // TODO: allow link time constants in initializer
+    //       e.g.:
+    //          int n;
+    //          int *np = &n;
+    //          int *np2 = &*&n;
+    //          int main(...) {...}
     fn visit_initializer(&mut self, init_idx: i32) -> Initializer {
         let is_global_decl = self.current_scope.outer_scope.is_none();
         let init = &self.translation_unit.initializers[init_idx as usize];
@@ -1894,6 +1932,7 @@ impl Compiler<'_> {
                         .iter()
                         .map(|idx| self.visit_initializer(*idx))
                         .collect(),
+                    0,
                 )
             }
             None => {
