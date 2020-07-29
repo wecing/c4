@@ -222,13 +222,7 @@ enum ConstantOrIrValue {
     // Addresses may only be used together with pointer or array types.
     //
     // Unlike IrValue, the ir_id of Address could be looked up in
-    // Compiler::global_constants and is guaranteed to exist.
-    //
-    // TODO: allow link-time constants here. this would (only) be useful for
-    // a few corner cases in constant folding, e.g.:
-    //     int n;
-    //     char s[&n != 0]; // or &n + 10 - &n, etc
-    //     int main(...) {...}
+    // Compiler::str_constants and is guaranteed to exist.
     Address(String, i64), // ir_id, offset_bytes
     // For struct/union/array, ir_id is a pointer even when is_lvalue=false.
     IrValue(String, bool), // ir_id, is_lvalue
@@ -1478,8 +1472,7 @@ struct Compiler<'a> {
     next_uuid: u32,
 
     // ir_id => binary representation
-    // TODO: value should be Either<Vec<u8>, Initializer>
-    global_constants: HashMap<String, Vec<u8>>,
+    str_constants: HashMap<String, Vec<u8>>,
 
     c4ir_builder: C4IRBuilder,
     llvm_builder: LLVMBuilder,
@@ -1493,7 +1486,7 @@ impl Compiler<'_> {
             translation_unit: &tu,
             current_scope: Scope::new(),
             next_uuid: 1_000,
-            global_constants: HashMap::new(),
+            str_constants: HashMap::new(),
             c4ir_builder: C4IRBuilder::new(),
             llvm_builder: LLVMBuilder::new(),
         };
@@ -1897,11 +1890,15 @@ impl Compiler<'_> {
         (storage_class_specifiers.pop(), qualified_type)
     }
 
-    // TODO: allow link time constants in initializer
-    //       e.g.:
+    // TODO: support link time constants in initializer
+    //       e.g. in initializer:
     //          int n;
     //          int *np = &n;
     //          int *np2 = &*&n;
+    //          int main(...) {...}
+    //       or for constant folding:
+    //          int n;
+    //          char s[&n != 0]; // or &n + 10 - &n, etc
     //          int main(...) {...}
     fn visit_initializer(&mut self, init_idx: i32) -> Initializer {
         let is_global_decl = self.current_scope.outer_scope.is_none();
@@ -2039,7 +2036,7 @@ impl Compiler<'_> {
                 let len = buf.len() as u32;
 
                 let ir_id = self.get_next_ir_id();
-                self.global_constants.insert(ir_id.clone(), buf.clone());
+                self.str_constants.insert(ir_id.clone(), buf.clone());
 
                 self.c4ir_builder
                     .create_constant_buffer(ir_id.clone(), buf.clone());
@@ -2062,7 +2059,7 @@ impl Compiler<'_> {
                 let len = buf.len() as u32;
 
                 let ir_id = self.get_next_ir_id();
-                self.global_constants.insert(ir_id.clone(), buf.clone());
+                self.str_constants.insert(ir_id.clone(), buf.clone());
 
                 self.c4ir_builder
                     .create_constant_buffer(ir_id.clone(), buf.clone());
@@ -2290,7 +2287,7 @@ impl Compiler<'_> {
                     (C::Address(ir_id, offset_bytes), Type::Char)
                     | (C::Address(ir_id, offset_bytes), Type::UnsignedChar) => {
                         let offset: usize = (*offset_bytes + s) as usize;
-                        let buf = self.global_constants.get(ir_id).unwrap();
+                        let buf = self.str_constants.get(ir_id).unwrap();
                         if buf.len() <= offset {
                             panic!(
                                 "{}: Index out of bound",
