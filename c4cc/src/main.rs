@@ -6368,6 +6368,12 @@ impl Compiler<'_> {
                 let tp = QType::from(Type::Pointer(t));
                 (tp, None)
             }
+            (Type::Array(t, _), addr @ Some(C::Address(_, _)))
+                if do_arr_to_ptr =>
+            {
+                let tp = QType::from(Type::Pointer(t));
+                (tp, addr)
+            }
             (Type::Array(_, _), _) if do_arr_to_ptr => unreachable!(),
             (Type::Array(_, _), _) => (tp, expr),
 
@@ -6418,10 +6424,59 @@ impl Compiler<'_> {
     ) -> ConstantOrIrValue {
         match c {
             ConstantOrIrValue::IrValue(_, _) => c,
-            ConstantOrIrValue::Address(_, _) => {
-                // This could return lvalue ir values, which breaks a few
-                // assumptions in the code
-                unimplemented!() // TODO: string literals and struct init
+            ConstantOrIrValue::Address(ir_id, offset_bytes) => {
+                let old_ptr_ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_cast(
+                    old_ptr_ir_id.clone(),
+                    &QType::char_ptr_tp(),
+                    ir_id.clone(),
+                    tp,
+                );
+                self.llvm_builder.create_cast(
+                    old_ptr_ir_id.clone(),
+                    &QType::char_ptr_tp(),
+                    ir_id.clone(),
+                    tp,
+                );
+
+                let offset_ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_constant(
+                    offset_ir_id.clone(),
+                    &ConstantOrIrValue::I64(offset_bytes),
+                    &QType::from(Type::Long),
+                );
+                self.llvm_builder.create_constant(
+                    offset_ir_id.clone(),
+                    &ConstantOrIrValue::I64(offset_bytes),
+                    &QType::from(Type::Long),
+                );
+
+                let ptr_ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_ptr_add(
+                    &ptr_ir_id,
+                    &old_ptr_ir_id,
+                    &offset_ir_id,
+                );
+                self.llvm_builder.create_ptr_add(
+                    &ptr_ir_id,
+                    &old_ptr_ir_id,
+                    &offset_ir_id,
+                );
+
+                let ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_cast(
+                    ir_id.clone(),
+                    tp,
+                    ptr_ir_id.clone(),
+                    &QType::char_ptr_tp(),
+                );
+                self.llvm_builder.create_cast(
+                    ir_id.clone(),
+                    tp,
+                    ptr_ir_id.clone(),
+                    &QType::char_ptr_tp(),
+                );
+                ConstantOrIrValue::IrValue(ir_id, false)
             }
             _ => {
                 let ir_id = self.get_next_ir_id();
