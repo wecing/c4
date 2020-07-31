@@ -1803,6 +1803,18 @@ impl Compiler<'_> {
 
                 let init = if id.init_idx == 0 {
                     Option::None
+                } else if linkage != Linkage::NONE
+                    && self.current_scope.is_file_scope()
+                {
+                    // 3.5.7: If the declaration of an identifier has block
+                    // scope, and the identifier has external or internal
+                    // linkage, there shall be no initializer for the
+                    // identifier.
+                    panic!(
+                        "{}: Unexpected initializer for variable {}",
+                        Compiler::format_loc(id.get_d_loc()),
+                        name
+                    )
                 } else if is_defined {
                     // covers internal linkage global redefinitions, e.g.:
                     //
@@ -1817,7 +1829,7 @@ impl Compiler<'_> {
                     )
                 } else {
                     self.current_scope.ordinary_ids_ns.insert(
-                        name,
+                        name.clone(),
                         OrdinaryIdRef::ObjFnRef(
                             ir_id.clone(),
                             qtype.clone(),
@@ -1825,21 +1837,74 @@ impl Compiler<'_> {
                             true, // is_defined
                         ),
                     );
-                    Some(self.visit_initializer(id.init_idx))
+                    // 3.5.7: All the expressions in an initializer for an
+                    // object that has static storage duration or in an
+                    // initializer list for an object that has aggregate or
+                    // union type shall be constant expressions.
+                    let emit_ir = !is_global && !qtype.is_scalar_type();
+                    Some(self.visit_initializer(id.init_idx, emit_ir))
                 };
 
-                // TODO: check if `init` is compatible with `qtype`
-                // TODO: `qtype` could still change at this point
-                // TODO: pack+cast `init` for non-scalar types
-                //
+                let init = init.map(|init| {
+                    self.sanitize_initializer(&qtype, init, id.get_d_loc())
+                });
+
+                // 3.5.7: If an array of unknown size is initialized, its size
+                // is determined by the number of initializers provided for its
+                // members. At the end of its initializer list, the array no
+                // longer has incomplete type.
+                let qtype = match (&qtype.tp, &init) {
+                    (
+                        Type::Array(elem_tp, None),
+                        Some(Initializer::Struct(inits, 0)),
+                    ) => QType {
+                        is_const: qtype.is_const,
+                        is_volatile: qtype.is_volatile,
+                        tp: Type::Array(
+                            elem_tp.clone(),
+                            Some(inits.len() as u32),
+                        ),
+                    },
+                    _ => qtype,
+                };
+
                 // 3.5: If an identifier for an object is declared with no
                 // linkage, the type for the object shall be complete by the end
                 // of its declarator, or by the end of its init-declarator if it
                 // has an initializer.
+                if linkage == Linkage::NONE
+                    && Compiler::get_type_size_and_align_bytes(&qtype.tp)
+                        .is_none()
+                {
+                    panic!(
+                        "{}: Incomplete type for variable {}",
+                        Compiler::format_loc(id.get_init_loc()),
+                        name
+                    )
+                }
+
+                // 3.7.2: A declaration of an identifier for an object that has
+                // file scope without an initializer, and without a
+                // storage-class specifier or with the storage-class specifier
+                // static, constitutes a tentative definition.
                 //
                 // 3.7.2: If the declaration of an identifier for an object is a
                 // tentative definition and has internal linkage, the declared
                 // type shall not be an incomplete type.
+                let is_tentative = self.current_scope.is_file_scope()
+                    && init.is_none()
+                    && (scs.is_none() || scs == Some(SCS::STATIC));
+                if is_tentative
+                    && linkage == Linkage::INTERNAL
+                    && Compiler::get_type_size_and_align_bytes(&qtype.tp)
+                        .is_none()
+                {
+                    panic!(
+                        "{}: Incomplete type for variable {}",
+                        Compiler::format_loc(id.get_init_loc()),
+                        name
+                    )
+                }
 
                 self.c4ir_builder.create_definition(
                     is_global, &ir_id, &qtype, linkage, &init,
@@ -1900,24 +1965,23 @@ impl Compiler<'_> {
     //          int n;
     //          char s[&n != 0]; // or &n + 10 - &n, etc
     //          int main(...) {...}
-    fn visit_initializer(&mut self, init_idx: i32) -> Initializer {
-        let is_global_decl = self.current_scope.outer_scope.is_none();
+    fn visit_initializer(
+        &mut self,
+        init_idx: i32,
+        emit_ir: bool,
+    ) -> Initializer {
         let init = &self.translation_unit.initializers[init_idx as usize];
         match &init.init {
             Some(ast::Initializer_oneof_init::expr(expr)) => {
                 let e = &self.translation_unit.exprs[expr.e as usize];
-                let (qtype, result) = self.visit_expr(
-                    (e, expr.get_e_loc()),
-                    true,
-                    !is_global_decl,
-                );
+                let (qtype, result) =
+                    self.visit_expr((e, expr.get_e_loc()), true, emit_ir);
                 let (qtype, result) = self.convert_lvalue_and_func_designator(
                     qtype, result, true, true, true,
                 );
                 match result {
                     None => panic!(
-                        "{}: Global definition initializer must evaluate to \
-                         constants",
+                        "{}: Initializer shall be a constant expression",
                         Compiler::format_loc(expr.get_e_loc())
                     ),
                     Some(r) => Initializer::Expr(qtype, r),
@@ -1927,7 +1991,7 @@ impl Compiler<'_> {
                 Initializer::Struct(
                     st.inits
                         .iter()
-                        .map(|idx| self.visit_initializer(*idx))
+                        .map(|idx| self.visit_initializer(*idx, emit_ir))
                         .collect(),
                     0,
                 )
@@ -1936,6 +2000,26 @@ impl Compiler<'_> {
                 panic!("Invalid AST input: initializer #{} is empty", init_idx)
             }
         }
+    }
+
+    fn sanitize_initializer(
+        &mut self,
+        qtype: &QType,
+        init: Initializer,
+        loc: &ast::Loc,
+    ) -> Initializer {
+        // 3.5.7: The type of the entity to be initialized shall be an object
+        // type or an array of unknown size.
+        if Compiler::get_type_size_and_align_bytes(&qtype.tp).is_none()
+            && !qtype.is_array()
+        {
+            panic!(
+                "{}: Complete object type or array of unknown size expected",
+                Compiler::format_loc(loc)
+            )
+        }
+
+        unimplemented!() // TODO: check+pack+cast `init`
     }
 
     // fold_constant=false could be used for type-inference only scenarios, e.g.
