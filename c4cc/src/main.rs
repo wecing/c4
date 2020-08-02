@@ -3118,78 +3118,9 @@ impl Compiler<'_> {
 
         match op {
             Op::ASSIGN => {
-                if tp_left.is_const {
-                    panic!(
-                        "{}: Cannot modify const-qualified variables",
-                        Compiler::format_loc(loc_left)
-                    )
-                }
-                let is_void = |tp: &QType| match tp.tp {
-                    Type::Void => true,
-                    _ => false,
-                };
-                // 3.3.16.1: One of the following shall hold:
-                match (&tp_left.tp, &tp_right.tp) {
-                    // * the left operand has qualified or unqualified
-                    //   arithmetic type and the right has arithmetic type;
-                    _ if tp_left.is_arithmetic_type()
-                        && tp_right.is_arithmetic_type() =>
-                    {
-                        ()
-                    }
-                    // * the left operand has a qualified or unqualified version
-                    //   of a structure or union type compatible with the type
-                    //   of the right;
-                    (Type::Struct(_), Type::Struct(_))
-                    | (Type::Union(_), Type::Union(_))
-                        if Compiler::try_get_composite_type(
-                            &tp_left, &tp_right, loc_right,
-                        )
-                        .is_ok() =>
-                    {
-                        ()
-                    }
-                    // * both operands are pointers to qualified or unqualified
-                    //   versions of compatible types, and the type pointed to
-                    //   by the left has all the qualifiers of the type pointed
-                    //   to by the right;
-                    (Type::Pointer(tp_l), Type::Pointer(tp_r))
-                        if Compiler::try_get_composite_type(
-                            tp_l.as_ref(),
-                            tp_r.as_ref(),
-                            loc_right,
-                        )
-                        .is_ok()
-                            && (tp_l.is_const || !tp_r.is_const)
-                            && (tp_l.is_volatile || !tp_r.is_volatile) =>
-                    {
-                        ()
-                    }
-                    // * one operand is a pointer to an object or incomplete
-                    //   type and the other is a pointer to a qualified or
-                    //   unqualified version of void, and the type pointed to by
-                    //   the left has all the qualifiers of the type pointed to
-                    //   by the right; or
-                    (Type::Pointer(tp_l), Type::Pointer(tp_r))
-                        if is_void(tp_r)
-                            && (tp_l.is_const || !tp_r.is_const)
-                            && (tp_l.is_volatile || !tp_r.is_volatile) =>
-                    {
-                        ()
-                    }
-                    // * the left operand is a pointer and the right is a null
-                    //   pointer constant.
-                    (Type::Pointer(_), _)
-                        if right.as_ref().and_then(|r| r.as_constant_u64())
-                            == Some(0) =>
-                    {
-                        ()
-                    }
-                    _ => panic!(
-                        "{}: Illegal right hand side value type for ASSIGN",
-                        Compiler::format_loc(loc_right)
-                    ),
-                }
+                Compiler::check_types_for_assign(
+                    &tp_left, loc_left, &tp_right, &right, loc_right,
+                );
                 let (_, right) = self.cast_expression(
                     tp_right,
                     right,
@@ -5884,6 +5815,87 @@ impl Compiler<'_> {
             insert_decl(scope, |_| Linkage::EXTERNAL);
         } else {
             insert_decl(scope, |_| Linkage::NONE);
+        }
+    }
+
+    fn check_types_for_assign(
+        tp_left: &QType,
+        loc_left: &ast::Loc,
+        tp_right: &QType,
+        right: &Option<ConstantOrIrValue>,
+        loc_right: &ast::Loc,
+    ) {
+        if tp_left.is_const {
+            panic!(
+                "{}: Cannot modify const-qualified variables",
+                Compiler::format_loc(loc_left)
+            )
+        }
+        let is_void = |tp: &QType| match tp.tp {
+            Type::Void => true,
+            _ => false,
+        };
+        // 3.3.16.1: One of the following shall hold:
+        match (&tp_left.tp, &tp_right.tp) {
+            // * the left operand has qualified or unqualified
+            //   arithmetic type and the right has arithmetic type;
+            _ if tp_left.is_arithmetic_type()
+                && tp_right.is_arithmetic_type() =>
+            {
+                ()
+            }
+            // * the left operand has a qualified or unqualified version
+            //   of a structure or union type compatible with the type
+            //   of the right;
+            (Type::Struct(_), Type::Struct(_))
+            | (Type::Union(_), Type::Union(_))
+                if Compiler::try_get_composite_type(
+                    &tp_left, &tp_right, loc_right,
+                )
+                .is_ok() =>
+            {
+                ()
+            }
+            // * both operands are pointers to qualified or unqualified
+            //   versions of compatible types, and the type pointed to
+            //   by the left has all the qualifiers of the type pointed
+            //   to by the right;
+            (Type::Pointer(tp_l), Type::Pointer(tp_r))
+                if Compiler::try_get_composite_type(
+                    tp_l.as_ref(),
+                    tp_r.as_ref(),
+                    loc_right,
+                )
+                .is_ok()
+                    && (tp_l.is_const || !tp_r.is_const)
+                    && (tp_l.is_volatile || !tp_r.is_volatile) =>
+            {
+                ()
+            }
+            // * one operand is a pointer to an object or incomplete
+            //   type and the other is a pointer to a qualified or
+            //   unqualified version of void, and the type pointed to by
+            //   the left has all the qualifiers of the type pointed to
+            //   by the right; or
+            (Type::Pointer(tp_l), Type::Pointer(tp_r))
+                if is_void(tp_r)
+                    && (tp_l.is_const || !tp_r.is_const)
+                    && (tp_l.is_volatile || !tp_r.is_volatile) =>
+            {
+                ()
+            }
+            // * the left operand is a pointer and the right is a null
+            //   pointer constant.
+            (Type::Pointer(_), _)
+                if right.as_ref().and_then(|r| r.as_constant_u64())
+                    == Some(0) =>
+            {
+                ()
+            }
+            _ => panic!(
+                "{}: Illegal right hand side value type for ASSIGN",
+                Compiler::format_loc(loc_right)
+            ),
         }
     }
 
