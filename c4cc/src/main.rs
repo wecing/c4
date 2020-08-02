@@ -1804,7 +1804,7 @@ impl Compiler<'_> {
                 let init = if id.init_idx == 0 {
                     Option::None
                 } else if linkage != Linkage::NONE
-                    && self.current_scope.is_file_scope()
+                    && !self.current_scope.is_file_scope()
                 {
                     // 3.5.7: If the declaration of an identifier has block
                     // scope, and the identifier has external or internal
@@ -1846,7 +1846,14 @@ impl Compiler<'_> {
                 };
 
                 let init = init.map(|init| {
-                    self.sanitize_initializer(&qtype, init, id.get_d_loc())
+                    let emit_ir = !is_global && !qtype.is_scalar_type();
+                    self.sanitize_initializer(
+                        &qtype,
+                        init,
+                        id.get_d_loc(),
+                        emit_ir,
+                    )
+                    .unwrap_or_else(|err| err.panic())
                 });
 
                 // 3.5.7: If an array of unknown size is initialized, its size
@@ -2007,17 +2014,112 @@ impl Compiler<'_> {
         qtype: &QType,
         init: Initializer,
         loc: &ast::Loc,
-    ) -> Initializer {
+        emit_ir: bool,
+    ) -> R<Initializer> {
         // 3.5.7: The type of the entity to be initialized shall be an object
         // type or an array of unknown size.
         if Compiler::get_type_size_and_align_bytes(&qtype.tp).is_none()
             && !qtype.is_array()
         {
-            panic!(
-                "{}: Complete object type or array of unknown size expected",
-                Compiler::format_loc(loc)
-            )
+            let entity_type_err_msg =
+                "Complete object type or array of unknown size expected";
+            c4_fail!(loc, entity_type_err_msg)
         }
+
+        // 3.5.7 constraints + semantics:
+
+        // * The initializer for a scalar shall be a single expression,
+        //   optionally enclosed in braces. The initial value of the object is
+        //   that of the expression; the same type constraints and conversions
+        //   as for simple assignment apply.
+        if qtype.is_scalar_type() {
+            let (tp, c) = match init {
+                Initializer::Expr(tp, c) => (tp, c),
+                Initializer::Struct(mut inits, _) => {
+                    let single_expr_err_msg =
+                        "Initializer for scalar must be a single expression";
+                    if inits.len() != 1 {
+                        c4_fail!(loc, single_expr_err_msg)
+                    }
+                    match inits.pop().unwrap() {
+                        Initializer::Expr(tp, c) => (tp, c),
+                        _ => c4_fail!(loc, single_expr_err_msg),
+                    }
+                }
+            };
+            Compiler::check_types_for_assign(qtype, &tp, &Some(c.clone()), loc);
+
+            let (tp, c) =
+                self.cast_expression(tp, Some(c), qtype.clone(), loc, emit_ir);
+            if c.is_none() {
+                c4_fail!(loc, "Initializer is not a compile time constant")
+            }
+            return Ok(Initializer::Expr(tp, c.unwrap()));
+        }
+
+        // - The initializer for a structure or union object that has automatic
+        //   storage duration either shall be an initializer list as described
+        //   below, or shall be a single expression that has compatible
+        //   structure or union type. In the latter case, the initial value of
+        //   the object is that of the expression.
+        //
+        // in other words, cases like this are supported:
+        //
+        //   void f() {
+        //     struct S s1;
+        //     struct S s2 = s1;
+        //   }
+        match &init {
+            Initializer::Expr(tp, _) if !qtype.is_array() => {
+                if Compiler::try_get_composite_type(qtype, tp, loc).is_ok() {
+                    return Ok(init);
+                }
+                c4_fail!(loc, "Incompatible initializer type")
+            }
+            _ => (),
+        }
+
+        // - A brace-enclosed initializer for a union object initializes the
+        //   member that appears first in the declaration list of the union
+        //   type.
+        match &qtype.tp {
+            Type::Union(su_type) => match &su_type.fields {
+                Some(fs) if fs.len() > 0 => {
+                    let union_sz =
+                        Compiler::get_type_size_and_align_bytes(&qtype.tp)
+                            .unwrap()
+                            .0;
+                    let field_sz =
+                        Compiler::get_type_size_and_align_bytes(&fs[0].tp.tp)
+                            .unwrap()
+                            .0;
+                    let zero_padding_bytes = union_sz - field_sz;
+
+                    let init = self
+                        .sanitize_initializer(&fs[0].tp, init, loc, emit_ir)?;
+                    let init = match init {
+                        Initializer::Expr(_, _) => {
+                            Initializer::Struct(vec![init], zero_padding_bytes)
+                        }
+                        Initializer::Struct(inits, padding) => {
+                            Initializer::Struct(
+                                inits,
+                                padding + zero_padding_bytes,
+                            )
+                        }
+                    };
+                    return Ok(init);
+                }
+                _ => unreachable!(),
+            },
+            _ => (),
+        }
+
+        // TODO:
+        // * There shall be no more initializers in an initializer list than
+        //   there are objects to be initialized.
+        // * All unnamed structure or union members are ignored during
+        //   initialization.
 
         unimplemented!() // TODO: check+pack+cast `init`
     }
@@ -3118,8 +3220,14 @@ impl Compiler<'_> {
 
         match op {
             Op::ASSIGN => {
+                if tp_left.is_const {
+                    panic!(
+                        "{}: Cannot modify const-qualified variables",
+                        Compiler::format_loc(loc_left)
+                    )
+                }
                 Compiler::check_types_for_assign(
-                    &tp_left, loc_left, &tp_right, &right, loc_right,
+                    &tp_left, &tp_right, &right, loc_right,
                 );
                 let (_, right) = self.cast_expression(
                     tp_right,
@@ -5820,17 +5928,10 @@ impl Compiler<'_> {
 
     fn check_types_for_assign(
         tp_left: &QType,
-        loc_left: &ast::Loc,
         tp_right: &QType,
         right: &Option<ConstantOrIrValue>,
         loc_right: &ast::Loc,
     ) {
-        if tp_left.is_const {
-            panic!(
-                "{}: Cannot modify const-qualified variables",
-                Compiler::format_loc(loc_left)
-            )
-        }
         let is_void = |tp: &QType| match tp.tp {
             Type::Void => true,
             _ => false,
