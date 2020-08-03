@@ -152,6 +152,26 @@ impl QType {
         }
     }
 
+    fn is_char_arr(&self) -> bool {
+        match &self.tp {
+            Type::Array(elem_tp, _) => match &elem_tp.tp {
+                Type::Char => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn is_wchar_arr(&self) -> bool {
+        match &self.tp {
+            Type::Array(elem_tp, _) => match &elem_tp.tp {
+                Type::Short => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     fn char_ptr_tp() -> QType {
         QType::ptr_tp(QType::from(Type::Char))
     }
@@ -1874,6 +1894,13 @@ impl Compiler<'_> {
                     },
                     _ => qtype,
                 };
+                match self.current_scope.ordinary_ids_ns.get_mut(&name).unwrap()
+                {
+                    OrdinaryIdRef::ObjFnRef(_, tp, _, _) => {
+                        mem::replace(tp, qtype.clone());
+                    }
+                    _ => unreachable!(),
+                }
 
                 // 3.5: If an identifier for an object is declared with no
                 // linkage, the type for the object shall be complete by the end
@@ -2069,6 +2096,14 @@ impl Compiler<'_> {
         //     struct S s1;
         //     struct S s2 = s1;
         //   }
+        //
+        // - An array of character type may be initialized by a character string
+        //   literal, optionally enclosed in braces. Successive characters of
+        //   the character string literal (including the terminating null
+        //   character if there is room or if the array is of unknown size)
+        //   initialize the members of the array.
+        //
+        // (similarly for wchar_t / wide string literlas)
         match &init {
             Initializer::Expr(tp, _) if !qtype.is_array() => {
                 if Compiler::try_get_composite_type(qtype, tp, loc).is_ok() {
@@ -2076,8 +2111,58 @@ impl Compiler<'_> {
                 }
                 c4_fail!(loc, "Incompatible initializer type")
             }
+            Initializer::Expr(_, c) => {
+                if !qtype.is_char_arr() && !qtype.is_wchar_arr() {
+                    c4_fail!(loc, "Brace-enclosed initializer expected")
+                }
+                let arr_len = match &qtype.tp {
+                    Type::Array(_, len) => *len,
+                    _ => None,
+                };
+
+                let str_ir_id = match c {
+                    ConstantOrIrValue::Address(ir_id, 0) => ir_id,
+                    _ => c4_fail!(
+                        loc,
+                        "Brace-enclosed initializer or string literal expected"
+                    ),
+                };
+                let str_buf = self.str_constants.get(str_ir_id).unwrap();
+                if qtype.is_char_arr() {
+                    let inits: Vec<Initializer> = str_buf
+                        .into_iter()
+                        .map(|c| ConstantOrIrValue::I8(*c as i8))
+                        .map(|c| Initializer::Expr(QType::from(Type::Char), c))
+                        .take(arr_len.unwrap_or(u32::MAX) as usize)
+                        .collect();
+                    let padding = arr_len
+                        .map(|len| len - inits.len() as u32)
+                        .unwrap_or(0);
+                    return Ok(Initializer::Struct(inits, padding));
+                } else {
+                    // qtype.is_wchar_arr() == true
+                    let mut inits: Vec<Initializer> = vec![];
+                    for i in (0..str_buf.len()).step_by(2) {
+                        // assuming little-endian
+                        let c =
+                            str_buf[i] as i16 | ((str_buf[i + 1] as i16) << 8);
+                        inits.push(Initializer::Expr(
+                            QType::from(Type::Short),
+                            ConstantOrIrValue::I16(c),
+                        ))
+                    }
+                    arr_len.map(|len| inits.truncate(len as usize));
+                    let padding = arr_len
+                        .map(|len| len - inits.len() as u32)
+                        .unwrap_or(0);
+                    return Ok(Initializer::Struct(inits, padding));
+                }
+            }
             _ => (),
         }
+
+        // After this point `init` must be braced.
+        // i.e. no more Initializer::Expr(...)
 
         // - A brace-enclosed initializer for a union object initializes the
         //   member that appears first in the declaration list of the union
@@ -2110,18 +2195,18 @@ impl Compiler<'_> {
                     };
                     return Ok(init);
                 }
+                None => c4_fail!(loc, "Incomplete union type"),
                 _ => unreachable!(),
             },
             _ => (),
         }
 
-        // TODO:
+        // TODO: check+pack+cast `init`
         // * There shall be no more initializers in an initializer list than
         //   there are objects to be initialized.
         // * All unnamed structure or union members are ignored during
         //   initialization.
-
-        unimplemented!() // TODO: check+pack+cast `init`
+        unimplemented!()
     }
 
     // fold_constant=false could be used for type-inference only scenarios, e.g.
