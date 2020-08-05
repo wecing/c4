@@ -1,7 +1,7 @@
 use protobuf::{Message, ProtobufEnum};
 use std::borrow::Borrow;
 use std::cmp::max;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::ffi::{CStr, CString};
 use std::fs::File;
@@ -292,7 +292,7 @@ impl ConstantOrIrValue {
 #[derive(Debug, Clone)]
 enum Initializer {
     Expr(QType, ConstantOrIrValue), // does not contain lvalues
-    Struct(Vec<Initializer>, u32),  // zero_padding_bytes: u32
+    Struct(VecDeque<Initializer>, u32), // zero_padding_bytes: u32
 }
 
 impl Scope {
@@ -1821,7 +1821,7 @@ impl Compiler<'_> {
                 let is_global =
                     linkage != Linkage::NONE || scs == Some(SCS::STATIC);
 
-                let init = if id.init_idx == 0 {
+                let mut init = if id.init_idx == 0 {
                     Option::None
                 } else if linkage != Linkage::NONE
                     && !self.current_scope.is_file_scope()
@@ -1865,7 +1865,7 @@ impl Compiler<'_> {
                     Some(self.visit_initializer(id.init_idx, emit_ir))
                 };
 
-                let init = init.map(|init| {
+                let init = init.as_mut().map(|init| {
                     let emit_ir = !is_global && !qtype.is_scalar_type();
                     self.sanitize_initializer(
                         &qtype,
@@ -2039,7 +2039,7 @@ impl Compiler<'_> {
     fn sanitize_initializer(
         &mut self,
         qtype: &QType,
-        init: Initializer,
+        init: &mut Initializer,
         loc: &ast::Loc,
         emit_ir: bool,
     ) -> R<Initializer> {
@@ -2062,13 +2062,13 @@ impl Compiler<'_> {
         if qtype.is_scalar_type() {
             let (tp, c) = match init {
                 Initializer::Expr(tp, c) => (tp, c),
-                Initializer::Struct(mut inits, _) => {
+                Initializer::Struct(inits, _) => {
                     let single_expr_err_msg =
                         "Initializer for scalar must be a single expression";
                     if inits.len() != 1 {
                         c4_fail!(loc, single_expr_err_msg)
                     }
-                    match inits.pop().unwrap() {
+                    match inits.get_mut(0).unwrap() {
                         Initializer::Expr(tp, c) => (tp, c),
                         _ => c4_fail!(loc, single_expr_err_msg),
                     }
@@ -2076,8 +2076,13 @@ impl Compiler<'_> {
             };
             Compiler::check_types_for_assign(qtype, &tp, &Some(c.clone()), loc);
 
-            let (tp, c) =
-                self.cast_expression(tp, Some(c), qtype.clone(), loc, emit_ir);
+            let (tp, c) = self.cast_expression(
+                tp.clone(),
+                Some(c.clone()),
+                qtype.clone(),
+                loc,
+                emit_ir,
+            );
             if c.is_none() {
                 c4_fail!(loc, "Initializer is not a compile time constant")
             }
@@ -2104,10 +2109,11 @@ impl Compiler<'_> {
         //   initialize the members of the array.
         //
         // (similarly for wchar_t / wide string literlas)
-        match &init {
+        let mut str_lit_inits: VecDeque<Initializer>;
+        let inits: &mut VecDeque<Initializer> = match init {
             Initializer::Expr(tp, _) if !qtype.is_array() => {
                 if Compiler::try_get_composite_type(qtype, tp, loc).is_ok() {
-                    return Ok(init);
+                    return Ok(init.clone());
                 }
                 c4_fail!(loc, "Incompatible initializer type")
             }
@@ -2115,6 +2121,13 @@ impl Compiler<'_> {
                 if !qtype.is_char_arr() && !qtype.is_wchar_arr() {
                     c4_fail!(loc, "Brace-enclosed initializer expected")
                 }
+                // C89 spec explicitly states initializers with excess elements,
+                // e.g.:
+                //   char s[2] = {'h', 'e', 'l', 'l', 'o', \0};
+                // are disallowed, but string literal initializers, e.g.:
+                //   char s[2] = "hello";
+                // are not mentioned. Here we silently truncate in the second
+                // case but fail in the first case.
                 let arr_len = match &qtype.tp {
                     Type::Array(_, len) => *len,
                     _ => None,
@@ -2128,46 +2141,43 @@ impl Compiler<'_> {
                     ),
                 };
                 let str_buf = self.str_constants.get(str_ir_id).unwrap();
-                if qtype.is_char_arr() {
-                    let inits: Vec<Initializer> = str_buf
+                str_lit_inits = if qtype.is_char_arr() {
+                    str_buf
                         .into_iter()
                         .map(|c| ConstantOrIrValue::I8(*c as i8))
                         .map(|c| Initializer::Expr(QType::from(Type::Char), c))
                         .take(arr_len.unwrap_or(u32::MAX) as usize)
-                        .collect();
-                    let padding = arr_len
-                        .map(|len| len - inits.len() as u32)
-                        .unwrap_or(0);
-                    return Ok(Initializer::Struct(inits, padding));
+                        .collect()
                 } else {
                     // qtype.is_wchar_arr() == true
-                    let mut inits: Vec<Initializer> = vec![];
+                    let mut inits: VecDeque<Initializer> = VecDeque::new();
                     for i in (0..str_buf.len()).step_by(2) {
                         // assuming little-endian
                         let c =
                             str_buf[i] as i16 | ((str_buf[i + 1] as i16) << 8);
-                        inits.push(Initializer::Expr(
+                        inits.push_back(Initializer::Expr(
                             QType::from(Type::Short),
                             ConstantOrIrValue::I16(c),
                         ))
                     }
                     arr_len.map(|len| inits.truncate(len as usize));
-                    let padding = arr_len
-                        .map(|len| len - inits.len() as u32)
-                        .unwrap_or(0);
-                    return Ok(Initializer::Struct(inits, padding));
-                }
+                    inits
+                };
+                &mut str_lit_inits
             }
-            _ => (),
-        }
+            Initializer::Struct(inits, 0) => inits,
+            Initializer::Struct(_, _) => unreachable!(),
+        };
 
         // After this point `init` must be braced.
         // i.e. no more Initializer::Expr(...)
+        //
+        // Do not use `init` directly; use `inits` instead.
 
-        // - A brace-enclosed initializer for a union object initializes the
-        //   member that appears first in the declaration list of the union
-        //   type.
         match &qtype.tp {
+            // - A brace-enclosed initializer for a union object initializes the
+            //   member that appears first in the declaration list of the union
+            //   type.
             Type::Union(su_type) => match &su_type.fields {
                 Some(fs) if fs.len() > 0 => {
                     let union_sz =
@@ -2180,12 +2190,18 @@ impl Compiler<'_> {
                             .0;
                     let zero_padding_bytes = union_sz - field_sz;
 
+                    if inits.len() != 1 {
+                        c4_fail!(loc, "Redundant initializer element")
+                    }
+                    let init = inits.get_mut(0).unwrap();
+
                     let init = self
                         .sanitize_initializer(&fs[0].tp, init, loc, emit_ir)?;
                     let init = match init {
-                        Initializer::Expr(_, _) => {
-                            Initializer::Struct(vec![init], zero_padding_bytes)
-                        }
+                        Initializer::Expr(_, _) => Initializer::Struct(
+                            VecDeque::from(vec![init]),
+                            zero_padding_bytes,
+                        ),
                         Initializer::Struct(inits, padding) => {
                             Initializer::Struct(
                                 inits,
@@ -2193,20 +2209,40 @@ impl Compiler<'_> {
                             )
                         }
                     };
-                    return Ok(init);
+                    Ok(init)
                 }
                 None => c4_fail!(loc, "Incomplete union type"),
                 _ => unreachable!(),
             },
-            _ => (),
-        }
+            Type::Array(elem_tp, arr_len) => {
+                let inits: R<VecDeque<Initializer>> = inits
+                    .into_iter()
+                    .map(|init| {
+                        self.sanitize_initializer(
+                            elem_tp.as_ref(),
+                            init,
+                            loc,
+                            emit_ir,
+                        )
+                    })
+                    .collect();
+                let inits = inits?;
+                if arr_len.map(|len| len < inits.len() as u32).unwrap_or(false)
+                {
+                    c4_fail!(loc, "Redundant initializer element")
+                }
+                let padding =
+                    arr_len.map(|len| len - inits.len() as u32).unwrap_or(0);
+                Ok(Initializer::Struct(inits, padding))
+            }
 
-        // TODO: check+pack+cast `init`
-        // * There shall be no more initializers in an initializer list than
-        //   there are objects to be initialized.
-        // * All unnamed structure or union members are ignored during
-        //   initialization.
-        unimplemented!()
+            // TODO: check+pack+cast `init`
+            // * There shall be no more initializers in an initializer list than
+            //   there are objects to be initialized.
+            // * All unnamed structure or union members are ignored during
+            //   initialization.
+            _ => unimplemented!(),
+        }
     }
 
     // fold_constant=false could be used for type-inference only scenarios, e.g.
