@@ -159,8 +159,8 @@ private final class ProtoConverter {
         case DoubleLit(TokDouble(d)) => p.Expr.E.Double(d)
         case LongDoubleLit(TokLongDouble(ld)) =>
           p.Expr.E.Double(ld.doubleValue())
-        case CharLit(TokChar(c)) => p.Expr.E.Char(c.asDigit & 0xFF)
-        case WideCharLit(TokWideChar(c)) => p.Expr.E.WideChar(c.asDigit)
+        case CharLit(TokChar(c)) => p.Expr.E.Char(c.toInt & 0xFF)
+        case WideCharLit(TokWideChar(c)) => p.Expr.E.WideChar(c.toInt)
         case StrLit(TokStr(s)) => p.Expr.E.String(s)
         case WideStrLit(TokWideStr(s)) => p.Expr.E.WideString(s)
         case CastExpr(L(tpLoc, tp), L(eLoc, e)) =>

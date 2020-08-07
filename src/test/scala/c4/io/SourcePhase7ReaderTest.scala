@@ -31,6 +31,8 @@ class SourcePhase7ReaderTest extends FlatSpec with Matchers {
     read("42.5e1") should be (Seq(TokDouble(425)))
     read("42.5e+1") should be (Seq(TokDouble(425)))
     read("42.5e-1") should be (Seq(TokDouble(4.25)))
+
+    read("'a'") should be (Seq(TokChar('a')))
   }
 
   // TODO: more Phase7Reader specific tests here?
