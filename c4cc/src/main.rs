@@ -3141,7 +3141,7 @@ impl Compiler<'_> {
             }
             let field_tp = &fields[prev_fields.len()].tp;
             if fields[prev_fields.len()].bit_field_size.is_some() {
-                unimplemented!() // TODO: support bit masks (breaks assumptions)
+                unimplemented!() // TODO: support bit field (breaks assumptions)
             }
             if is_struct {
                 let (offset, _) = if prev_fields.is_empty() {
@@ -6095,7 +6095,8 @@ impl Compiler<'_> {
             } => true,
             _ => false,
         };
-        // TODO: does C89 allow type-only params in function definitions?
+        // C89 does not allow type-only params in function definitions; this
+        // case will be checked in visit_function_def().
         match v.as_slice() {
             // 3.5.4.3: An empty list in a function declarator that...
             // - is part of a function definition:
