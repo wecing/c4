@@ -1,6 +1,6 @@
 use protobuf::{Message, ProtobufEnum};
 use std::borrow::Borrow;
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::ffi::{CStr, CString};
@@ -1861,12 +1861,16 @@ impl Compiler<'_> {
                     // object that has static storage duration or in an
                     // initializer list for an object that has aggregate or
                     // union type shall be constant expressions.
-                    let emit_ir = !is_global && !qtype.is_scalar_type();
+                    let emit_ir = !is_global && qtype.is_scalar_type();
                     Some(self.visit_initializer(id.init_idx, emit_ir))
                 };
 
                 let init = init.as_mut().map(|init| {
-                    let emit_ir = !is_global && !qtype.is_scalar_type();
+                    let emit_ir = !is_global && qtype.is_scalar_type();
+                    // TODO
+                    // 3.5.7: There shall be no more initializers in an
+                    // initializer list than there are objects to be
+                    // initialized.
                     self.sanitize_initializer(
                         &qtype,
                         init,
@@ -2109,8 +2113,8 @@ impl Compiler<'_> {
         //   initialize the members of the array.
         //
         // (similarly for wchar_t / wide string literlas)
-        let mut str_lit_inits: VecDeque<Initializer>;
-        let inits: &mut VecDeque<Initializer> = match init {
+        let mut str_lit_inits: Option<VecDeque<Initializer>> = None;
+        match init {
             Initializer::Expr(tp, _) if !qtype.is_array() => {
                 if Compiler::try_get_composite_type(qtype, tp, loc).is_ok() {
                     return Ok(init.clone());
@@ -2142,12 +2146,16 @@ impl Compiler<'_> {
                 };
                 let str_buf = self.str_constants.get(str_ir_id).unwrap();
                 str_lit_inits = if qtype.is_char_arr() {
-                    str_buf
-                        .into_iter()
-                        .map(|c| ConstantOrIrValue::I8(*c as i8))
-                        .map(|c| Initializer::Expr(QType::from(Type::Char), c))
-                        .take(arr_len.unwrap_or(u32::MAX) as usize)
-                        .collect()
+                    Some(
+                        str_buf
+                            .into_iter()
+                            .map(|c| ConstantOrIrValue::I8(*c as i8))
+                            .map(|c| {
+                                Initializer::Expr(QType::from(Type::Char), c)
+                            })
+                            .take(arr_len.unwrap_or(u32::MAX) as usize)
+                            .collect(),
+                    )
                 } else {
                     // qtype.is_wchar_arr() == true
                     let mut inits: VecDeque<Initializer> = VecDeque::new();
@@ -2161,18 +2169,33 @@ impl Compiler<'_> {
                         ))
                     }
                     arr_len.map(|len| inits.truncate(len as usize));
-                    inits
+                    Some(inits)
                 };
-                &mut str_lit_inits
             }
-            Initializer::Struct(inits, 0) => inits,
+            Initializer::Struct(inits, 0) => (),
             Initializer::Struct(_, _) => unreachable!(),
         };
 
         // After this point `init` must be braced.
         // i.e. no more Initializer::Expr(...)
-        //
-        // Do not use `init` directly; use `inits` instead.
+
+        fn get_inits<'a, 'b: 'a>(
+            str_lit_inits: &'a mut Option<VecDeque<Initializer>>,
+            init: &'b mut Initializer,
+        ) -> &'a mut VecDeque<Initializer> {
+            if str_lit_inits.is_some() {
+                return str_lit_inits.as_mut().unwrap();
+            }
+            match init {
+                Initializer::Struct(x, 0) => x,
+                _ => unreachable!(),
+            }
+        }
+        macro_rules! get_inits {
+            () => {
+                get_inits(&mut str_lit_inits, init)
+            };
+        }
 
         match &qtype.tp {
             // - A brace-enclosed initializer for a union object initializes the
@@ -2190,10 +2213,10 @@ impl Compiler<'_> {
                             .0;
                     let zero_padding_bytes = union_sz - field_sz;
 
-                    if inits.len() != 1 {
+                    if get_inits!().len() != 1 {
                         c4_fail!(loc, "Redundant initializer element")
                     }
-                    let init = inits.get_mut(0).unwrap();
+                    let init = get_inits!().get_mut(0).unwrap();
 
                     let init = self
                         .sanitize_initializer(&fs[0].tp, init, loc, emit_ir)?;
@@ -2215,7 +2238,7 @@ impl Compiler<'_> {
                 _ => unreachable!(),
             },
             Type::Array(elem_tp, arr_len) => {
-                let inits: R<VecDeque<Initializer>> = inits
+                let inits: R<VecDeque<Initializer>> = get_inits!()
                     .into_iter()
                     .map(|init| {
                         self.sanitize_initializer(
@@ -2229,19 +2252,212 @@ impl Compiler<'_> {
                 let inits = inits?;
                 if arr_len.map(|len| len < inits.len() as u32).unwrap_or(false)
                 {
+                    // TODO
                     c4_fail!(loc, "Redundant initializer element")
                 }
                 let padding =
                     arr_len.map(|len| len - inits.len() as u32).unwrap_or(0);
                 Ok(Initializer::Struct(inits, padding))
             }
+            Type::Struct(su_type) => match &su_type.fields {
+                None => c4_fail!(loc, "Incomplete struct type"),
+                Some(fs) if fs.len() == 0 => unreachable!(),
+                Some(fs) => {
+                    let mut cur_byte: u8 = 0;
+                    let mut cur_byte_rem_bits = 0;
+                    // cur_byte_rem_bits == 0 implies cur_bf_rem_bytes == 0
 
-            // TODO: check+pack+cast `init`
-            // * There shall be no more initializers in an initializer list than
-            //   there are objects to be initialized.
-            // * All unnamed structure or union members are ignored during
-            //   initialization.
-            _ => unimplemented!(),
+                    let mut cur_bf_rem_bytes = 0;
+                    let mut struct_rem_bytes =
+                        Compiler::get_type_size_and_align_bytes(&qtype.tp)
+                            .unwrap()
+                            .0;
+
+                    let mut new_inits: VecDeque<Initializer> = VecDeque::new();
+
+                    for field in fs {
+                        // when no more initializers: zero-init rest fields
+                        if get_inits!().is_empty() {
+                            // if previous bit field is not finished yet:
+                            // zero-init remaining bits
+                            if cur_byte_rem_bits != 0 {
+                                cur_byte <<= cur_bf_rem_bytes;
+                                new_inits.push_back(Initializer::Expr(
+                                    QType::from(Type::Char),
+                                    ConstantOrIrValue::U8(cur_byte),
+                                ));
+                                struct_rem_bytes -= 1;
+                            }
+
+                            break;
+                        }
+
+                        // * All unnamed structure or union members are ignored
+                        //   during initialization.
+                        let inner_init = if field.name.is_none()
+                            || field.bit_field_size == Some(0)
+                        {
+                            None
+                        } else {
+                            get_inits!().pop_front() // must be non-empty
+                        };
+
+                        // flush current byte if needed
+                        let flush_cur_byte = cur_byte_rem_bits != 0
+                            && (field.bit_field_size.is_none()
+                                || field.bit_field_size == Some(0)
+                                || field.bit_field_size.unwrap()
+                                    > cur_byte_rem_bits + cur_bf_rem_bytes * 8);
+                        if field.bit_field_size == Some(0) || flush_cur_byte {
+                            // flush cur_byte
+                            if cur_byte_rem_bits != 0 {
+                                cur_byte <<= cur_byte_rem_bits;
+                                new_inits.push_back(Initializer::Expr(
+                                    QType::from(Type::UnsignedChar),
+                                    ConstantOrIrValue::U8(cur_byte),
+                                ));
+                                for _ in 0..cur_bf_rem_bytes {
+                                    new_inits.push_back(Initializer::Expr(
+                                        QType::from(Type::UnsignedChar),
+                                        ConstantOrIrValue::U8(0),
+                                    ));
+                                }
+                                cur_byte = 0;
+                                cur_byte_rem_bits = 0;
+                                struct_rem_bytes -= cur_bf_rem_bytes as u32 + 1;
+                                cur_bf_rem_bytes = 0;
+                            }
+                        }
+
+                        if cur_byte_rem_bits == 0 {
+                            // insert padding to align `field`
+                            let align =
+                                Compiler::get_type_size_and_align_bytes(
+                                    &field.tp.tp,
+                                )
+                                .unwrap()
+                                .1;
+                            while struct_rem_bytes % align != 0 {
+                                new_inits.push_back(Initializer::Expr(
+                                    QType::from(Type::UnsignedChar),
+                                    ConstantOrIrValue::U8(0),
+                                ));
+                                struct_rem_bytes -= 1;
+                            }
+                        }
+
+                        match field.bit_field_size {
+                            // bit field size 0 is just used to indicate bit
+                            // field packing should stop; it does not consume
+                            // initializers
+                            Some(0) => continue,
+                            // continue packing into previous bit field if there
+                            // is still space
+                            Some(mut sz) => {
+                                let mut n = {
+                                    use ConstantOrIrValue as C;
+                                    let mut init = inner_init.unwrap_or(
+                                        Initializer::Expr(
+                                            QType::from(Type::Int),
+                                            C::I32(0),
+                                        ),
+                                    );
+                                    let init = self.sanitize_initializer(
+                                        &field.tp, &mut init, loc, emit_ir,
+                                    )?;
+                                    let c = match init {
+                                        Initializer::Expr(tp, c) => c,
+                                        _ => unreachable!(),
+                                    };
+                                    match c {
+                                        C::I32(n) => n as u32,
+                                        C::U32(n) => n,
+                                        C::IrValue(_, _) => c4_fail!(
+                                            loc,
+                                            "Compile time constant expected"
+                                        ),
+                                        _ => unreachable!(),
+                                    }
+                                };
+
+                                if cur_bf_rem_bytes == 0 {
+                                    cur_byte = 0;
+                                    cur_byte_rem_bits = 8;
+                                    // bit fields must be i32 or u32
+                                    cur_bf_rem_bytes = 4;
+                                }
+
+                                // now pack `sz` bits of `n` into remaining
+                                // space of the current bit field
+                                while sz > 0 {
+                                    let p1_n_bits = min(sz, cur_byte_rem_bits);
+                                    cur_byte |= (n as u8) << (8 - p1_n_bits)
+                                        >> (8 - p1_n_bits)
+                                        << (8 - cur_byte_rem_bits);
+                                    cur_byte_rem_bits -= p1_n_bits;
+                                    sz -= p1_n_bits;
+                                    n >>= p1_n_bits;
+
+                                    if cur_byte_rem_bits == 0 {
+                                        new_inits.push_back(Initializer::Expr(
+                                            QType::from(Type::UnsignedChar),
+                                            ConstantOrIrValue::U8(cur_byte),
+                                        ));
+                                        struct_rem_bytes -= 1;
+                                        cur_byte = 0;
+
+                                        if cur_bf_rem_bytes > 0 {
+                                            // should never underflow
+                                            cur_bf_rem_bytes -= 1;
+                                            cur_byte_rem_bits = 8;
+                                        }
+                                    }
+                                }
+                            }
+                            // field has no bf size: proceed normally
+                            None => {
+                                let field_sz =
+                                    Compiler::get_type_size_and_align_bytes(
+                                        &field.tp.tp,
+                                    )
+                                    .unwrap()
+                                    .0;
+
+                                let inner_init = inner_init.unwrap();
+                                match (field.tp.is_scalar_type(), inner_init) {
+                                    (false, x @ Initializer::Expr(_, _)) => {
+                                        get_inits!().push_front(x);
+
+                                        let new_init = self
+                                            .sanitize_initializer(
+                                                &field.tp, init, loc, emit_ir,
+                                            )?;
+                                        new_inits.push_back(new_init);
+                                        struct_rem_bytes -= field_sz;
+                                    }
+                                    (_, mut inner_init) => {
+                                        let new_init = self
+                                            .sanitize_initializer(
+                                                &field.tp,
+                                                &mut inner_init,
+                                                loc,
+                                                emit_ir,
+                                            )?;
+                                        new_inits.push_back(new_init);
+                                        struct_rem_bytes -= field_sz;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // do not check for redundant initializers here; remaining
+                    // initializers may be for following fields of the outer
+                    // struct
+                    Ok(Initializer::Struct(new_inits, struct_rem_bytes))
+                }
+            },
+            _ => unreachable!(),
         }
     }
 
@@ -5641,7 +5857,7 @@ impl Compiler<'_> {
                             &self.translation_unit.exprs[decl.e as usize],
                             decl.get_e_loc(),
                         ));
-                        if sz == 0 && field_name_opt.is_none() {
+                        if sz == 0 && field_name_opt.is_some() {
                             panic!(
                                 "{}: Named bit-field cannot have zero width",
                                 Compiler::format_loc(sd.1)
