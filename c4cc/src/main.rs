@@ -2184,7 +2184,7 @@ impl Compiler<'_> {
                     Some(inits)
                 };
             }
-            Initializer::Struct(inits, 0) => (),
+            Initializer::Struct(_, 0) => (),
             Initializer::Struct(_, _) => unreachable!(),
         };
 
@@ -2388,7 +2388,7 @@ impl Compiler<'_> {
                                         &field.tp, &mut init, loc, emit_ir,
                                     )?;
                                     let c = match init {
-                                        Initializer::Expr(tp, c) => c,
+                                        Initializer::Expr(_, c) => c,
                                         _ => unreachable!(),
                                     };
                                     match c {
