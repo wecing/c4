@@ -921,6 +921,7 @@ impl IRBuilder for LLVMBuilderImpl {
                 self.module,
                 name_cstr.as_ptr(),
             );
+            // TODO: support bit fields
             let mut element_types: Vec<llvm_sys::prelude::LLVMTypeRef> = fields
                 .iter()
                 .map(|su_field| self.get_llvm_type(&su_field.tp.tp))
@@ -2391,7 +2392,7 @@ impl Compiler<'_> {
                                     cur_byte = 0;
                                     cur_byte_rem_bits = 8;
                                     // bit fields must be i32 or u32
-                                    cur_bf_rem_bytes = 4;
+                                    cur_bf_rem_bytes = 3; // 4 - 1
                                 }
 
                                 // now pack `sz` bits of `n` into remaining
@@ -2456,6 +2457,14 @@ impl Compiler<'_> {
                                 }
                             }
                         }
+                    }
+
+                    if cur_byte_rem_bits > 0 {
+                        new_inits.push_back(Initializer::Expr(
+                            QType::from(Type::UnsignedChar),
+                            ConstantOrIrValue::U8(cur_byte),
+                        ));
+                        struct_rem_bytes -= 1;
                     }
 
                     // do not check for redundant initializers here; remaining
@@ -6748,7 +6757,7 @@ impl Compiler<'_> {
                                     // bit field type and mask size were checked
                                     // in get_su_field.
                                     sz = Compiler::align_up(sz, f_align) + f_sz;
-                                    bit_field_quota = f_sz - x as u32;
+                                    bit_field_quota = f_sz * 8 - x as u32;
                                 }
                             }
                         }
