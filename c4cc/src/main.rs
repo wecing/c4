@@ -1868,17 +1868,28 @@ impl Compiler<'_> {
 
                 let init = init.as_mut().map(|init| {
                     let emit_ir = !is_global && qtype.is_scalar_type();
-                    // TODO
+                    let r = self
+                        .sanitize_initializer(
+                            &qtype,
+                            init,
+                            id.get_d_loc(),
+                            emit_ir,
+                        )
+                        .unwrap_or_else(|err| err.panic());
                     // 3.5.7: There shall be no more initializers in an
                     // initializer list than there are objects to be
                     // initialized.
-                    self.sanitize_initializer(
-                        &qtype,
-                        init,
-                        id.get_d_loc(),
-                        emit_ir,
-                    )
-                    .unwrap_or_else(|err| err.panic())
+                    match init {
+                        Initializer::Struct(xs, _) if !xs.is_empty() => {
+                            panic!(
+                                "{}: Redundant initializer element",
+                                Compiler::format_loc(id.get_init_loc())
+                            );
+                        }
+                        _ => (),
+                    }
+
+                    r
                 });
 
                 // 3.5.7: If an array of unknown size is initialized, its size
@@ -2239,25 +2250,28 @@ impl Compiler<'_> {
                 _ => unreachable!(),
             },
             Type::Array(elem_tp, arr_len) => {
-                let inits: R<VecDeque<Initializer>> = get_inits!()
-                    .into_iter()
-                    .map(|init| {
+                let arr_len = arr_len.unwrap_or(get_inits!().len() as u32);
+                let inits: R<VecDeque<Initializer>> = (0..arr_len)
+                    .flat_map(|_| get_inits!().pop_front())
+                    .map(|mut init| {
                         self.sanitize_initializer(
                             elem_tp.as_ref(),
-                            init,
+                            &mut init,
                             loc,
                             emit_ir,
                         )
                     })
                     .collect();
                 let inits = inits?;
-                if arr_len.map(|len| len < inits.len() as u32).unwrap_or(false)
-                {
-                    // TODO
-                    c4_fail!(loc, "Redundant initializer element")
-                }
-                let padding =
-                    arr_len.map(|len| len - inits.len() as u32).unwrap_or(0);
+                let padding = if arr_len > inits.len() as u32 {
+                    let elem_sz =
+                        Compiler::get_type_size_and_align_bytes(&elem_tp.tp)
+                            .unwrap()
+                            .0;
+                    (arr_len - inits.len() as u32) * elem_sz
+                } else {
+                    0
+                };
                 Ok(Initializer::Struct(inits, padding))
             }
             Type::Struct(su_type) => match &su_type.fields {
