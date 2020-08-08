@@ -2331,13 +2331,20 @@ impl Compiler<'_> {
 
                         if cur_byte_rem_bits == 0 {
                             // insert padding to align `field`
+                            let struct_bytes =
+                                Compiler::get_type_size_and_align_bytes(
+                                    &qtype.tp,
+                                )
+                                .unwrap()
+                                .0;
                             let align =
                                 Compiler::get_type_size_and_align_bytes(
                                     &field.tp.tp,
                                 )
                                 .unwrap()
                                 .1;
-                            while struct_rem_bytes % align != 0 {
+                            while (struct_bytes - struct_rem_bytes) % align != 0
+                            {
                                 new_inits.push_back(Initializer::Expr(
                                     QType::from(Type::UnsignedChar),
                                     ConstantOrIrValue::U8(0),
@@ -6716,7 +6723,12 @@ impl Compiler<'_> {
                         // fields of incomplete type.
                         None => unreachable!(),
                         Some((f_sz, f_align)) => {
-                            align = max(align, f_align);
+                            // bit field with width=0 does not affect whole
+                            // struct align, but does affect field align (at
+                            // least that's clang's behavior)
+                            if f.bit_field_size != Some(0) {
+                                align = max(align, f_align);
+                            }
                             match f.bit_field_size {
                                 None => {
                                     sz = Compiler::align_up(sz, f_align) + f_sz
@@ -6726,6 +6738,7 @@ impl Compiler<'_> {
                                 // packed into the unit in which the previous
                                 // bit-field, if any, was placed.
                                 Some(0) => {
+                                    sz = Compiler::align_up(sz, f_align);
                                     bit_field_quota = 0;
                                 }
                                 Some(x) if (x as u32) <= bit_field_quota => {
