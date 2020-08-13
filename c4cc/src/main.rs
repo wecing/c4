@@ -3603,6 +3603,7 @@ impl Compiler<'_> {
 
         match op {
             Op::ASSIGN => {
+                // TODO: support bit fields
                 if tp_left.is_const {
                     panic!(
                         "{}: Cannot modify const-qualified variables",
