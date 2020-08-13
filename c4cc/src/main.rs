@@ -372,6 +372,15 @@ struct FuncDefCtx {
     continue_bb_stack: Vec<String>,
 }
 
+struct StructFieldOffset {
+    offset: u32,
+
+    // only meaningful if bit_field_mask != 0; field actual value is
+    // (v >> bit_field_offset) & bit_field_mask.
+    bit_field_offset: u8,
+    bit_field_mask: u32,
+}
+
 trait IRBuilder {
     fn emit_opaque_struct_type(&mut self, name: &str);
 
@@ -913,7 +922,7 @@ impl IRBuilder for LLVMBuilderImpl {
         &mut self,
         name: &str,
         fields: &Vec<SuField>,
-        _is_union: bool,
+        is_union: bool,
     ) {
         unsafe {
             let name_cstr = CString::new(name).unwrap();
@@ -921,10 +930,14 @@ impl IRBuilder for LLVMBuilderImpl {
                 self.module,
                 name_cstr.as_ptr(),
             );
-            // TODO: support bit fields
             let mut element_types: Vec<llvm_sys::prelude::LLVMTypeRef> = fields
                 .iter()
-                .map(|su_field| self.get_llvm_type(&su_field.tp.tp))
+                .map(|su_field| {
+                    if !is_union && su_field.bit_field_size.is_some() {
+                        unreachable!() // struct must be packed first
+                    }
+                    self.get_llvm_type(&su_field.tp.tp)
+                })
                 .collect();
             llvm_sys::core::LLVMStructSetBody(
                 tp,
@@ -2011,6 +2024,10 @@ impl Compiler<'_> {
     //          int *np = &n;
     //          int *np2 = &*&n;
     //          int main(...) {...}
+    //       or:
+    //          struct S {int x, y;} s;
+    //          int *yp = &s.y;
+    //          int main(...) {...}
     //       or for constant folding:
     //          int n;
     //          char s[&n != 0]; // or &n + 10 - &n, etc
@@ -2326,7 +2343,6 @@ impl Compiler<'_> {
                         if field.bit_field_size == Some(0) || flush_cur_byte {
                             // flush cur_byte
                             if cur_byte_rem_bits != 0 {
-                                cur_byte <<= cur_byte_rem_bits;
                                 new_inits.push_back(Initializer::Expr(
                                     QType::from(Type::UnsignedChar),
                                     ConstantOrIrValue::U8(cur_byte),
@@ -5646,14 +5662,29 @@ impl Compiler<'_> {
                         .sue_tag_names_ns
                         .insert(tag_name, sue_type);
 
+                    let packed_fields = if is_struct {
+                        let tp = QType::from(Type::Struct(Box::from(
+                            su_type.clone(),
+                        )));
+                        let (tp, _, _, _) =
+                            Compiler::get_struct_layout(&tp.tp, None);
+                        match tp {
+                            Type::Struct(su_type) => su_type.fields.unwrap(),
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        // let's just assume union and bit fields are never
+                        // used together
+                        su_type.fields.clone().unwrap()
+                    };
                     self.c4ir_builder.update_struct_type(
                         &ir_type_name,
-                        su_type.fields.as_ref().unwrap(),
+                        &packed_fields,
                         !is_struct,
                     );
                     self.llvm_builder.update_struct_type(
                         &ir_type_name,
-                        su_type.fields.as_ref().unwrap(),
+                        &packed_fields,
                         !is_struct,
                     );
                 }
@@ -5903,6 +5934,119 @@ impl Compiler<'_> {
                 })
                 .collect();
         r
+    }
+
+    fn get_struct_layout(
+        tp: &Type,
+        field_name: Option<&str>,
+    ) -> (Type, u32, u32, Option<(QType, StructFieldOffset)>) {
+        let fields = match tp {
+            Type::Struct(su_type) => su_type.fields.as_ref().unwrap(),
+            _ => unreachable!(),
+        };
+
+        let mut selected_field: Option<(QType, StructFieldOffset)> = None;
+        let mut check_selected_field =
+            |field: &SuField, offset: u32, bit_field_quota: u8| {
+                if field.name.is_some() && field.name.as_deref() == field_name {
+                    let offset = if field.bit_field_size.is_none() {
+                        StructFieldOffset {
+                            offset,
+                            bit_field_offset: 0,
+                            bit_field_mask: 0,
+                        }
+                    } else {
+                        let bit_field_offset = 32 - bit_field_quota;
+                        let bit_field_mask = u32::MAX
+                            << (bit_field_quota
+                                - field.bit_field_size.unwrap())
+                            >> (bit_field_quota
+                                - field.bit_field_size.unwrap())
+                            >> bit_field_offset as u32;
+                        StructFieldOffset {
+                            offset,
+                            bit_field_offset,
+                            bit_field_mask,
+                        }
+                    };
+                    selected_field = Some((field.tp.clone(), offset));
+                }
+            };
+
+        let unnamed_char_field = SuField {
+            name: None,
+            tp: QType::from(Type::Char),
+            bit_field_size: None,
+        };
+
+        let mut size: u32 = 0;
+        let mut align: u32 = 1;
+        let mut bit_field_quota: u8 = 0;
+        let mut new_fields: Vec<SuField> = Vec::new();
+        for field in fields {
+            // get_su_field ensures struct/union does not contain fields of
+            // incomplete type.
+            let (f_sz, f_align) =
+                Compiler::get_type_size_and_align_bytes(&field.tp.tp).unwrap();
+            // bit field with width=0 does not affect whole struct align, but
+            // does affect field align (at least that's clang's behavior)
+            //
+            // 3.5.2.1: a bit-field with a width of 0 indicates that no further
+            // bit-field is to be packed into the unit in which the previous
+            // bit-field, if any, was placed.
+            if field.bit_field_size != Some(0) {
+                align = max(align, f_align);
+            }
+            if field.bit_field_size != Some(0)
+                && field.bit_field_size.map(|s| s < bit_field_quota)
+                    == Some(true)
+            {
+                check_selected_field(field, size, bit_field_quota);
+                bit_field_quota -= field.bit_field_size.unwrap();
+            } else {
+                bit_field_quota = 0;
+                let aligned = Compiler::align_up(size, f_align);
+                for _ in 0..aligned - size {
+                    new_fields.push(unnamed_char_field.clone());
+                }
+                size = aligned;
+
+                check_selected_field(field, size, bit_field_quota);
+
+                if field.bit_field_size != Some(0) {
+                    if field.bit_field_size.is_none() {
+                        let f = SuField {
+                            name: field.name.clone(),
+                            tp: field.tp.clone(),
+                            bit_field_size: None,
+                        };
+                        new_fields.push(f);
+                    } else {
+                        // bit field type and mask size were checked in
+                        // get_su_field.
+                        for _ in 0..4 {
+                            new_fields.push(unnamed_char_field.clone());
+                        }
+                        bit_field_quota = 32 - field.bit_field_size.unwrap();
+                    }
+                    size += f_sz;
+                }
+            }
+        }
+
+        // 3.5.2.1: There may also be unnamed padding at the end of a structure
+        // or union, as necessary to achieve the appropriate alignment were the
+        // structure or union to be a member of an array.
+        let aligned = Compiler::align_up(size, align);
+        for _ in 0..aligned - size {
+            new_fields.push(unnamed_char_field.clone());
+        }
+
+        let su_type = SuType {
+            fields: Some(new_fields),
+            uuid: 0,
+        };
+        (Type::Struct(Box::new(su_type)), size, align, selected_field)
     }
 
     fn unwrap_declarator(
@@ -6737,52 +6881,8 @@ impl Compiler<'_> {
             Type::Long | Type::UnsignedLong => Some((8, 8)),
             Type::Float => Some((4, 4)),
             Type::Double => Some((8, 8)),
-            Type::Struct(body) => body.fields.as_ref().and_then(|fs| {
-                let mut sz: u32 = 0;
-                let mut align: u32 = 0;
-                let mut bit_field_quota: u32 = 0;
-                for f in fs {
-                    match Compiler::get_type_size_and_align_bytes(&f.tp.tp) {
-                        // get_su_field ensures struct/union does not contain
-                        // fields of incomplete type.
-                        None => unreachable!(),
-                        Some((f_sz, f_align)) => {
-                            // bit field with width=0 does not affect whole
-                            // struct align, but does affect field align (at
-                            // least that's clang's behavior)
-                            if f.bit_field_size != Some(0) {
-                                align = max(align, f_align);
-                            }
-                            match f.bit_field_size {
-                                None => {
-                                    sz = Compiler::align_up(sz, f_align) + f_sz
-                                }
-                                // 3.5.2.1: a bit-field with a width of 0
-                                // indicates that no further bit-field is to be
-                                // packed into the unit in which the previous
-                                // bit-field, if any, was placed.
-                                Some(0) => {
-                                    sz = Compiler::align_up(sz, f_align);
-                                    bit_field_quota = 0;
-                                }
-                                Some(x) if (x as u32) <= bit_field_quota => {
-                                    bit_field_quota -= x as u32;
-                                }
-                                Some(x) => {
-                                    // bit field type and mask size were checked
-                                    // in get_su_field.
-                                    sz = Compiler::align_up(sz, f_align) + f_sz;
-                                    bit_field_quota = f_sz * 8 - x as u32;
-                                }
-                            }
-                        }
-                    }
-                }
-                // 3.5.2.1: There may also be unnamed padding at the end of a
-                // structure or union, as necessary to achieve the appropriate
-                // alignment were the structure or union to be a member of an
-                // array.
-                sz = Compiler::align_up(sz, align);
+            Type::Struct(body) => body.fields.as_ref().and_then(|_| {
+                let (_, sz, align, _) = Compiler::get_struct_layout(tp, None);
                 Some((sz, align))
             }),
             Type::Union(body) => body.fields.as_ref().and_then(|fs| {
