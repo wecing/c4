@@ -375,10 +375,24 @@ struct FuncDefCtx {
 struct StructFieldOffset {
     offset: u32,
 
-    // only meaningful if bit_field_mask != 0; field actual value is
-    // (v >> bit_field_offset) & bit_field_mask.
+    // only meaningful if bit_field_mask != 0; field actual value is:
+    //
+    // without sign extension (using unsigned shr):
+    //
+    //   (v & bit_field_mask) >> bit_field_offset
+    //
+    // or:
+    //   v & (bit_field_mask >> bit_field_offset)
+    //
+    // with sign extension (using arithmetic shr):
+    //
+    //      (v & bit_field_mask)
+    //   << bit_field_rem_bits
+    //   >> bit_field_rem_bits
+    //   >> bit_field_offset
     bit_field_offset: u8,
     bit_field_mask: u32,
+    bit_field_rem_bits: u8,
 }
 
 trait IRBuilder {
@@ -2736,13 +2750,15 @@ impl Compiler<'_> {
                 if binary.op == ast::Expr_Binary_Op::LOGIC_AND
                     || binary.op == ast::Expr_Binary_Op::LOGIC_OR
                 {
-                    self.visit_special_binary_op(
+                    self.visit_logical_binary_op(
                         left,
                         right,
                         binary.op,
                         fold_constant,
                         emit_ir,
                     )
+                } else if binary.op == ast::Expr_Binary_Op::ASSIGN {
+                    self.visit_assign_expr(left, right, fold_constant, emit_ir)
                 } else {
                     let (tp_left, left) =
                         self.visit_expr(left, fold_constant, emit_ir);
@@ -3603,7 +3619,6 @@ impl Compiler<'_> {
 
         match op {
             Op::ASSIGN => {
-                // TODO: support bit fields
                 if tp_left.is_const {
                     panic!(
                         "{}: Cannot modify const-qualified variables",
@@ -4575,7 +4590,7 @@ impl Compiler<'_> {
     }
 
     // for && and ||
-    fn visit_special_binary_op(
+    fn visit_logical_binary_op(
         &mut self,
         e_left: L<&ast::Expr>,
         e_right: L<&ast::Expr>,
@@ -4775,6 +4790,383 @@ impl Compiler<'_> {
                 }
             }
         }
+    }
+
+    // specialized entry point for assign exprs; this is a wrapper around
+    // visit_simple_binary_op() that handles writing to bit fields.
+    fn visit_assign_expr(
+        &mut self,
+        left: L<&ast::Expr>,
+        right: L<&ast::Expr>,
+        fold_constant: bool,
+        emit_ir: bool,
+    ) -> (QType, Option<ConstantOrIrValue>) {
+        let loc_left = left.1;
+        let loc_right = right.1;
+
+        // if left hand side is not even a member access expr: fallback to
+        // simple assign expr
+        let (struct_expr, field, is_dot) = match left.0.e.as_ref().unwrap() {
+            ast::Expr_oneof_e::dot(dot) => {
+                let s = &self.translation_unit.exprs[dot.e_idx as usize];
+                let s = (s, dot.get_e_loc());
+                let f = (dot.get_field(), dot.get_field_loc());
+                (s, f, true)
+            }
+            ast::Expr_oneof_e::ptr(ptr) => {
+                let s = &self.translation_unit.exprs[ptr.e_idx as usize];
+                let s = (s, ptr.get_e_loc());
+                let f = (ptr.get_field(), ptr.get_field_loc());
+                (s, f, false)
+            }
+            _ => {
+                let (tp_left, left) =
+                    self.visit_expr(left, fold_constant, emit_ir);
+                let (tp_right, right) =
+                    self.visit_expr(right, fold_constant, emit_ir);
+                return self.visit_simple_binary_op(
+                    &tp_left,
+                    left,
+                    loc_left,
+                    &tp_right,
+                    right,
+                    loc_right,
+                    ast::Expr_Binary_Op::ASSIGN,
+                    fold_constant,
+                    emit_ir,
+                );
+            }
+        };
+
+        // if left hand side is not a bit field access expr: fallback to simple
+        // assign expr
+        let (tp_struct_expr, _) = self.visit_expr(struct_expr, false, false);
+        let offset = match &tp_struct_expr.tp {
+            tp @ Type::Struct(_) if is_dot => {
+                Compiler::get_struct_layout(tp, Some(field.0)).3
+            }
+            Type::Pointer(tp) if !is_dot => match &tp.tp {
+                tp @ Type::Struct(_) => {
+                    Compiler::get_struct_layout(tp, Some(field.0)).3
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let (tp_field, offset) = match offset {
+            Some(x) => x,
+            None => {
+                let (tp_left, left) =
+                    self.visit_expr(left, fold_constant, emit_ir);
+                let (tp_right, right) =
+                    self.visit_expr(right, fold_constant, emit_ir);
+                return self.visit_simple_binary_op(
+                    &tp_left,
+                    left,
+                    loc_left,
+                    &tp_right,
+                    right,
+                    loc_right,
+                    ast::Expr_Binary_Op::ASSIGN,
+                    fold_constant,
+                    emit_ir,
+                );
+            }
+        };
+
+        // when x is a bit field of struct s:
+        //      s.x = e (or s->x = e)
+        // will be converted to:
+        //      $v = e & (mask >> offset);
+        //      *ptr = (*ptr & ~mask) | $v << offset;
+        //      $v
+        let (tp_struct_expr, struct_expr) =
+            self.visit_expr(struct_expr, fold_constant, emit_ir);
+        let (tp_struct_expr, struct_expr) = self
+            .convert_lvalue_and_func_designator(
+                tp_struct_expr,
+                struct_expr,
+                !is_dot,
+                true,
+                true,
+            );
+        let (tp_right, right) = self.visit_expr(right, fold_constant, emit_ir);
+        let (tp_right, right) = self.convert_lvalue_and_func_designator(
+            tp_right, right, true, true, true,
+        );
+        let src_ir_id = {
+            if tp_struct_expr.is_const {
+                panic!(
+                    "{}: Cannot modify const-qualified variables",
+                    Compiler::format_loc(loc_left)
+                )
+            }
+            Compiler::check_types_for_assign(
+                &tp_field, &tp_right, &right, loc_right,
+            );
+            let (_, right) = self.cast_expression(
+                tp_right,
+                right,
+                tp_field.clone(),
+                loc_right,
+                emit_ir,
+            );
+            if !emit_ir {
+                return (tp_field, None);
+            }
+            let right = right.map(|c| self.convert_to_ir_value(&tp_field, c));
+            match &right {
+                Some(ConstantOrIrValue::IrValue(ir_id, false)) => ir_id.clone(),
+                _ => unreachable!(),
+            }
+        };
+        let field_ptr_ir_id = {
+            let struct_expr = struct_expr
+                .map(|c| self.convert_to_ir_value(&tp_struct_expr, c));
+            let struct_ptr_ir_id = match struct_expr {
+                Some(ConstantOrIrValue::IrValue(ir_id, _)) if is_dot => ir_id,
+                Some(ConstantOrIrValue::IrValue(ir_id, false)) if !is_dot => {
+                    ir_id
+                }
+                _ => unreachable!(),
+            };
+
+            let struct_i8_ptr_ir_id = self.get_next_ir_id();
+            // src_tp is only a marker for ir builder that indicates it's a
+            // ptr->ptr conversion
+            self.c4ir_builder.create_cast(
+                struct_i8_ptr_ir_id.clone(),
+                &QType::char_ptr_tp(),
+                struct_ptr_ir_id.clone(),
+                &QType::char_ptr_tp(),
+            );
+            self.llvm_builder.create_cast(
+                struct_i8_ptr_ir_id.clone(),
+                &QType::char_ptr_tp(),
+                struct_ptr_ir_id.clone(),
+                &QType::char_ptr_tp(),
+            );
+
+            let offset_ir_id = match self.convert_to_ir_value(
+                &QType::from(Type::Long),
+                ConstantOrIrValue::I64(offset.offset as i64),
+            ) {
+                ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+                _ => unreachable!(),
+            };
+
+            let field_i8_ptr_ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_ptr_add(
+                &field_i8_ptr_ir_id,
+                &struct_i8_ptr_ir_id,
+                &offset_ir_id,
+            );
+            self.llvm_builder.create_ptr_add(
+                &field_i8_ptr_ir_id,
+                &struct_i8_ptr_ir_id,
+                &offset_ir_id,
+            );
+
+            let field_ptr_ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_cast(
+                field_ptr_ir_id.clone(),
+                &QType::ptr_tp(tp_field.clone()),
+                field_i8_ptr_ir_id.clone(),
+                &QType::char_ptr_tp(),
+            );
+            self.llvm_builder.create_cast(
+                field_ptr_ir_id.clone(),
+                &QType::ptr_tp(tp_field.clone()),
+                field_i8_ptr_ir_id.clone(),
+                &QType::char_ptr_tp(),
+            );
+
+            field_ptr_ir_id
+        };
+
+        let is_signed = match &tp_field.tp {
+            Type::Int => true,
+            _ => false,
+        };
+
+        // $v = e & (mask >> offset);
+        let v_ir_id = {
+            let mask = ConstantOrIrValue::U32(
+                offset.bit_field_mask >> offset.bit_field_offset,
+            );
+            let mask_ir_id = match self
+                .convert_to_ir_value(&QType::from(Type::UnsignedInt), mask)
+            {
+                ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+                _ => unreachable!(),
+            };
+
+            let v_ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_bin_op(
+                v_ir_id.clone(),
+                ast::Expr_Binary_Op::BIT_AND,
+                is_signed,
+                false,
+                src_ir_id.clone(),
+                mask_ir_id.clone(),
+            );
+            self.llvm_builder.create_bin_op(
+                v_ir_id.clone(),
+                ast::Expr_Binary_Op::BIT_AND,
+                is_signed,
+                false,
+                src_ir_id.clone(),
+                mask_ir_id.clone(),
+            );
+
+            v_ir_id
+        };
+        // *ptr = (*ptr & ~mask) | $v << offset;
+        {
+            let orig_ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_load(
+                orig_ir_id.clone(),
+                field_ptr_ir_id.clone(),
+                &tp_field,
+            );
+            self.llvm_builder.create_load(
+                orig_ir_id.clone(),
+                field_ptr_ir_id.clone(),
+                &tp_field,
+            );
+
+            let mask = ConstantOrIrValue::U32(!offset.bit_field_mask);
+            let mask_ir_id = match self.convert_to_ir_value(&tp_field, mask) {
+                ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+                _ => unreachable!(),
+            };
+
+            // $left = *ptr & ~mask
+            let left_ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_bin_op(
+                left_ir_id.clone(),
+                ast::Expr_Binary_Op::BIT_AND,
+                is_signed,
+                false,
+                orig_ir_id.clone(),
+                mask_ir_id.clone(),
+            );
+            self.llvm_builder.create_bin_op(
+                left_ir_id.clone(),
+                ast::Expr_Binary_Op::BIT_AND,
+                is_signed,
+                false,
+                orig_ir_id.clone(),
+                mask_ir_id.clone(),
+            );
+
+            let offset = ConstantOrIrValue::U8(offset.bit_field_offset);
+            let offset_ir_id = match self
+                .convert_to_ir_value(&QType::from(Type::UnsignedChar), offset)
+            {
+                ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+                _ => unreachable!(),
+            };
+
+            // $right = $v << offset
+            let right_ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_bin_op(
+                right_ir_id.clone(),
+                ast::Expr_Binary_Op::L_SHIFT,
+                is_signed,
+                false,
+                v_ir_id.clone(),
+                offset_ir_id.clone(),
+            );
+            self.llvm_builder.create_bin_op(
+                right_ir_id.clone(),
+                ast::Expr_Binary_Op::L_SHIFT,
+                is_signed,
+                false,
+                v_ir_id.clone(),
+                offset_ir_id.clone(),
+            );
+
+            // $t = $left | $right
+            let ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_bin_op(
+                ir_id.clone(),
+                ast::Expr_Binary_Op::BIT_OR,
+                is_signed,
+                false,
+                left_ir_id.clone(),
+                right_ir_id.clone(),
+            );
+            self.llvm_builder.create_bin_op(
+                ir_id.clone(),
+                ast::Expr_Binary_Op::BIT_OR,
+                is_signed,
+                false,
+                left_ir_id.clone(),
+                right_ir_id.clone(),
+            );
+
+            // *ptr = $t
+            self.c4ir_builder
+                .create_store(field_ptr_ir_id.clone(), ir_id.clone());
+            self.llvm_builder
+                .create_store(field_ptr_ir_id.clone(), ir_id.clone());
+        }
+        // $r = $v << (rem_bits + offset) >> (rem_bits + offset)
+        let r_ir_id = if is_signed {
+            let shift_bits = ConstantOrIrValue::U8(
+                offset.bit_field_rem_bits + offset.bit_field_offset,
+            );
+            let shift_bits_ir_id = match self.convert_to_ir_value(
+                &QType::from(Type::UnsignedChar),
+                shift_bits,
+            ) {
+                ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+                _ => unreachable!(),
+            };
+
+            let shl_ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_bin_op(
+                shl_ir_id.clone(),
+                ast::Expr_Binary_Op::L_SHIFT,
+                true,
+                false,
+                v_ir_id.clone(),
+                shift_bits_ir_id.clone(),
+            );
+            self.llvm_builder.create_bin_op(
+                shl_ir_id.clone(),
+                ast::Expr_Binary_Op::L_SHIFT,
+                true,
+                false,
+                v_ir_id.clone(),
+                shift_bits_ir_id.clone(),
+            );
+
+            let shr_ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_bin_op(
+                shr_ir_id.clone(),
+                ast::Expr_Binary_Op::R_SHIFT,
+                true,
+                false,
+                shl_ir_id.clone(),
+                shift_bits_ir_id.clone(),
+            );
+            self.llvm_builder.create_bin_op(
+                shr_ir_id.clone(),
+                ast::Expr_Binary_Op::R_SHIFT,
+                true,
+                false,
+                shl_ir_id.clone(),
+                shift_bits_ir_id.clone(),
+            );
+
+            shr_ir_id
+        } else {
+            v_ir_id
+        };
+        // $r
+        (tp_field, Some(ConstantOrIrValue::IrValue(r_ir_id, false)))
     }
 
     fn visit_ternary_op(
@@ -5937,6 +6329,16 @@ impl Compiler<'_> {
         r
     }
 
+    // The way we pack bit fields is different from (and less efficient than)
+    // clang's behavior. For example, this struct:
+    //
+    //      struct S {char c; int n:3};
+    //
+    // with clang, sizeof(struct S) == 4;
+    // with our implementation, sizeof(struct S) == 8.
+    //
+    // Note that the same bit field packing algorithm is also used in other
+    // places, e.g. sanitize_initializer().
     fn get_struct_layout(
         tp: &Type,
         field_name: Option<&str>,
@@ -5955,19 +6357,21 @@ impl Compiler<'_> {
                             offset,
                             bit_field_offset: 0,
                             bit_field_mask: 0,
+                            bit_field_rem_bits: 0,
                         }
                     } else {
                         let bit_field_offset = 32 - bit_field_quota;
-                        let bit_field_mask = u32::MAX
-                            << (bit_field_quota
-                                - field.bit_field_size.unwrap())
-                            >> (bit_field_quota
-                                - field.bit_field_size.unwrap())
-                            >> bit_field_offset as u32;
+                        let bit_field_rem_bits =
+                            bit_field_quota - field.bit_field_size.unwrap();
+                        let bit_field_mask = u32::MAX << bit_field_rem_bits
+                            >> bit_field_rem_bits
+                            >> bit_field_offset
+                            << bit_field_offset;
                         StructFieldOffset {
                             offset,
                             bit_field_offset,
                             bit_field_mask,
+                            bit_field_rem_bits,
                         }
                     };
                     selected_field = Some((field.tp.clone(), offset));
