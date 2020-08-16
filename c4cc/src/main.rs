@@ -3461,8 +3461,13 @@ impl Compiler<'_> {
                 }
             }
             Op::REF => {
-                // TODO: the argument must not be a bit-field
-                // TODO: the argument must not be a register variable
+                // C89 requires the argument must not be a bit-field or a
+                // register variable. If the argument is a:
+                //
+                // - bit-field: Since in our implementation bit fields are not
+                //   lvalues, semantic analysis would fail.
+                // - register variable: Semantic analysis would succeed, which
+                //   is in fact incorrect per C89 spec requirements.
                 let ptr_tp = QType::ptr_tp(arg_tp);
                 if !emit_ir || arg.is_none() {
                     (ptr_tp, None)
