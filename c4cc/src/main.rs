@@ -3132,17 +3132,21 @@ impl Compiler<'_> {
         );
         let mut is_const = left_tp.is_const;
         let mut is_volatile = left_tp.is_volatile;
-        let su_type_is_struct: (&SuType, bool) = match &left_tp.tp {
-            Type::Struct(su_type) if is_dot => (su_type.borrow(), true),
-            Type::Union(su_type) if is_dot => (su_type.borrow(), false),
+        let su_type_is_struct: (&Type, &SuType, bool) = match &left_tp.tp {
+            Type::Struct(su_type) if is_dot => {
+                (&left_tp.tp, su_type.borrow(), true)
+            }
+            Type::Union(su_type) if is_dot => {
+                (&left_tp.tp, su_type.borrow(), false)
+            }
             _ if is_dot => c4_fail!(left_loc, "Struct or union expected"),
 
             Type::Pointer(tp) => {
                 is_const = tp.is_const;
                 is_volatile = tp.is_volatile;
                 match &tp.tp {
-                    Type::Struct(su_type) => (su_type.borrow(), true),
-                    Type::Union(su_type) => (su_type.borrow(), false),
+                    Type::Struct(su_type) => (&tp.tp, su_type.borrow(), true),
+                    Type::Union(su_type) => (&tp.tp, su_type.borrow(), false),
                     _ => c4_fail!(
                         left_loc,
                         "Pointer to struct or union expected"
@@ -3151,55 +3155,40 @@ impl Compiler<'_> {
             }
             _ => c4_fail!(left_loc, "Pointer to struct or union expected"),
         };
-        let (su_type, is_struct) = su_type_is_struct;
+        let (su_tp, su_type, is_struct) = su_type_is_struct;
 
         let fields = match &su_type.fields {
             None => c4_fail!(
                 left_loc,
                 "Expression has incomplete struct/union type"
             ),
-            Some(fields) => fields,
+            Some(fs) => (fs),
         };
-        // This assumes `field` does not have a bit mask. Things would be more
-        // complicated if otherwise.
-        let (offset, field_tp) = {
-            let prev_fields: Vec<SuField> = fields
+        let (field_tp, offset) = if is_struct {
+            match Compiler::get_struct_layout(su_tp, Some(field.0)).3 {
+                Some(x) => x,
+                None => c4_fail!(field.1, "Field '{}' not found", field.0),
+            }
+        } else {
+            let zero_offset = StructFieldOffset {
+                offset: 0,
+                bit_field_offset: 0,
+                bit_field_mask: 0,
+                bit_field_rem_bits: 0,
+            };
+            match fields
                 .into_iter()
-                .take_while(|f| f.name != Some(field.0.to_string()))
-                .map(|f| f.clone())
-                .collect();
-            if prev_fields.len() >= fields.len() {
-                c4_fail!(field.1, "Field '{}' not found", field.0)
-            }
-            let field_tp = &fields[prev_fields.len()].tp;
-            if fields[prev_fields.len()].bit_field_size.is_some() {
-                unimplemented!() // TODO: support bit field (breaks assumptions)
-            }
-            if is_struct {
-                let (offset, _) = if prev_fields.is_empty() {
-                    (0, 0)
-                } else {
-                    Compiler::get_type_size_and_align_bytes(&Type::Struct(
-                        Box::new(SuType {
-                            fields: Some(prev_fields),
-                            uuid: 0, // unused
-                        }),
-                    ))
-                    .unwrap()
-                };
-                let (_, align) =
-                    Compiler::get_type_size_and_align_bytes(&field_tp.tp)
-                        .unwrap();
-                (Compiler::align_up(offset, align), field_tp)
-            } else {
-                (0, field_tp)
+                .find(|f| f.name.as_deref() == Some(field.0))
+            {
+                Some(f) => (f.tp.clone(), zero_offset),
+                None => c4_fail!(field.1, "Field '{}' not found", field.0),
             }
         };
 
         let rtp = QType {
             is_const,
             is_volatile,
-            tp: field_tp.tp.clone(),
+            tp: field_tp.tp,
         };
         let r = if left.is_none() || !emit_ir {
             // looks like even clang does not support constant folding here
@@ -3237,7 +3226,7 @@ impl Compiler<'_> {
                 );
 
                 // offset: i64
-                let offset = ConstantOrIrValue::I64(offset as i64);
+                let offset = ConstantOrIrValue::I64(offset.offset as i64);
                 let offset =
                     self.convert_to_ir_value(&QType::from(Type::Long), offset);
                 let offset = match offset {
@@ -3276,7 +3265,7 @@ impl Compiler<'_> {
                 field_ptr
             };
 
-            if is_dot && !is_lvalue {
+            if (is_dot && !is_lvalue) || offset.bit_field_mask != 0 {
                 // 3.3.2.3: (for dot) a member of a structure or union object...
                 // is an lvalue if the first expression is an lvalue.
                 // 3.3.2.3: (for ->) The value... is an lvalue.
@@ -3299,7 +3288,94 @@ impl Compiler<'_> {
                         derefed
                     }
                 };
-                Some(ConstantOrIrValue::IrValue(ir_id, true))
+
+                let r_ir_id = if offset.bit_field_mask == 0 {
+                    ir_id
+                } else {
+                    let mut get_ir_id = |tp, c| match self
+                        .convert_to_ir_value(&QType::from(tp), c)
+                    {
+                        ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
+                        _ => unreachable!(),
+                    };
+                    let mask_ir_id = get_ir_id(
+                        Type::UnsignedInt,
+                        ConstantOrIrValue::U32(offset.bit_field_mask),
+                    );
+                    let shl_bits_ir_id = get_ir_id(
+                        Type::UnsignedChar,
+                        ConstantOrIrValue::U8(offset.bit_field_rem_bits),
+                    );
+                    let shr_bits_ir_id = get_ir_id(
+                        Type::UnsignedChar,
+                        ConstantOrIrValue::U8(
+                            offset.bit_field_rem_bits + offset.bit_field_offset,
+                        ),
+                    );
+
+                    let is_signed = match &rtp.tp {
+                        Type::Int => true,
+                        Type::UnsignedInt => false,
+                        _ => unreachable!(),
+                    };
+
+                    let masked_ir_id = self.get_next_ir_id();
+                    self.c4ir_builder.create_bin_op(
+                        masked_ir_id.clone(),
+                        ast::Expr_Binary_Op::BIT_AND,
+                        is_signed,
+                        false,
+                        ir_id.clone(),
+                        mask_ir_id.clone(),
+                    );
+                    self.llvm_builder.create_bin_op(
+                        masked_ir_id.clone(),
+                        ast::Expr_Binary_Op::BIT_AND,
+                        is_signed,
+                        false,
+                        ir_id.clone(),
+                        mask_ir_id.clone(),
+                    );
+
+                    let shl_ir_id = self.get_next_ir_id();
+                    self.c4ir_builder.create_bin_op(
+                        shl_ir_id.clone(),
+                        ast::Expr_Binary_Op::L_SHIFT,
+                        is_signed,
+                        false,
+                        masked_ir_id.clone(),
+                        shl_bits_ir_id.clone(),
+                    );
+                    self.llvm_builder.create_bin_op(
+                        shl_ir_id.clone(),
+                        ast::Expr_Binary_Op::L_SHIFT,
+                        is_signed,
+                        false,
+                        masked_ir_id.clone(),
+                        shl_bits_ir_id.clone(),
+                    );
+
+                    let r_ir_id = self.get_next_ir_id();
+                    self.c4ir_builder.create_bin_op(
+                        r_ir_id.clone(),
+                        ast::Expr_Binary_Op::R_SHIFT,
+                        is_signed,
+                        false,
+                        shl_ir_id.clone(),
+                        shr_bits_ir_id.clone(),
+                    );
+                    self.llvm_builder.create_bin_op(
+                        r_ir_id.clone(),
+                        ast::Expr_Binary_Op::R_SHIFT,
+                        is_signed,
+                        false,
+                        shl_ir_id.clone(),
+                        shr_bits_ir_id.clone(),
+                    );
+
+                    r_ir_id
+                };
+                Some(ConstantOrIrValue::IrValue(r_ir_id, false))
             } else {
                 Some(ConstantOrIrValue::IrValue(field_ptr_ir_id, true))
             }
@@ -6351,6 +6427,11 @@ impl Compiler<'_> {
         let mut selected_field: Option<(QType, StructFieldOffset)> = None;
         let mut check_selected_field =
             |field: &SuField, offset: u32, bit_field_quota: u8| {
+                let bit_field_quota = if bit_field_quota != 0 {
+                    bit_field_quota
+                } else {
+                    32
+                };
                 if field.name.is_some() && field.name.as_deref() == field_name {
                     let offset = if field.bit_field_size.is_none() {
                         StructFieldOffset {
