@@ -239,11 +239,11 @@ enum ConstantOrIrValue {
     U64(u64),    // UnsignedLong, Pointer(_)
     Float(f32),  // Float
     Double(f64), // Double
-    // Addresses may only be used together with pointer or array types.
+    // StrAddresses may only be used together with pointer or array types.
     //
-    // Unlike IrValue, the ir_id of Address could be looked up in
+    // Unlike IrValue, the ir_id of StrAddress could be looked up in
     // Compiler::str_constants and is guaranteed to exist.
-    Address(String, i64), // ir_id, offset_bytes
+    StrAddress(String, i64), // ir_id, offset_bytes
     // For struct/union/array, ir_id is a pointer even when is_lvalue=false.
     IrValue(String, bool), // ir_id, is_lvalue
 }
@@ -850,7 +850,7 @@ impl LLVMBuilderImpl {
             C::U64(v) => f_int(T::UnsignedLong, *v, false),
             C::Float(v) => f_fp(T::Float, *v as f64),
             C::Double(v) => f_fp(T::Double, *v),
-            C::Address(ir_id, offset_bytes) => {
+            C::StrAddress(ir_id, offset_bytes) => {
                 let src_tp = Type::Pointer(Box::new(QType::from(Type::Void)));
                 let src_tp_llvm = self.get_llvm_type(&src_tp);
                 let char_ptr_tp = self.get_llvm_type(&Type::Pointer(Box::new(
@@ -2181,7 +2181,7 @@ impl Compiler<'_> {
                 };
 
                 let str_ir_id = match c {
-                    ConstantOrIrValue::Address(ir_id, 0) => ir_id,
+                    ConstantOrIrValue::StrAddress(ir_id, 0) => ir_id,
                     _ => c4_fail!(
                         loc,
                         "Brace-enclosed initializer or string literal expected"
@@ -2629,7 +2629,7 @@ impl Compiler<'_> {
                     Box::new(QType::from(Type::Char)),
                     Some(len),
                 ));
-                (tp, Some(ConstantOrIrValue::Address(ir_id, 0)))
+                (tp, Some(ConstantOrIrValue::StrAddress(ir_id, 0)))
             }
             ast::Expr_oneof_e::wide_string(ws) => {
                 let mut buf: Vec<u8> = vec![];
@@ -2652,7 +2652,7 @@ impl Compiler<'_> {
                     Box::new(QType::from(Type::Short)),
                     Some(len),
                 ));
-                (tp, Some(ConstantOrIrValue::Address(ir_id, 0)))
+                (tp, Some(ConstantOrIrValue::StrAddress(ir_id, 0)))
             }
             ast::Expr_oneof_e::cast(cast) => {
                 self.visit_cast_expr((cast, e.1), fold_constant, emit_ir)
@@ -2853,7 +2853,7 @@ impl Compiler<'_> {
         let r = if ptr.is_none() || sub.is_none() || !fold_constant {
             None
         } else {
-            // visit_cast_expr ensures `ptr` could only be U64, Address, or
+            // visit_cast_expr ensures `ptr` could only be U64, StrAddress, or
             // IrValue, and `sub` must be an integral type, or IrValue.
             use ConstantOrIrValue as C;
             if !emit_ir {
@@ -2866,11 +2866,14 @@ impl Compiler<'_> {
                     C::U32(v) => Some(*v as i64),
                     C::I64(v) => Some(*v),
                     C::U64(v) => Some(*v as i64),
-                    _ => None,
+                    _ => None, // TODO
                 };
                 sub_c.and_then(|s| match (ptr.as_ref().unwrap(), &elem_tp.tp) {
-                    (C::Address(ir_id, offset_bytes), Type::Char)
-                    | (C::Address(ir_id, offset_bytes), Type::UnsignedChar) => {
+                    (C::StrAddress(ir_id, offset_bytes), Type::Char)
+                    | (
+                        C::StrAddress(ir_id, offset_bytes),
+                        Type::UnsignedChar,
+                    ) => {
                         let offset: usize = (*offset_bytes + s) as usize;
                         let buf = self.str_constants.get(ir_id).unwrap();
                         if buf.len() <= offset {
@@ -2882,7 +2885,7 @@ impl Compiler<'_> {
                         Some(C::I8(buf[offset] as i8))
                     }
                     // technically we can also constant fold wide strings here
-                    _ => None,
+                    _ => None, // TODO
                 })
             } else {
                 // T ptr[sub] = *(ptr + sub)
@@ -3470,7 +3473,7 @@ impl Compiler<'_> {
                 //   is in fact incorrect per C89 spec requirements.
                 let ptr_tp = QType::ptr_tp(arg_tp);
                 if !emit_ir || arg.is_none() {
-                    (ptr_tp, None)
+                    (ptr_tp, None) // TODO
                 } else {
                     match arg.unwrap() {
                         ConstantOrIrValue::IrValue(ir_id, true) => (
@@ -3511,7 +3514,7 @@ impl Compiler<'_> {
                                 _ => unreachable!(),
                             }
                         }
-                        _ => unreachable!(),
+                        _ => unreachable!(), // TODO
                     }
                 }
             }
@@ -3525,7 +3528,7 @@ impl Compiler<'_> {
                 use ConstantOrIrValue as C;
                 let do_neg = op == Op::NEG;
                 match arg {
-                    Some(C::Address(_, _)) => unreachable!(),
+                    Some(C::StrAddress(_, _)) => unreachable!(),
 
                     Some(C::IrValue(_, true)) => unreachable!(),
                     Some(C::IrValue(ir_id, false)) => {
@@ -3605,7 +3608,7 @@ impl Compiler<'_> {
                         _ => (QType::from(Type::Int), None),
                     },
 
-                    Some(C::Address(_, _))
+                    Some(C::StrAddress(_, _))
                     | Some(C::Float(_))
                     | Some(C::Double(_))
                     | Some(C::IrValue(_, true)) => unreachable!(),
@@ -3724,7 +3727,7 @@ impl Compiler<'_> {
                 // now store `right` to `left`
                 let dst_ir_id = match left {
                     Some(ConstantOrIrValue::IrValue(ir_id, true)) => ir_id,
-                    _ => unreachable!(),
+                    _ => unreachable!(), // TODO
                 };
                 let src_ir_id = match &right {
                     Some(ConstantOrIrValue::IrValue(ir_id, false)) => {
@@ -4011,9 +4014,10 @@ impl Compiler<'_> {
                     (left, right)
                 };
                 let (left, right) = match (&left, &right) {
-                    (C::Address(addr_left, _), C::Address(addr_right, _))
-                        if addr_left != addr_right =>
-                    {
+                    (
+                        C::StrAddress(addr_left, _),
+                        C::StrAddress(addr_right, _),
+                    ) if addr_left != addr_right => {
                         if emit_ir {
                             (
                                 self.convert_to_ir_value(&tp_left, left),
@@ -4023,7 +4027,7 @@ impl Compiler<'_> {
                             return (QType::from(Type::Int), None);
                         }
                     }
-                    _ => (left, right),
+                    _ => (left, right), // TODO
                 };
                 match (left, right) {
                     (C::IrValue(left, false), C::IrValue(right, false)) => {
@@ -4065,11 +4069,11 @@ impl Compiler<'_> {
                     (C::Float(x), C::Float(y)) => cmp(op, x, y),
                     (C::Double(x), C::Double(y)) => cmp(op, x, y),
 
-                    (C::Address(_, x), C::Address(_, y)) => cmp(op, x, y),
-                    (C::Address(_, _), C::I64(0)) => cmp(op, 999, 0),
-                    (C::I64(0), C::Address(_, _)) => cmp(op, 0, 999),
+                    (C::StrAddress(_, x), C::StrAddress(_, y)) => cmp(op, x, y),
+                    (C::StrAddress(_, _), C::I64(0)) => cmp(op, 999, 0),
+                    (C::I64(0), C::StrAddress(_, _)) => cmp(op, 0, 999),
 
-                    _ => unreachable!(),
+                    _ => unreachable!(), // TODO
                 }
             }
             Op::L_SHIFT | Op::R_SHIFT => {
@@ -4196,7 +4200,7 @@ impl Compiler<'_> {
                         Some(C::U64(x.checked_shr(y as u32).unwrap_or(0))),
                     ),
 
-                    _ => unreachable!(),
+                    _ => unreachable!(), // TODO
                 }
             }
             Op::ADD | Op::SUB => {
@@ -4267,7 +4271,7 @@ impl Compiler<'_> {
                             );
                             (tp, Some(C::IrValue(ir_id, false)))
                         }
-                        _ => unreachable!(),
+                        _ => unreachable!(), // TODO
                     }
                 } else if tp_left.is_pointer() && tp_right.is_integral_type() {
                     let tp_elem = match &tp_left.tp {
@@ -4376,13 +4380,13 @@ impl Compiler<'_> {
                                 true,
                             )
                         }
-                        (C::Address(ir_id, offset), C::I64(y)) => {
-                            (tp_left, Some(C::Address(ir_id, offset + y)))
+                        (C::StrAddress(ir_id, offset), C::I64(y)) => {
+                            (tp_left, Some(C::StrAddress(ir_id, offset + y)))
                         }
                         (C::U64(x), C::I64(y)) => {
                             (tp_left, Some(C::U64(x + y as u64)))
                         }
-                        _ => unreachable!(),
+                        _ => unreachable!(), // TODO
                     }
                 } else if tp_left.is_integral_type()
                     && tp_right.is_pointer()
@@ -4438,8 +4442,8 @@ impl Compiler<'_> {
 
                     use ConstantOrIrValue as C;
                     match (left, right) {
-                        (C::U64(_), C::Address(_, _)) => (long_tp, None),
-                        (C::Address(_, _), C::U64(_)) => (long_tp, None),
+                        (C::U64(_), C::StrAddress(_, _)) => (long_tp, None),
+                        (C::StrAddress(_, _), C::U64(_)) => (long_tp, None),
 
                         (C::U64(x), C::U64(y)) => (
                             long_tp,
@@ -4448,17 +4452,16 @@ impl Compiler<'_> {
                             )),
                         ),
 
-                        (C::Address(ir_id_x, _), C::Address(ir_id_y, _))
-                            if ir_id_x != ir_id_y =>
-                        {
-                            (long_tp, None)
-                        }
                         (
-                            C::Address(ir_id, offset_x),
-                            C::Address(_, offset_y),
+                            C::StrAddress(ir_id_x, _),
+                            C::StrAddress(ir_id_y, _),
+                        ) if ir_id_x != ir_id_y => (long_tp, None),
+                        (
+                            C::StrAddress(ir_id, offset_x),
+                            C::StrAddress(_, offset_y),
                         ) => (
                             long_tp,
-                            Some(C::Address(
+                            Some(C::StrAddress(
                                 ir_id,
                                 offset_x.overflowing_sub(offset_y).0
                                     / sz_elem as i64,
@@ -4549,7 +4552,7 @@ impl Compiler<'_> {
                             (long_tp, Some(C::IrValue(ir_id, false)))
                         }
 
-                        _ => unreachable!(),
+                        _ => unreachable!(), // TODO
                     }
                 } else {
                     panic!(
@@ -4716,7 +4719,7 @@ impl Compiler<'_> {
                 | C::U64(_)
                 | C::Float(_)
                 | C::Double(_)
-                | C::Address(_, _) => {
+                | C::StrAddress(_, _) => {
                     let is_true = left
                         .as_constant_double()
                         .map(|v| v != 0.0)
@@ -5547,6 +5550,7 @@ impl Compiler<'_> {
         let ir_id = match &v {
             ConstantOrIrValue::IrValue(x, false) => x.clone(),
             _ => {
+                // TODO
                 let ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_constant(ir_id.clone(), &v, &tp);
                 self.llvm_builder.create_constant(ir_id.clone(), &v, &tp);
@@ -5758,6 +5762,7 @@ impl Compiler<'_> {
         let ir_id = match &r {
             ConstantOrIrValue::IrValue(x, false) => x.clone(),
             _ => {
+                // TODO
                 let ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_constant(ir_id.clone(), &r, &tp);
                 self.llvm_builder.create_constant(ir_id.clone(), &r, &tp);
@@ -7081,7 +7086,7 @@ impl Compiler<'_> {
             }
             (Type::Pointer(_), _, Type::Pointer(_)) => (dst_tp, v),
 
-            (_, Some(p @ ConstantOrIrValue::Address(_, _)), _)
+            (_, Some(p @ ConstantOrIrValue::StrAddress(_, _)), _)
             | (_, Some(p @ ConstantOrIrValue::IrValue(_, _)), _) => {
                 if !emit_ir {
                     (dst_tp, None)
@@ -7530,13 +7535,13 @@ impl Compiler<'_> {
                 let tp = QType::from(Type::Pointer(t));
                 (tp, None)
             }
-            (Type::Array(t, _), addr @ Some(C::Address(_, _)))
+            (Type::Array(t, _), addr @ Some(C::StrAddress(_, _)))
                 if do_arr_to_ptr =>
             {
                 let tp = QType::from(Type::Pointer(t));
                 (tp, addr)
             }
-            (Type::Array(_, _), _) if do_arr_to_ptr => unreachable!(),
+            (Type::Array(_, _), _) if do_arr_to_ptr => unreachable!(), // TODO
             (Type::Array(_, _), _) => (tp, expr),
 
             // do_fun_to_ptr
@@ -7575,7 +7580,7 @@ impl Compiler<'_> {
                 );
                 (QType::from(t), Some(C::IrValue(dst_ir_id, false)))
             }
-            _ => (tp, expr),
+            _ => (tp, expr), // TODO
         }
     }
 
@@ -7586,7 +7591,7 @@ impl Compiler<'_> {
     ) -> ConstantOrIrValue {
         match c {
             ConstantOrIrValue::IrValue(_, _) => c,
-            ConstantOrIrValue::Address(ir_id, offset_bytes) => {
+            ConstantOrIrValue::StrAddress(ir_id, offset_bytes) => {
                 let old_ptr_ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_cast(
                     old_ptr_ir_id.clone(),
@@ -7641,6 +7646,7 @@ impl Compiler<'_> {
                 ConstantOrIrValue::IrValue(ir_id, false)
             }
             _ => {
+                // TODO
                 let ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_constant(ir_id.clone(), &c, tp);
                 self.llvm_builder.create_constant(ir_id.clone(), &c, tp);
@@ -7697,7 +7703,7 @@ impl Compiler<'_> {
             C::U64(v) => v,
             C::Float(_)
             | C::Double(_)
-            | C::Address(_, _)
+            | C::StrAddress(_, _)
             | C::IrValue(_, _) => panic!(
                 "{}: Array size is not a constant",
                 Compiler::format_loc(e.1)
@@ -7856,6 +7862,7 @@ impl Compiler<'_> {
                 QType::from(Type::UnsignedInt),
             ),
             _ => (
+                // TODO
                 C::I32(x.as_constant_u64().unwrap() as i32),
                 C::I32(y.as_constant_u64().unwrap() as i32),
                 QType::from(Type::Int),
