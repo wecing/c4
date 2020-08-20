@@ -244,6 +244,8 @@ enum ConstantOrIrValue {
     // Unlike IrValue, the ir_id of StrAddress could be looked up in
     // Compiler::str_constants and is guaranteed to exist.
     StrAddress(String, i64), // ir_id, offset_bytes
+    // Like IrValue, but for variables that have link time address.
+    HasAddress(String, i64, bool), // ir_id, offset_bytes, is_lvalue
     // For struct/union/array, ir_id is a pointer even when is_lvalue=false.
     IrValue(String, bool), // ir_id, is_lvalue
 }
@@ -850,7 +852,8 @@ impl LLVMBuilderImpl {
             C::U64(v) => f_int(T::UnsignedLong, *v, false),
             C::Float(v) => f_fp(T::Float, *v as f64),
             C::Double(v) => f_fp(T::Double, *v),
-            C::StrAddress(ir_id, offset_bytes) => {
+            C::StrAddress(ir_id, offset_bytes)
+            | C::HasAddress(ir_id, offset_bytes, false) => {
                 let src_tp = Type::Pointer(Box::new(QType::from(Type::Void)));
                 let src_tp_llvm = self.get_llvm_type(&src_tp);
                 let char_ptr_tp = self.get_llvm_type(&Type::Pointer(Box::new(
@@ -876,6 +879,7 @@ impl LLVMBuilderImpl {
                 };
                 (src, QType::from(src_tp))
             }
+            C::HasAddress(_, _, true) => unreachable!(),
             C::IrValue(_, _) => unreachable!(),
         }
     }
@@ -1521,6 +1525,8 @@ struct Compiler<'a> {
 
     // ir_id => binary representation
     str_constants: HashMap<String, Vec<u8>>,
+    // value: ir_id
+    has_link_time_addr: HashSet<String>,
 
     c4ir_builder: C4IRBuilder,
     llvm_builder: LLVMBuilder,
@@ -1535,6 +1541,7 @@ impl Compiler<'_> {
             current_scope: Scope::new(),
             next_uuid: 1_000,
             str_constants: HashMap::new(),
+            has_link_time_addr: HashSet::new(),
             c4ir_builder: C4IRBuilder::new(),
             llvm_builder: LLVMBuilder::new(),
         };
@@ -1849,6 +1856,10 @@ impl Compiler<'_> {
                 let is_global =
                     linkage != Linkage::NONE || scs == Some(SCS::STATIC);
 
+                if is_global {
+                    self.has_link_time_addr.insert(ir_id.clone());
+                }
+
                 let mut init = if id.init_idx == 0 {
                     Option::None
                 } else if linkage != Linkage::NONE
@@ -2032,20 +2043,6 @@ impl Compiler<'_> {
         (storage_class_specifiers.pop(), qualified_type)
     }
 
-    // TODO: support link time constants in initializer
-    //       e.g. in initializer:
-    //          int n;
-    //          int *np = &n;
-    //          int *np2 = &*&n;
-    //          int main(...) {...}
-    //       or:
-    //          struct S {int x, y;} s;
-    //          int *yp = &s.y;
-    //          int main(...) {...}
-    //       or for constant folding:
-    //          int n;
-    //          char s[&n != 0]; // or &n + 10 - &n, etc
-    //          int main(...) {...}
     fn visit_initializer(
         &mut self,
         init_idx: i32,
@@ -2554,7 +2551,14 @@ impl Compiler<'_> {
                         Some(ConstantOrIrValue::I32(*value)),
                     ),
                     Some((OrdinaryIdRef::ObjFnRef(ir_id, tp, _, _), _)) => {
-                        if !emit_ir {
+                        if self.has_link_time_addr.contains(ir_id) {
+                            let v = ConstantOrIrValue::HasAddress(
+                                ir_id.clone(),
+                                0,
+                                true,
+                            );
+                            (tp.clone(), Some(v))
+                        } else if !emit_ir {
                             (tp.clone(), None) // not a constant expr
                         } else {
                             let v =
@@ -2853,8 +2857,9 @@ impl Compiler<'_> {
         let r = if ptr.is_none() || sub.is_none() || !fold_constant {
             None
         } else {
-            // visit_cast_expr ensures `ptr` could only be U64, StrAddress, or
-            // IrValue, and `sub` must be an integral type, or IrValue.
+            // visit_cast_expr ensures `ptr` could only be U64, StrAddress,
+            // HasAddress, or IrValue, and `sub` must be an integral type,
+            // HasAddress, or IrValue.
             use ConstantOrIrValue as C;
             if !emit_ir {
                 let sub_c: Option<i64> = match sub.as_ref().unwrap() {
@@ -2866,7 +2871,7 @@ impl Compiler<'_> {
                     C::U32(v) => Some(*v as i64),
                     C::I64(v) => Some(*v),
                     C::U64(v) => Some(*v as i64),
-                    _ => None, // TODO
+                    _ => None,
                 };
                 sub_c.and_then(|s| match (ptr.as_ref().unwrap(), &elem_tp.tp) {
                     (C::StrAddress(ir_id, offset_bytes), Type::Char)
@@ -2885,7 +2890,21 @@ impl Compiler<'_> {
                         Some(C::I8(buf[offset] as i8))
                     }
                     // technically we can also constant fold wide strings here
-                    _ => None, // TODO
+                    (C::HasAddress(ir_id, offset_bytes, false), _) => {
+                        let elem_sz =
+                            match Compiler::get_type_size_and_align_bytes(
+                                &elem_tp.tp,
+                            ) {
+                                None => panic!(
+                                    "{}: Element has incomplete type",
+                                    Compiler::format_loc(arr_e.1)
+                                ),
+                                Some((sz, _)) => sz as i64,
+                            };
+                        let offset: i64 = *offset_bytes + elem_sz * s;
+                        Some(C::HasAddress(ir_id.clone(), offset, false))
+                    }
+                    _ => None,
                 })
             } else {
                 // T ptr[sub] = *(ptr + sub)
@@ -3472,19 +3491,23 @@ impl Compiler<'_> {
                 // - register variable: Semantic analysis would succeed, which
                 //   is in fact incorrect per C89 spec requirements.
                 let ptr_tp = QType::ptr_tp(arg_tp);
-                if !emit_ir || arg.is_none() {
-                    (ptr_tp, None) // TODO
-                } else {
-                    match arg.unwrap() {
-                        ConstantOrIrValue::IrValue(ir_id, true) => (
-                            ptr_tp,
-                            Some(ConstantOrIrValue::IrValue(ir_id, false)),
-                        ),
-                        _ => panic!(
-                            "{}: Expression is not a lvalue",
-                            Compiler::format_loc(loc)
-                        ),
+
+                use ConstantOrIrValue as C;
+                match arg {
+                    None => (ptr_tp, None),
+                    Some(C::HasAddress(ir_id, offset_bytes, true)) => (
+                        ptr_tp,
+                        Some(C::HasAddress(ir_id, offset_bytes, false)),
+                    ),
+                    _ if !emit_ir => (ptr_tp, None),
+
+                    Some(C::IrValue(ir_id, true)) => {
+                        (ptr_tp, Some(C::IrValue(ir_id, false)))
                     }
+                    _ => panic!(
+                        "{}: Expression is not a lvalue",
+                        Compiler::format_loc(loc)
+                    ),
                 }
             }
             Op::DEREF => {
@@ -3495,27 +3518,28 @@ impl Compiler<'_> {
                         Compiler::format_loc(loc)
                     ),
                 };
-                if !emit_ir || arg.is_none() {
-                    (elem_tp, None)
-                } else {
-                    match arg.unwrap() {
-                        ConstantOrIrValue::IrValue(ir_id, false) => (
-                            elem_tp,
-                            Some(ConstantOrIrValue::IrValue(ir_id, true)),
-                        ),
-                        addr @ ConstantOrIrValue::U64(_) => {
-                            match self.convert_to_ir_value(&arg_tp, addr) {
-                                ConstantOrIrValue::IrValue(ir_id, false) => (
-                                    elem_tp,
-                                    Some(ConstantOrIrValue::IrValue(
-                                        ir_id, true,
-                                    )),
-                                ),
-                                _ => unreachable!(),
-                            }
-                        }
-                        _ => unreachable!(), // TODO
+
+                use ConstantOrIrValue as C;
+                match arg {
+                    None => (elem_tp, None),
+                    Some(C::HasAddress(ir_id, offset_bytes, false)) => (
+                        elem_tp,
+                        Some(C::HasAddress(ir_id, offset_bytes, true)),
+                    ),
+                    _ if !emit_ir => (elem_tp, None),
+
+                    Some(C::IrValue(ir_id, false)) => {
+                        (elem_tp, Some(C::IrValue(ir_id, true)))
                     }
+                    Some(addr @ C::U64(_)) => {
+                        match self.convert_to_ir_value(&arg_tp, addr) {
+                            C::IrValue(ir_id, false) => {
+                                (elem_tp, Some(C::IrValue(ir_id, true)))
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    _ => unreachable!(),
                 }
             }
             Op::POS | Op::NEG => {
@@ -3722,12 +3746,13 @@ impl Compiler<'_> {
                 if !emit_ir {
                     return (QType::from(tp_left.tp), None);
                 }
+                let left = left.map(|c| self.convert_to_ir_value(&tp_left, c));
                 let right =
                     right.map(|c| self.convert_to_ir_value(&tp_left, c));
                 // now store `right` to `left`
                 let dst_ir_id = match left {
                     Some(ConstantOrIrValue::IrValue(ir_id, true)) => ir_id,
-                    _ => unreachable!(), // TODO
+                    _ => unreachable!(),
                 };
                 let src_ir_id = match &right {
                     Some(ConstantOrIrValue::IrValue(ir_id, false)) => {
@@ -4719,7 +4744,8 @@ impl Compiler<'_> {
                 | C::U64(_)
                 | C::Float(_)
                 | C::Double(_)
-                | C::StrAddress(_, _) => {
+                | C::StrAddress(_, _)
+                | C::HasAddress(_, _, false) => {
                     let is_true = left
                         .as_constant_double()
                         .map(|v| v != 0.0)
@@ -4753,6 +4779,7 @@ impl Compiler<'_> {
                         )
                     }
                 }
+                C::HasAddress(_, _, true) => unreachable!(),
                 C::IrValue(_, true) => unreachable!(),
                 C::IrValue(left_ir_id, false) => {
                     // i32* r = alloca i32
@@ -7087,6 +7114,7 @@ impl Compiler<'_> {
             (Type::Pointer(_), _, Type::Pointer(_)) => (dst_tp, v),
 
             (_, Some(p @ ConstantOrIrValue::StrAddress(_, _)), _)
+            | (_, Some(p @ ConstantOrIrValue::HasAddress(_, _, _)), _)
             | (_, Some(p @ ConstantOrIrValue::IrValue(_, _)), _) => {
                 if !emit_ir {
                     (dst_tp, None)
@@ -7095,7 +7123,8 @@ impl Compiler<'_> {
                         ConstantOrIrValue::IrValue(ir_id, false) => {
                             ir_id.clone()
                         }
-                        ConstantOrIrValue::IrValue(_, true) => {
+                        ConstantOrIrValue::HasAddress(_, _, true)
+                        | ConstantOrIrValue::IrValue(_, true) => {
                             unreachable!() // convert_lvalue_and_func_designator
                         }
                         c => {
@@ -7589,9 +7618,11 @@ impl Compiler<'_> {
         tp: &QType,
         c: ConstantOrIrValue,
     ) -> ConstantOrIrValue {
+        use ConstantOrIrValue as C;
         match c {
-            ConstantOrIrValue::IrValue(_, _) => c,
-            ConstantOrIrValue::StrAddress(ir_id, offset_bytes) => {
+            C::IrValue(_, _) => c,
+            C::StrAddress(ir_id, offset_bytes)
+            | C::HasAddress(ir_id, offset_bytes, false) => {
                 let old_ptr_ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_cast(
                     old_ptr_ir_id.clone(),
@@ -7609,12 +7640,12 @@ impl Compiler<'_> {
                 let offset_ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_constant(
                     offset_ir_id.clone(),
-                    &ConstantOrIrValue::I64(offset_bytes),
+                    &C::I64(offset_bytes),
                     &QType::from(Type::Long),
                 );
                 self.llvm_builder.create_constant(
                     offset_ir_id.clone(),
-                    &ConstantOrIrValue::I64(offset_bytes),
+                    &C::I64(offset_bytes),
                     &QType::from(Type::Long),
                 );
 
@@ -7643,14 +7674,23 @@ impl Compiler<'_> {
                     ptr_ir_id.clone(),
                     &QType::char_ptr_tp(),
                 );
-                ConstantOrIrValue::IrValue(ir_id, false)
+                C::IrValue(ir_id, false)
+            }
+            C::HasAddress(ir_id, offset_bytes, true) => {
+                let ptr_tp = QType::ptr_tp(tp.clone());
+                match self.convert_to_ir_value(
+                    &ptr_tp,
+                    C::HasAddress(ir_id, offset_bytes, false),
+                ) {
+                    C::IrValue(ptr_ir_id, false) => C::IrValue(ptr_ir_id, true),
+                    _ => unreachable!(),
+                }
             }
             _ => {
-                // TODO
                 let ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_constant(ir_id.clone(), &c, tp);
                 self.llvm_builder.create_constant(ir_id.clone(), &c, tp);
-                ConstantOrIrValue::IrValue(ir_id, false)
+                C::IrValue(ir_id, false)
             }
         }
     }
@@ -7704,6 +7744,7 @@ impl Compiler<'_> {
             C::Float(_)
             | C::Double(_)
             | C::StrAddress(_, _)
+            | C::HasAddress(_, _, _)
             | C::IrValue(_, _) => panic!(
                 "{}: Array size is not a constant",
                 Compiler::format_loc(e.1)
