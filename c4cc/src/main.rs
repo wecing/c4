@@ -2680,14 +2680,16 @@ impl Compiler<'_> {
                 let left = &self.translation_unit.exprs[dot.e_idx as usize];
                 let left = (left, dot.get_e_loc());
                 let field = (dot.get_field(), dot.get_field_loc());
-                self.visit_member_access_expr(
-                    left,
-                    field,
-                    true,
-                    fold_constant,
-                    emit_ir,
-                )
-                .unwrap_or_else(|err| err.panic())
+                let r = self
+                    .visit_member_access_expr(
+                        left,
+                        field,
+                        true,
+                        fold_constant,
+                        emit_ir,
+                    )
+                    .unwrap_or_else(|err| err.panic());
+                r
             }
             ast::Expr_oneof_e::ptr(ptr) => {
                 let left = &self.translation_unit.exprs[ptr.e_idx as usize];
@@ -3213,8 +3215,21 @@ impl Compiler<'_> {
             tp: field_tp.tp,
         };
         let r = if left.is_none() || !emit_ir {
-            // looks like even clang does not support constant folding here
-            None
+            match left {
+                Some(ConstantOrIrValue::HasAddress(
+                    ir_id,
+                    offset_bytes,
+                    true,
+                )) if offset.bit_field_mask == 0 => {
+                    Some(ConstantOrIrValue::HasAddress(
+                        ir_id,
+                        offset_bytes + offset.offset as i64,
+                        true,
+                    ))
+                }
+                // looks like even clang does not support constant folding here
+                _ => None,
+            }
         } else {
             let left = self.convert_to_ir_value(&left_tp, left.unwrap());
             let (ir_value, is_lvalue) = match left {
@@ -7041,7 +7056,7 @@ impl Compiler<'_> {
             //   the left has all the qualifiers of the type pointed to
             //   by the right; or
             (Type::Pointer(tp_l), Type::Pointer(tp_r))
-                if is_void(tp_r)
+                if (is_void(tp_l) || is_void(tp_r))
                     && (tp_l.is_const || !tp_r.is_const)
                     && (tp_l.is_volatile || !tp_r.is_volatile) =>
             {
