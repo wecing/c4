@@ -2680,16 +2680,14 @@ impl Compiler<'_> {
                 let left = &self.translation_unit.exprs[dot.e_idx as usize];
                 let left = (left, dot.get_e_loc());
                 let field = (dot.get_field(), dot.get_field_loc());
-                let r = self
-                    .visit_member_access_expr(
-                        left,
-                        field,
-                        true,
-                        fold_constant,
-                        emit_ir,
-                    )
-                    .unwrap_or_else(|err| err.panic());
-                r
+                self.visit_member_access_expr(
+                    left,
+                    field,
+                    true,
+                    fold_constant,
+                    emit_ir,
+                )
+                .unwrap_or_else(|err| err.panic())
             }
             ast::Expr_oneof_e::ptr(ptr) => {
                 let left = &self.translation_unit.exprs[ptr.e_idx as usize];
@@ -4456,13 +4454,22 @@ impl Compiler<'_> {
                                 true,
                             )
                         }
-                        (C::StrAddress(ir_id, offset), C::I64(y)) => {
-                            (tp_left, Some(C::StrAddress(ir_id, offset + y)))
-                        }
+                        (C::StrAddress(ir_id, offset), C::I64(y)) => (
+                            tp_left,
+                            Some(C::StrAddress(ir_id, offset + y * sz_elem)),
+                        ),
+                        (C::HasAddress(ir_id, offset, false), C::I64(y)) => (
+                            tp_left,
+                            Some(C::HasAddress(
+                                ir_id,
+                                offset + y * sz_elem,
+                                false,
+                            )),
+                        ),
                         (C::U64(x), C::I64(y)) => {
                             (tp_left, Some(C::U64(x + y as u64)))
                         }
-                        _ => unreachable!(), // TODO
+                        _ => unreachable!(),
                     }
                 } else if tp_left.is_integral_type()
                     && tp_right.is_pointer()
@@ -4533,16 +4540,32 @@ impl Compiler<'_> {
                             C::StrAddress(ir_id_y, _),
                         ) if ir_id_x != ir_id_y => (long_tp, None),
                         (
-                            C::StrAddress(ir_id, offset_x),
+                            C::StrAddress(_, offset_x),
                             C::StrAddress(_, offset_y),
                         ) => (
                             long_tp,
-                            Some(C::StrAddress(
-                                ir_id,
+                            Some(C::I64(
                                 offset_x.overflowing_sub(offset_y).0
                                     / sz_elem as i64,
                             )),
                         ),
+
+                        (
+                            C::HasAddress(ir_id_x, offset_x, false),
+                            C::HasAddress(ir_id_y, offset_y, false),
+                        ) => {
+                            if ir_id_x != ir_id_y {
+                                (long_tp, None)
+                            } else {
+                                (
+                                    long_tp,
+                                    Some(C::I64(
+                                        offset_x.overflowing_sub(offset_y).0
+                                            / sz_elem as i64,
+                                    )),
+                                )
+                            }
+                        }
 
                         (
                             C::IrValue(ir_id_x, false),
@@ -4628,7 +4651,7 @@ impl Compiler<'_> {
                             (long_tp, Some(C::IrValue(ir_id, false)))
                         }
 
-                        _ => unreachable!(), // TODO
+                        _ => unreachable!(),
                     }
                 } else {
                     panic!(
