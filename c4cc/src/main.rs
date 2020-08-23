@@ -245,6 +245,9 @@ enum ConstantOrIrValue {
     // Compiler::str_constants and is guaranteed to exist.
     StrAddress(String, i64), // ir_id, offset_bytes
     // Like IrValue, but for variables that have link time address.
+    //
+    // is_lvalue=True: the value at addr (ir_id + offset_bytes)
+    // is_lvalue=False: the value of addr (ir_id + offset_bytes)
     HasAddress(String, i64, bool), // ir_id, offset_bytes, is_lvalue
     // For struct/union/array, ir_id is a pointer even when is_lvalue=false.
     IrValue(String, bool), // ir_id, is_lvalue
@@ -2085,7 +2088,7 @@ impl Compiler<'_> {
                 let (qtype, result) =
                     self.visit_expr((e, expr.get_e_loc()), true, emit_ir);
                 let (qtype, result) = self.convert_lvalue_and_func_designator(
-                    qtype, result, true, true, true,
+                    qtype, result, true, true, true, emit_ir,
                 );
                 match result {
                     None => panic!(
@@ -2831,6 +2834,7 @@ impl Compiler<'_> {
                     fold_constant,
                     emit_ir,
                 )
+                .unwrap_or_else(|e| e.panic())
             }
         }
     }
@@ -2848,8 +2852,9 @@ impl Compiler<'_> {
             self.visit_expr((expr, e.0.get_e_loc()), fold_constant, emit_ir);
 
         // 3.2.2.1: auto conversion of array lvalues
-        let (src_tp, v) = self
-            .convert_lvalue_and_func_designator(src_tp, v, true, true, true);
+        let (src_tp, v) = self.convert_lvalue_and_func_designator(
+            src_tp, v, true, true, true, emit_ir,
+        );
 
         self.cast_expression(src_tp, v, dst_tp, e.1, emit_ir)
     }
@@ -2863,8 +2868,9 @@ impl Compiler<'_> {
     ) -> (QType, Option<ConstantOrIrValue>) {
         let (ptr_tp, ptr) = self.visit_expr(arr_e, fold_constant, emit_ir);
         let (sub_tp, sub) = self.visit_expr(sub_e, fold_constant, emit_ir);
-        let (ptr_tp, ptr) = self
-            .convert_lvalue_and_func_designator(ptr_tp, ptr, true, true, true);
+        let (ptr_tp, ptr) = self.convert_lvalue_and_func_designator(
+            ptr_tp, ptr, true, true, true, emit_ir,
+        );
         let elem_tp = match &ptr_tp.tp {
             Type::Pointer(tp) => match tp.tp {
                 Type::Function(_, _) | Type::Void => panic!(
@@ -2975,7 +2981,7 @@ impl Compiler<'_> {
         // Implicit function declarations are allowed in C89 but not C99.
         let (func_tp, func) = self.visit_expr(func, fold_constant, emit_ir);
         let (func_ptr_tp, func) = self.convert_lvalue_and_func_designator(
-            func_tp, func, true, true, true,
+            func_tp, func, true, true, true, emit_ir,
         );
         let func_tp = match func_ptr_tp.tp {
             Type::Pointer(tp) => *tp,
@@ -3005,7 +3011,7 @@ impl Compiler<'_> {
                 let (arg_tp, arg) =
                     self.visit_expr(arg, fold_constant, emit_ir);
                 let (arg_tp, arg) = self.convert_lvalue_and_func_designator(
-                    arg_tp, arg, true, true, true,
+                    arg_tp, arg, true, true, true, emit_ir,
                 );
                 let arg = arg
                     .map(|c| self.convert_to_ir_value(&arg_tp, c))
@@ -3171,7 +3177,7 @@ impl Compiler<'_> {
         let left_loc = left.1;
         let (left_tp, left) = self.visit_expr(left, fold_constant, emit_ir);
         let (left_tp, left) = self.convert_lvalue_and_func_designator(
-            left_tp, left, !is_dot, true, true,
+            left_tp, left, !is_dot, true, true, emit_ir,
         );
         let mut is_const = left_tp.is_const;
         let mut is_volatile = left_tp.is_volatile;
@@ -3464,6 +3470,7 @@ impl Compiler<'_> {
             do_deref_lvalue,
             op != Op::REF,
             op != Op::REF,
+            emit_ir,
         );
 
         match op {
@@ -3493,6 +3500,7 @@ impl Compiler<'_> {
                     true,
                     false,
                     false,
+                    emit_ir,
                 );
                 if !emit_ir {
                     (arg_tp, None)
@@ -3738,6 +3746,7 @@ impl Compiler<'_> {
             !has_assign,
             true,
             true,
+            emit_ir,
         );
         let (tp_right, right) = self.convert_lvalue_and_func_designator(
             tp_right.clone(),
@@ -3745,6 +3754,7 @@ impl Compiler<'_> {
             true,
             true,
             true,
+            emit_ir,
         );
 
         let is_signed = |tp: &QType| match tp.tp {
@@ -4779,7 +4789,7 @@ impl Compiler<'_> {
         };
         let (left_tp, left) = self.visit_expr(e_left, fold_constant, emit_ir);
         let (left_tp, left) = self.convert_lvalue_and_func_designator(
-            left_tp, left, true, true, true,
+            left_tp, left, true, true, true, emit_ir,
         );
         check_scalar_type(&left_tp, e_left.1);
 
@@ -5054,10 +5064,11 @@ impl Compiler<'_> {
                 !is_dot,
                 true,
                 true,
+                emit_ir,
             );
         let (tp_right, right) = self.visit_expr(right, fold_constant, emit_ir);
         let (tp_right, right) = self.convert_lvalue_and_func_designator(
-            tp_right, right, true, true, true,
+            tp_right, right, true, true, true, emit_ir,
         );
         let src_ir_id = {
             if tp_struct_expr.is_const {
@@ -5334,12 +5345,20 @@ impl Compiler<'_> {
 
     fn visit_ternary_op(
         &mut self,
-        _e_cond: L<&ast::Expr>,
+        e_cond: L<&ast::Expr>,
         _e_then: L<&ast::Expr>,
         _e_else: L<&ast::Expr>,
-        _fold_constant: bool,
-        _emit_ir: bool,
-    ) -> (QType, Option<ConstantOrIrValue>) {
+        fold_constant: bool,
+        emit_ir: bool,
+    ) -> R<(QType, Option<ConstantOrIrValue>)> {
+        let (cond_tp, cond) = self.visit_expr(e_cond, fold_constant, emit_ir);
+        let (cond_tp, cond) = self.convert_lvalue_and_func_designator(
+            cond_tp, cond, true, true, true, emit_ir,
+        );
+        // 3.3.15: The first operand shall have scalar type.
+        if !cond_tp.is_scalar_type() {
+            c4_fail!(e_cond.1, "Scalar type expected")
+        }
         unimplemented!() // TODO: ternary op
     }
 
@@ -5623,8 +5642,8 @@ impl Compiler<'_> {
         let e = &self.translation_unit.exprs[switch_s.e_idx as usize];
         let (tp, v) = self.visit_expr((e, switch_s.get_e_loc()), true, true);
 
-        let (tp, v) =
-            self.convert_lvalue_and_func_designator(tp, v, true, true, true);
+        let (tp, v) = self
+            .convert_lvalue_and_func_designator(tp, v, true, true, true, true);
         let v = v.unwrap();
         let v = self.convert_to_ir_value(&tp, v);
         let ir_id = match &v {
@@ -5830,8 +5849,8 @@ impl Compiler<'_> {
             self.visit_expr((e, return_s.get_e_loc()), true, true)
         };
 
-        let (tp, r) =
-            self.convert_lvalue_and_func_designator(tp, r, true, true, true);
+        let (tp, r) = self
+            .convert_lvalue_and_func_designator(tp, r, true, true, true, true);
         let r = r.unwrap();
         let r = self.convert_to_ir_value(&tp, r);
         let ir_id = match &r {
@@ -5892,7 +5911,7 @@ impl Compiler<'_> {
         let cond_loc = cond.1;
         let (cond_tp, cond) = self.visit_expr(cond, true, true);
         let (cond_tp, cond) = self.convert_lvalue_and_func_designator(
-            cond_tp, cond, true, true, true,
+            cond_tp, cond, true, true, true, true,
         );
         let cond = self.convert_to_ir_value(&cond_tp, cond.unwrap());
         let cond_ir_id = match cond {
@@ -7558,6 +7577,7 @@ impl Compiler<'_> {
         do_deref_lvalue: bool,
         do_arr_to_ptr: bool,
         do_fun_to_ptr: bool,
+        emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
         use ConstantOrIrValue as C;
         match (tp.tp.clone(), expr.clone()) {
@@ -7610,10 +7630,24 @@ impl Compiler<'_> {
             {
                 (QType::from(t), Some(C::IrValue(ir_id, false)))
             }
-            (t, Some(C::HasAddress(ir_id, offset, true)))
-                if do_deref_lvalue =>
+            (t, Some(C::HasAddress(_, _, true)))
+                if do_deref_lvalue && !emit_ir =>
             {
-                (QType::from(t), Some(C::HasAddress(ir_id, offset, false)))
+                (QType::from(t), None)
+            }
+            (t, Some(c @ C::HasAddress(_, _, true))) if do_deref_lvalue => {
+                // get address
+                let ptr_ir_id = match self.convert_to_ir_value(&tp, c) {
+                    C::IrValue(ir_id, true) => ir_id,
+                    _ => unreachable!(),
+                };
+                // and load
+                let ptr_tp = QType::ptr_tp(tp.clone());
+                let ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_load(&ir_id, &ptr_ir_id, &ptr_tp);
+                self.llvm_builder.create_load(&ir_id, &ptr_ir_id, &ptr_tp);
+
+                (QType::from(t), Some(C::IrValue(ir_id, false)))
             }
             (t, Some(C::IrValue(ir_id, true))) if do_deref_lvalue => {
                 let dst_ir_id = self.get_next_ir_id();
@@ -7687,33 +7721,17 @@ impl Compiler<'_> {
                 );
                 C::IrValue(ir_id, false)
             }
-            C::HasAddress(ir_id, offset_bytes, true) => {
+            C::HasAddress(ir_id, offset_bytes, is_lvalue) => {
                 let ptr_tp = QType::ptr_tp(tp.clone());
                 match self.convert_to_ir_value(
                     &ptr_tp,
                     C::StrAddress(ir_id, offset_bytes),
                 ) {
-                    C::IrValue(ptr_ir_id, false) => C::IrValue(ptr_ir_id, true),
+                    C::IrValue(ptr_ir_id, false) => {
+                        C::IrValue(ptr_ir_id, is_lvalue)
+                    }
                     _ => unreachable!(),
                 }
-            }
-            C::HasAddress(ir_id, offset_bytes, false) => {
-                // get address
-                let ptr_ir_id = match self.convert_to_ir_value(
-                    tp,
-                    C::HasAddress(ir_id, offset_bytes, true),
-                ) {
-                    C::IrValue(ir_id, true) => ir_id,
-                    _ => unreachable!(),
-                };
-
-                // and load
-                let ptr_tp = QType::ptr_tp(tp.clone());
-                let ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_load(&ir_id, &ptr_ir_id, &ptr_tp);
-                self.llvm_builder.create_load(&ir_id, &ptr_ir_id, &ptr_tp);
-
-                C::IrValue(ir_id, false)
             }
             _ => {
                 let ir_id = self.get_next_ir_id();
@@ -7829,18 +7847,20 @@ impl Compiler<'_> {
             Type::Double => C::Double(0.0),
             _ => unreachable!(),
         };
-        let (tp_x, x) = self
-            .convert_lvalue_and_func_designator(tp_x, x, true, false, false);
+        let (tp_x, x) = self.convert_lvalue_and_func_designator(
+            tp_x, x, true, false, false, emit_ir,
+        );
         let x = x.unwrap_or_else(|| get_dummy_value(&tp_x));
-        let (tp_y, y) = self
-            .convert_lvalue_and_func_designator(tp_y, y, true, false, false);
+        let (tp_y, y) = self.convert_lvalue_and_func_designator(
+            tp_y, y, true, false, false, emit_ir,
+        );
         let y = y.unwrap_or_else(|| get_dummy_value(&tp_y));
 
         let r = match (&x, &y) {
             (C::IrValue(_, true), _) | (_, C::IrValue(_, true)) => {
                 unreachable!() // convert_lvalue_and_func_designator
             }
-            (C::HasAddress(_, _, true), _) | (_, C::HasAddress(_, _, true)) => {
+            (C::HasAddress(_, _, _), _) | (_, C::HasAddress(_, _, _)) => {
                 unreachable!() // check_link_time_constant
             }
             (C::IrValue(ir_id_x, false), C::IrValue(ir_id_y, false)) => {
@@ -8095,8 +8115,9 @@ impl Compiler<'_> {
             }
             c => c,
         };
-        let (tp, c) =
-            self.convert_lvalue_and_func_designator(tp, c, true, true, true);
+        let (tp, c) = self.convert_lvalue_and_func_designator(
+            tp, c, true, true, true, emit_ir,
+        );
         let int_tp = QType::from(Type::Int);
         match c {
             None => {
