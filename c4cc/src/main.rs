@@ -2902,7 +2902,7 @@ impl Compiler<'_> {
                                 Some((sz, _)) => sz as i64,
                             };
                         let offset: i64 = *offset_bytes + elem_sz * s;
-                        Some(C::HasAddress(ir_id.clone(), offset, false))
+                        Some(C::HasAddress(ir_id.clone(), offset, true))
                     }
                     _ => None,
                 })
@@ -3902,9 +3902,9 @@ impl Compiler<'_> {
                 }
 
                 use ConstantOrIrValue as C;
-                match self
-                    .do_arithmetic_conversion(tp_left, left, tp_right, right)
-                {
+                match self.do_arithmetic_conversion(
+                    tp_left, left, tp_right, right, emit_ir,
+                ) {
                     (None, None, tp) => (tp, None),
 
                     (Some(C::I32(x)), Some(C::I32(y)), tp) => {
@@ -3977,7 +3977,7 @@ impl Compiler<'_> {
                         {
                             let (left, right, tp) = self
                                 .do_arithmetic_conversion(
-                                    tp_left, left, tp_right, right,
+                                    tp_left, left, tp_right, right, emit_ir,
                                 );
                             (tp.clone(), left, tp, right)
                         }
@@ -4116,9 +4116,10 @@ impl Compiler<'_> {
                     )
                 });
 
-                let (tp_left, left) = self.do_integral_promotion(tp_left, left);
+                let (tp_left, left) =
+                    self.do_integral_promotion(tp_left, left, emit_ir);
                 let (tp_right, right) =
-                    self.do_integral_promotion(tp_right, right);
+                    self.do_integral_promotion(tp_right, right, emit_ir);
                 // LLVM requires shl/shr operands to have the same type
                 let (tp_right, right) = self.cast_expression(
                     tp_right,
@@ -4232,7 +4233,7 @@ impl Compiler<'_> {
                 if tp_left.is_arithmetic_type() && tp_right.is_arithmetic_type()
                 {
                     let (left, right, tp) = self.do_arithmetic_conversion(
-                        tp_left, left, tp_right, right,
+                        tp_left, left, tp_right, right, emit_ir,
                     );
                     if left.is_none() || right.is_none() {
                         return (tp, None);
@@ -4296,7 +4297,7 @@ impl Compiler<'_> {
                             );
                             (tp, Some(C::IrValue(ir_id, false)))
                         }
-                        _ => unreachable!(), // TODO
+                        _ => unreachable!(),
                     }
                 } else if tp_left.is_pointer() && tp_right.is_integral_type() {
                     let tp_elem = match &tp_left.tp {
@@ -4608,8 +4609,9 @@ impl Compiler<'_> {
                     )
                 });
 
-                let (left, right, tp) = self
-                    .do_arithmetic_conversion(tp_left, left, tp_right, right);
+                let (left, right, tp) = self.do_arithmetic_conversion(
+                    tp_left, left, tp_right, right, emit_ir,
+                );
                 if left.is_none() || right.is_none() || !fold_constant {
                     (tp, None)
                 } else {
@@ -5574,15 +5576,10 @@ impl Compiler<'_> {
         let (tp, v) =
             self.convert_lvalue_and_func_designator(tp, v, true, true, true);
         let v = v.unwrap();
+        let v = self.convert_to_ir_value(&tp, v);
         let ir_id = match &v {
             ConstantOrIrValue::IrValue(x, false) => x.clone(),
-            _ => {
-                // TODO
-                let ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_constant(ir_id.clone(), &v, &tp);
-                self.llvm_builder.create_constant(ir_id.clone(), &v, &tp);
-                ir_id
-            }
+            _ => unreachable!(),
         };
         // 3.6.4.2: The integral promotions are performed on the
         // controlling expression.
@@ -5786,15 +5783,10 @@ impl Compiler<'_> {
         let (tp, r) =
             self.convert_lvalue_and_func_designator(tp, r, true, true, true);
         let r = r.unwrap();
+        let r = self.convert_to_ir_value(&tp, r);
         let ir_id = match &r {
             ConstantOrIrValue::IrValue(x, false) => x.clone(),
-            _ => {
-                // TODO
-                let ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_constant(ir_id.clone(), &r, &tp);
-                self.llvm_builder.create_constant(ir_id.clone(), &r, &tp);
-                ir_id
-            }
+            _ => unreachable!(),
         };
         if !tp.is_arithmetic_type() && !tp.is_pointer() {
             unimplemented!() // TODO: return struct / union
@@ -7560,17 +7552,24 @@ impl Compiler<'_> {
                 let tp = QType::from(Type::Pointer(t));
                 (tp, Some(C::IrValue(ir_id, false)))
             }
+            (Type::Array(t, _), Some(C::HasAddress(ir_id, offset, true)))
+                if do_arr_to_ptr =>
+            {
+                let tp = QType::from(Type::Pointer(t));
+                (tp, Some(C::HasAddress(ir_id, offset, false)))
+            }
             (Type::Array(t, _), None) if do_arr_to_ptr => {
                 let tp = QType::from(Type::Pointer(t));
                 (tp, None)
             }
             (Type::Array(t, _), addr @ Some(C::StrAddress(_, _)))
+            | (Type::Array(t, _), addr @ Some(C::HasAddress(_, _, false)))
                 if do_arr_to_ptr =>
             {
                 let tp = QType::from(Type::Pointer(t));
                 (tp, addr)
             }
-            (Type::Array(_, _), _) if do_arr_to_ptr => unreachable!(), // TODO
+            (Type::Array(_, _), _) if do_arr_to_ptr => unreachable!(),
             (Type::Array(_, _), _) => (tp, expr),
 
             // do_fun_to_ptr
@@ -7595,6 +7594,11 @@ impl Compiler<'_> {
             {
                 (QType::from(t), Some(C::IrValue(ir_id, false)))
             }
+            (t, Some(C::HasAddress(ir_id, offset, true)))
+                if do_deref_lvalue =>
+            {
+                (QType::from(t), Some(C::HasAddress(ir_id, offset, false)))
+            }
             (t, Some(C::IrValue(ir_id, true))) if do_deref_lvalue => {
                 let dst_ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_load(
@@ -7609,7 +7613,7 @@ impl Compiler<'_> {
                 );
                 (QType::from(t), Some(C::IrValue(dst_ir_id, false)))
             }
-            _ => (tp, expr), // TODO
+            _ => (tp, expr),
         }
     }
 
@@ -7621,8 +7625,7 @@ impl Compiler<'_> {
         use ConstantOrIrValue as C;
         match c {
             C::IrValue(_, _) => c,
-            C::StrAddress(ir_id, offset_bytes)
-            | C::HasAddress(ir_id, offset_bytes, false) => {
+            C::StrAddress(ir_id, offset_bytes) => {
                 let old_ptr_ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_cast(
                     old_ptr_ir_id.clone(),
@@ -7680,11 +7683,37 @@ impl Compiler<'_> {
                 let ptr_tp = QType::ptr_tp(tp.clone());
                 match self.convert_to_ir_value(
                     &ptr_tp,
-                    C::HasAddress(ir_id, offset_bytes, false),
+                    C::StrAddress(ir_id, offset_bytes),
                 ) {
                     C::IrValue(ptr_ir_id, false) => C::IrValue(ptr_ir_id, true),
                     _ => unreachable!(),
                 }
+            }
+            C::HasAddress(ir_id, offset_bytes, false) => {
+                // get address
+                let ptr_ir_id = match self.convert_to_ir_value(
+                    tp,
+                    C::HasAddress(ir_id, offset_bytes, true),
+                ) {
+                    C::IrValue(ir_id, true) => ir_id,
+                    _ => unreachable!(),
+                };
+
+                // and load
+                let ptr_tp = QType::ptr_tp(tp.clone());
+                let ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_load(
+                    ir_id.clone(),
+                    ptr_ir_id.clone(),
+                    &ptr_tp,
+                );
+                self.llvm_builder.create_load(
+                    ir_id.clone(),
+                    ptr_ir_id.clone(),
+                    &ptr_tp,
+                );
+
+                C::IrValue(ir_id, false)
             }
             _ => {
                 let ir_id = self.get_next_ir_id();
@@ -7766,6 +7795,7 @@ impl Compiler<'_> {
         x: Option<ConstantOrIrValue>,
         tp_y: QType,
         y: Option<ConstantOrIrValue>,
+        emit_ir: bool,
     ) -> (Option<ConstantOrIrValue>, Option<ConstantOrIrValue>, QType) {
         if !tp_x.is_arithmetic_type() || !tp_y.is_arithmetic_type() {
             panic!(
@@ -7774,8 +7804,18 @@ impl Compiler<'_> {
             )
         }
 
-        let return_none = x.is_none() || y.is_none();
         use ConstantOrIrValue as C;
+        let mut check_link_time_constant = |tp, c| match c {
+            Some(C::HasAddress(_, _, _)) if !emit_ir => None,
+            Some(c @ C::HasAddress(_, _, _)) => {
+                Some(self.convert_to_ir_value(tp, c))
+            }
+            c => c,
+        };
+        let x = check_link_time_constant(&tp_x, x);
+        let y = check_link_time_constant(&tp_y, y);
+
+        let return_none = x.is_none() || y.is_none();
         let get_dummy_value = |tp: &QType| match tp.tp {
             Type::Char => C::I8(0),
             Type::UnsignedChar => C::U8(0),
@@ -7799,6 +7839,9 @@ impl Compiler<'_> {
         let r = match (&x, &y) {
             (C::IrValue(_, true), _) | (_, C::IrValue(_, true)) => {
                 unreachable!() // convert_lvalue_and_func_designator
+            }
+            (C::HasAddress(_, _, true), _) | (_, C::HasAddress(_, _, true)) => {
+                unreachable!() // check_link_time_constant
             }
             (C::IrValue(ir_id_x, false), C::IrValue(ir_id_y, false)) => {
                 let (new_ir_id_x, new_ir_id_y, new_tp) = self
@@ -7829,6 +7872,7 @@ impl Compiler<'_> {
                     Some(x),
                     tp_y,
                     Some(C::IrValue(new_ir_id_y, false)),
+                    emit_ir,
                 );
                 (new_x.unwrap(), new_y.unwrap(), new_tp)
             }
@@ -7849,6 +7893,7 @@ impl Compiler<'_> {
                     Some(C::IrValue(new_ir_id_x, false)),
                     tp_y,
                     Some(y),
+                    emit_ir,
                 );
                 (new_x.unwrap(), new_y.unwrap(), new_tp)
             }
@@ -7903,7 +7948,6 @@ impl Compiler<'_> {
                 QType::from(Type::UnsignedInt),
             ),
             _ => (
-                // TODO
                 C::I32(x.as_constant_u64().unwrap() as i32),
                 C::I32(y.as_constant_u64().unwrap() as i32),
                 QType::from(Type::Int),
@@ -8059,6 +8103,7 @@ impl Compiler<'_> {
         &mut self,
         tp: QType,
         c: Option<ConstantOrIrValue>,
+        emit_ir: bool,
     ) -> (QType, Option<ConstantOrIrValue>) {
         if !tp.is_integral_type() {
             panic!(
@@ -8066,10 +8111,17 @@ impl Compiler<'_> {
                  non-integral types"
             )
         }
+        use ConstantOrIrValue as C;
+        let c = match c {
+            Some(C::HasAddress(_, _, _)) if !emit_ir => None,
+            Some(c @ C::HasAddress(_, _, _)) => {
+                Some(self.convert_to_ir_value(&tp, c))
+            }
+            c => c,
+        };
         let (tp, c) =
             self.convert_lvalue_and_func_designator(tp, c, true, true, true);
         let int_tp = QType::from(Type::Int);
-        use ConstantOrIrValue as C;
         match c {
             None => {
                 let tp = match &tp.tp {
@@ -8086,7 +8138,9 @@ impl Compiler<'_> {
                 let (ir_id, tp) = self.do_integral_promotion_ir(ir_id, tp);
                 (tp, Some(C::IrValue(ir_id, false)))
             }
-            Some(C::IrValue(_, true)) => unreachable!(),
+            Some(C::IrValue(_, true))
+            | Some(C::StrAddress(_, _))
+            | Some(C::HasAddress(_, _, _)) => unreachable!(),
 
             Some(C::I8(x)) => (int_tp, Some(C::I32(x as i32))),
             Some(C::U8(x)) => (int_tp, Some(C::I32(x as i32))),
