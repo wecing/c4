@@ -435,44 +435,39 @@ trait IRBuilder {
     );
 
     // global static constant buffer
-    fn create_constant_buffer(&mut self, ir_id: String, buf: Vec<u8>);
+    fn create_constant_buffer(&mut self, ir_id: &str, buf: Vec<u8>);
 
     // <ir_id> = <c>
     //
     // local variable initialized with constant literals
     fn create_constant(
         &mut self,
-        ir_id: String,
+        ir_id: &str,
         c: &ConstantOrIrValue,
         tp: &QType,
     );
 
     // <dst_ir_id> = load <T>, <T>* <src_ir_id>
     //     where src_tp.tp == Type::Pointer(T)
-    fn create_load(
-        &mut self,
-        dst_ir_id: String,
-        src_ir_id: String,
-        src_tp: &QType,
-    );
+    fn create_load(&mut self, dst_ir_id: &str, src_ir_id: &str, src_tp: &QType);
 
     // store <T> <src_ir_id>, <T>* <dst_ir_id>
-    fn create_store(&mut self, dst_ir_id: String, src_ir_id: String);
+    fn create_store(&mut self, dst_ir_id: &str, src_ir_id: &str);
 
     // call void @llvm.memcpy(T* <dst_ir_id>, T* <src_ir_id>, <size>)
     fn create_memcpy(
         &mut self,
-        dst_ir_id: String,
-        src_ir_id: String,
+        dst_ir_id: &str,
+        src_ir_id: &str,
         size: u32,
         align: u32,
     );
 
     fn create_cast(
         &mut self,
-        dst_ir_id: String,
+        dst_ir_id: &str,
         dst_tp: &QType,
-        src_ir_id: String,
+        src_ir_id: &str,
         src_tp: &QType,
     );
 
@@ -488,22 +483,22 @@ trait IRBuilder {
 
     fn create_bin_op(
         &mut self,
-        dst_ir_id: String,
+        dst_ir_id: &str,
         op: ast::Expr_Binary_Op,
         is_signed: bool,
         is_fp: bool,
-        left_ir_id: String,
-        right_ir_id: String,
+        left_ir_id: &str,
+        right_ir_id: &str,
     );
 
     fn create_cmp_op(
         &mut self,
-        dst_ir_id: String,
+        dst_ir_id: &str,
         op: ast::Expr_Binary_Op,
         is_signed: bool,
         is_fp: bool,
-        left_ir_id: String,
-        right_ir_id: String,
+        left_ir_id: &str,
+        right_ir_id: &str,
     );
 
     fn create_ptr_add(
@@ -589,11 +584,11 @@ impl IRBuilder for DummyIRBuilder {
     ) {
     }
 
-    fn create_constant_buffer(&mut self, _ir_id: String, _buf: Vec<u8>) {}
+    fn create_constant_buffer(&mut self, _ir_id: &str, _buf: Vec<u8>) {}
 
     fn create_constant(
         &mut self,
-        _ir_id: String,
+        _ir_id: &str,
         _c: &ConstantOrIrValue,
         _tp: &QType,
     ) {
@@ -601,18 +596,18 @@ impl IRBuilder for DummyIRBuilder {
 
     fn create_load(
         &mut self,
-        _dst_ir_id: String,
-        _src_ir_id: String,
+        _dst_ir_id: &str,
+        _src_ir_id: &str,
         _src_tp: &QType,
     ) {
     }
 
-    fn create_store(&mut self, _dst_ir_id: String, _src_ir_id: String) {}
+    fn create_store(&mut self, _dst_ir_id: &str, _src_ir_id: &str) {}
 
     fn create_memcpy(
         &mut self,
-        _dst_ir_id: String,
-        _src_ir_id: String,
+        _dst_ir_id: &str,
+        _src_ir_id: &str,
         _size: u32,
         _align: u32,
     ) {
@@ -620,9 +615,9 @@ impl IRBuilder for DummyIRBuilder {
 
     fn create_cast(
         &mut self,
-        _dst_ir_id: String,
+        _dst_ir_id: &str,
         _dst_tp: &QType,
-        _src_ir_id: String,
+        _src_ir_id: &str,
         _src_tp: &QType,
     ) {
     }
@@ -635,23 +630,23 @@ impl IRBuilder for DummyIRBuilder {
 
     fn create_bin_op(
         &mut self,
-        _dst_ir_id: String,
+        _dst_ir_id: &str,
         _op: ast::Expr_Binary_Op,
         _is_signed: bool,
         _is_fp: bool,
-        _left_ir_id: String,
-        _right_ir_id: String,
+        _left_ir_id: &str,
+        _right_ir_id: &str,
     ) {
     }
 
     fn create_cmp_op(
         &mut self,
-        _dst_ir_id: String,
+        _dst_ir_id: &str,
         _op: ast::Expr_Binary_Op,
         _is_signed: bool,
         _is_fp: bool,
-        _left_ir_id: String,
-        _right_ir_id: String,
+        _left_ir_id: &str,
+        _right_ir_id: &str,
     ) {
     }
 
@@ -1083,7 +1078,7 @@ impl IRBuilder for LLVMBuilderImpl {
         self.symbol_table.insert(String::from(name), v);
     }
 
-    fn create_constant_buffer(&mut self, ir_id: String, buf: Vec<u8>) {
+    fn create_constant_buffer(&mut self, ir_id: &str, buf: Vec<u8>) {
         let v = unsafe {
             llvm_sys::core::LLVMConstStringInContext(
                 self.context,
@@ -1092,29 +1087,29 @@ impl IRBuilder for LLVMBuilderImpl {
                 1,
             )
         };
-        self.symbol_table.insert(ir_id, v);
+        self.symbol_table.insert(ir_id.to_string(), v);
     }
 
     fn create_constant(
         &mut self,
-        ir_id: String,
+        ir_id: &str,
         c: &ConstantOrIrValue,
         tp: &QType,
     ) {
         let (src, src_tp) = self.get_llvm_constant(c);
         let src_ir_id = self.get_next_tmp_ir_id();
         self.symbol_table.insert(src_ir_id.clone(), src);
-        self.create_cast(ir_id, tp, src_ir_id, &src_tp);
+        self.create_cast(ir_id, tp, &src_ir_id, &src_tp);
     }
 
     fn create_load(
         &mut self,
-        dst_ir_id: String,
-        src_ir_id: String,
+        dst_ir_id: &str,
+        src_ir_id: &str,
         _src_tp: &QType,
     ) {
-        let dst_ir_id_c = CString::new(dst_ir_id.clone()).unwrap();
-        let src = self.symbol_table.get(&src_ir_id).unwrap();
+        let dst_ir_id_c = CString::new(dst_ir_id).unwrap();
+        let src = self.symbol_table.get(src_ir_id).unwrap();
         let dst = unsafe {
             llvm_sys::core::LLVMBuildLoad(
                 self.builder,
@@ -1122,12 +1117,12 @@ impl IRBuilder for LLVMBuilderImpl {
                 dst_ir_id_c.as_ptr(),
             )
         };
-        self.symbol_table.insert(dst_ir_id, dst);
+        self.symbol_table.insert(dst_ir_id.to_string(), dst);
     }
 
-    fn create_store(&mut self, dst_ir_id: String, src_ir_id: String) {
-        let src = *self.symbol_table.get(&src_ir_id).unwrap();
-        let dst = *self.symbol_table.get(&dst_ir_id).unwrap();
+    fn create_store(&mut self, dst_ir_id: &str, src_ir_id: &str) {
+        let src = *self.symbol_table.get(src_ir_id).unwrap();
+        let dst = *self.symbol_table.get(dst_ir_id).unwrap();
         unsafe {
             llvm_sys::core::LLVMBuildStore(self.builder, src, dst);
         }
@@ -1135,13 +1130,13 @@ impl IRBuilder for LLVMBuilderImpl {
 
     fn create_memcpy(
         &mut self,
-        dst_ir_id: String,
-        src_ir_id: String,
+        dst_ir_id: &str,
+        src_ir_id: &str,
         size: u32,
         align: u32,
     ) {
-        let src = self.symbol_table.get(&src_ir_id).unwrap();
-        let dst = self.symbol_table.get(&dst_ir_id).unwrap();
+        let src = self.symbol_table.get(src_ir_id).unwrap();
+        let dst = self.symbol_table.get(dst_ir_id).unwrap();
         unsafe {
             llvm_sys::core::LLVMBuildMemCpy(
                 self.builder,
@@ -1156,9 +1151,9 @@ impl IRBuilder for LLVMBuilderImpl {
 
     fn create_cast(
         &mut self,
-        dst_ir_id: String,
+        dst_ir_id: &str,
         dst_tp: &QType,
-        src_ir_id: String,
+        src_ir_id: &str,
         src_tp: &QType,
     ) {
         enum K {
@@ -1218,9 +1213,9 @@ impl IRBuilder for LLVMBuilderImpl {
         };
 
         let src: llvm_sys::prelude::LLVMValueRef =
-            *self.symbol_table.get(&src_ir_id).unwrap();
+            *self.symbol_table.get(src_ir_id).unwrap();
         let dst_tp_llvm = self.get_llvm_type(&dst_tp.tp);
-        let dst_ir_id_c = CString::new(dst_ir_id.clone()).unwrap();
+        let dst_ir_id_c = CString::new(dst_ir_id).unwrap();
         let dst = match opcode {
             None => src,
             Some(op) => unsafe {
@@ -1233,7 +1228,7 @@ impl IRBuilder for LLVMBuilderImpl {
                 )
             },
         };
-        self.symbol_table.insert(dst_ir_id, dst);
+        self.symbol_table.insert(dst_ir_id.to_string(), dst);
     }
 
     fn create_zext_i1_to_i32(&mut self, dst_ir_id: &str, src_ir_id: &str) {
@@ -1280,18 +1275,18 @@ impl IRBuilder for LLVMBuilderImpl {
 
     fn create_bin_op(
         &mut self,
-        dst_ir_id: String,
+        dst_ir_id: &str,
         op: ast::Expr_Binary_Op,
         is_signed: bool,
         is_fp: bool,
-        left_ir_id: String,
-        right_ir_id: String,
+        left_ir_id: &str,
+        right_ir_id: &str,
     ) {
         use ast::Expr_Binary_Op as Op;
         use llvm_sys::LLVMOpcode as O;
-        let dst_ir_id_c = CString::new(dst_ir_id.clone()).unwrap();
-        let left = self.symbol_table.get(&left_ir_id).unwrap();
-        let right = self.symbol_table.get(&right_ir_id).unwrap();
+        let dst_ir_id_c = CString::new(dst_ir_id).unwrap();
+        let left = self.symbol_table.get(left_ir_id).unwrap();
+        let right = self.symbol_table.get(right_ir_id).unwrap();
         let op = match op {
             Op::BIT_OR => O::LLVMOr,
             Op::XOR => O::LLVMXor,
@@ -1322,21 +1317,21 @@ impl IRBuilder for LLVMBuilderImpl {
                 dst_ir_id_c.as_ptr(),
             )
         };
-        self.symbol_table.insert(dst_ir_id, dst);
+        self.symbol_table.insert(dst_ir_id.to_string(), dst);
     }
 
     fn create_cmp_op(
         &mut self,
-        dst_ir_id: String,
+        dst_ir_id: &str,
         op: ast::Expr_Binary_Op,
         is_signed: bool,
         is_fp: bool,
-        left_ir_id: String,
-        right_ir_id: String,
+        left_ir_id: &str,
+        right_ir_id: &str,
     ) {
-        let dst_ir_id_c = CString::new(dst_ir_id.clone()).unwrap();
-        let left = *self.symbol_table.get(&left_ir_id).unwrap();
-        let right = *self.symbol_table.get(&right_ir_id).unwrap();
+        let dst_ir_id_c = CString::new(dst_ir_id).unwrap();
+        let left = *self.symbol_table.get(left_ir_id).unwrap();
+        let right = *self.symbol_table.get(right_ir_id).unwrap();
 
         use ast::Expr_Binary_Op as Op;
         let dst = if is_fp {
@@ -1384,7 +1379,7 @@ impl IRBuilder for LLVMBuilderImpl {
                 )
             }
         };
-        self.symbol_table.insert(dst_ir_id, dst);
+        self.symbol_table.insert(dst_ir_id.to_string(), dst);
     }
 
     fn create_ptr_add(
@@ -1752,10 +1747,8 @@ impl Compiler<'_> {
                         Linkage::NONE,
                         &None,
                     );
-                    self.c4ir_builder
-                        .create_store(new_ir_id.clone(), ir_id.clone());
-                    self.llvm_builder
-                        .create_store(new_ir_id.clone(), ir_id.clone());
+                    self.c4ir_builder.create_store(&new_ir_id, &ir_id);
+                    self.llvm_builder.create_store(&new_ir_id, &ir_id);
                     mem::replace(ir_id, new_ir_id);
                 }
                 _ => unreachable!(),
@@ -1811,16 +1804,10 @@ impl Compiler<'_> {
             );
             let ptr_tp = QType::ptr_tp(rtp);
             let r_ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_load(
-                r_ir_id.clone(),
-                alloc_ir_id.clone(),
-                &ptr_tp,
-            );
-            self.llvm_builder.create_load(
-                r_ir_id.clone(),
-                alloc_ir_id.clone(),
-                &ptr_tp,
-            );
+            self.c4ir_builder
+                .create_load(&r_ir_id, &alloc_ir_id, &ptr_tp);
+            self.llvm_builder
+                .create_load(&r_ir_id, &alloc_ir_id, &ptr_tp);
             self.c4ir_builder.create_return(&r_ir_id);
             self.llvm_builder.create_return(&r_ir_id);
         }
@@ -2669,8 +2656,8 @@ impl Compiler<'_> {
                 self.str_constants.insert(ir_id.clone(), buf.clone());
 
                 self.c4ir_builder
-                    .create_constant_buffer(ir_id.clone(), buf.clone());
-                self.llvm_builder.create_constant_buffer(ir_id.clone(), buf);
+                    .create_constant_buffer(&ir_id, buf.clone());
+                self.llvm_builder.create_constant_buffer(&ir_id, buf);
 
                 let tp = QType::from(Type::Array(
                     Box::new(QType::from(Type::Char)),
@@ -2692,8 +2679,8 @@ impl Compiler<'_> {
                 self.str_constants.insert(ir_id.clone(), buf.clone());
 
                 self.c4ir_builder
-                    .create_constant_buffer(ir_id.clone(), buf.clone());
-                self.llvm_builder.create_constant_buffer(ir_id.clone(), buf);
+                    .create_constant_buffer(&ir_id, buf.clone());
+                self.llvm_builder.create_constant_buffer(&ir_id, buf);
 
                 let tp = QType::from(Type::Array(
                     Box::new(QType::from(Type::Short)),
@@ -3096,16 +3083,8 @@ impl Compiler<'_> {
                 );
 
                 let v_ir_id = cc.get_next_ir_id();
-                cc.c4ir_builder.create_load(
-                    v_ir_id.clone(),
-                    vp_ir_id.clone(),
-                    dst_tp,
-                );
-                cc.llvm_builder.create_load(
-                    v_ir_id.clone(),
-                    vp_ir_id.clone(),
-                    dst_tp,
-                );
+                cc.c4ir_builder.create_load(&v_ir_id, &vp_ir_id, dst_tp);
+                cc.llvm_builder.create_load(&v_ir_id, &vp_ir_id, dst_tp);
                 v_ir_id
             })
         };
@@ -3290,15 +3269,15 @@ impl Compiler<'_> {
                 // (char *) ir_value
                 let head_ptr = self.get_next_ir_id();
                 self.c4ir_builder.create_cast(
-                    head_ptr.clone(),
+                    &head_ptr,
                     &char_ptr_tp,
-                    ir_value.clone(),
+                    &ir_value,
                     &field_ptr_tp,
                 );
                 self.llvm_builder.create_cast(
-                    head_ptr.clone(),
+                    &head_ptr,
                     &char_ptr_tp,
-                    ir_value.clone(),
+                    &ir_value,
                     &field_ptr_tp,
                 );
 
@@ -3327,15 +3306,15 @@ impl Compiler<'_> {
                 // (T *) ((char *) ir_value + offset)
                 let field_ptr = self.get_next_ir_id();
                 self.c4ir_builder.create_cast(
-                    field_ptr.clone(),
+                    &field_ptr,
                     &field_ptr_tp,
-                    field_char_ptr.clone(),
+                    &field_char_ptr,
                     &char_ptr_tp,
                 );
                 self.llvm_builder.create_cast(
-                    field_ptr.clone(),
+                    &field_ptr,
                     &field_ptr_tp,
-                    field_char_ptr.clone(),
+                    &field_char_ptr,
                     &char_ptr_tp,
                 );
 
@@ -3353,13 +3332,13 @@ impl Compiler<'_> {
                     _ => {
                         let derefed = self.get_next_ir_id();
                         self.c4ir_builder.create_load(
-                            derefed.clone(),
-                            field_ptr_ir_id.clone(),
+                            &derefed,
+                            &field_ptr_ir_id,
                             &field_ptr_tp,
                         );
                         self.llvm_builder.create_load(
-                            derefed.clone(),
-                            field_ptr_ir_id.clone(),
+                            &derefed,
+                            &field_ptr_ir_id,
                             &field_ptr_tp,
                         );
                         derefed
@@ -3398,56 +3377,56 @@ impl Compiler<'_> {
 
                     let masked_ir_id = self.get_next_ir_id();
                     self.c4ir_builder.create_bin_op(
-                        masked_ir_id.clone(),
+                        &masked_ir_id,
                         ast::Expr_Binary_Op::BIT_AND,
                         is_signed,
                         false,
-                        ir_id.clone(),
-                        mask_ir_id.clone(),
+                        &ir_id,
+                        &mask_ir_id,
                     );
                     self.llvm_builder.create_bin_op(
-                        masked_ir_id.clone(),
+                        &masked_ir_id,
                         ast::Expr_Binary_Op::BIT_AND,
                         is_signed,
                         false,
-                        ir_id.clone(),
-                        mask_ir_id.clone(),
+                        &ir_id,
+                        &mask_ir_id,
                     );
 
                     let shl_ir_id = self.get_next_ir_id();
                     self.c4ir_builder.create_bin_op(
-                        shl_ir_id.clone(),
+                        &shl_ir_id,
                         ast::Expr_Binary_Op::L_SHIFT,
                         is_signed,
                         false,
-                        masked_ir_id.clone(),
-                        shl_bits_ir_id.clone(),
+                        &masked_ir_id,
+                        &shl_bits_ir_id,
                     );
                     self.llvm_builder.create_bin_op(
-                        shl_ir_id.clone(),
+                        &shl_ir_id,
                         ast::Expr_Binary_Op::L_SHIFT,
                         is_signed,
                         false,
-                        masked_ir_id.clone(),
-                        shl_bits_ir_id.clone(),
+                        &masked_ir_id,
+                        &shl_bits_ir_id,
                     );
 
                     let r_ir_id = self.get_next_ir_id();
                     self.c4ir_builder.create_bin_op(
-                        r_ir_id.clone(),
+                        &r_ir_id,
                         ast::Expr_Binary_Op::R_SHIFT,
                         is_signed,
                         false,
-                        shl_ir_id.clone(),
-                        shr_bits_ir_id.clone(),
+                        &shl_ir_id,
+                        &shr_bits_ir_id,
                     );
                     self.llvm_builder.create_bin_op(
-                        r_ir_id.clone(),
+                        &r_ir_id,
                         ast::Expr_Binary_Op::R_SHIFT,
                         is_signed,
                         false,
-                        shl_ir_id.clone(),
-                        shr_bits_ir_id.clone(),
+                        &shl_ir_id,
+                        &shr_bits_ir_id,
                     );
 
                     r_ir_id
@@ -3822,25 +3801,15 @@ impl Compiler<'_> {
                                 &tp_left.tp,
                             )
                             .unwrap();
-                        self.c4ir_builder.create_memcpy(
-                            dst_ir_id.clone(),
-                            src_ir_id.clone(),
-                            size,
-                            align,
-                        );
-                        self.llvm_builder.create_memcpy(
-                            dst_ir_id.clone(),
-                            src_ir_id.clone(),
-                            size,
-                            align,
-                        );
+                        self.c4ir_builder
+                            .create_memcpy(&dst_ir_id, &src_ir_id, size, align);
+                        self.llvm_builder
+                            .create_memcpy(&dst_ir_id, &src_ir_id, size, align);
                         (QType::from(tp_left.tp), right)
                     }
                     _ => {
-                        self.c4ir_builder
-                            .create_store(dst_ir_id.clone(), src_ir_id.clone());
-                        self.llvm_builder
-                            .create_store(dst_ir_id.clone(), src_ir_id.clone());
+                        self.c4ir_builder.create_store(&dst_ir_id, &src_ir_id);
+                        self.llvm_builder.create_store(&dst_ir_id, &src_ir_id);
                         (QType::from(tp_left.tp), right)
                     }
                 }
@@ -3982,20 +3951,20 @@ impl Compiler<'_> {
                     ) => {
                         let ir_id = self.get_next_ir_id();
                         self.c4ir_builder.create_bin_op(
-                            ir_id.clone(),
+                            &ir_id,
                             op,
                             is_signed(&tp),
                             is_fp(&tp),
-                            x_ir_id.clone(),
-                            y_ir_id.clone(),
+                            &x_ir_id,
+                            &y_ir_id,
                         );
                         self.llvm_builder.create_bin_op(
-                            ir_id.clone(),
+                            &ir_id,
                             op,
                             is_signed(&tp),
                             is_fp(&tp),
-                            x_ir_id,
-                            y_ir_id,
+                            &x_ir_id,
+                            &y_ir_id,
                         );
                         (tp, Some(C::IrValue(ir_id, false)))
                     }
@@ -4141,20 +4110,10 @@ impl Compiler<'_> {
                     (C::IrValue(left, false), C::IrValue(right, false)) => {
                         let i1_ir_id = self.get_next_ir_id();
                         self.c4ir_builder.create_cmp_op(
-                            i1_ir_id.clone(),
-                            op,
-                            false,
-                            false,
-                            left.clone(),
-                            right.clone(),
+                            &i1_ir_id, op, false, false, &left, &right,
                         );
                         self.llvm_builder.create_cmp_op(
-                            i1_ir_id.clone(),
-                            op,
-                            false,
-                            false,
-                            left,
-                            right,
+                            &i1_ir_id, op, false, false, &left, &right,
                         );
                         let ir_id = self.get_next_ir_id();
                         self.c4ir_builder
@@ -4243,20 +4202,20 @@ impl Compiler<'_> {
                     ) => {
                         let ir_id = self.get_next_ir_id();
                         self.c4ir_builder.create_bin_op(
-                            ir_id.clone(),
+                            &ir_id,
                             op,
                             is_signed(&tp_left),
                             false,
-                            left_ir_id.clone(),
-                            right_ir_id.clone(),
+                            &left_ir_id,
+                            &right_ir_id,
                         );
                         self.llvm_builder.create_bin_op(
-                            ir_id.clone(),
+                            &ir_id,
                             op,
                             is_signed(&tp_left),
                             false,
-                            left_ir_id.clone(),
-                            right_ir_id.clone(),
+                            &left_ir_id,
+                            &right_ir_id,
                         );
                         (tp_left, Some(C::IrValue(ir_id, false)))
                     }
@@ -4370,20 +4329,20 @@ impl Compiler<'_> {
                         ) => {
                             let ir_id = self.get_next_ir_id();
                             self.c4ir_builder.create_bin_op(
-                                ir_id.clone(),
+                                &ir_id,
                                 op,
                                 is_signed(&tp),
                                 is_fp(&tp),
-                                x_ir_id.clone(),
-                                y_ir_id.clone(),
+                                &x_ir_id,
+                                &y_ir_id,
                             );
                             self.llvm_builder.create_bin_op(
-                                ir_id.clone(),
+                                &ir_id,
                                 op,
                                 is_signed(&tp),
                                 is_fp(&tp),
-                                x_ir_id.clone(),
-                                y_ir_id.clone(),
+                                &x_ir_id,
+                                &y_ir_id,
                             );
                             (tp, Some(C::IrValue(ir_id, false)))
                         }
@@ -4434,46 +4393,46 @@ impl Compiler<'_> {
                             // ptr + n => (T*) ((void*) ptr + n * sizeof(T))
                             let ptr_ir_id = self.get_next_ir_id();
                             self.c4ir_builder.create_cast(
-                                ptr_ir_id.clone(),
+                                &ptr_ir_id,
                                 &QType::char_ptr_tp(),
-                                left.clone(),
+                                &left,
                                 &tp_left,
                             );
                             self.llvm_builder.create_cast(
-                                ptr_ir_id.clone(),
+                                &ptr_ir_id,
                                 &QType::char_ptr_tp(),
-                                left.clone(),
+                                &left,
                                 &tp_left,
                             );
 
                             let sz_ir_id = self.get_next_ir_id();
                             self.c4ir_builder.create_constant(
-                                sz_ir_id.clone(),
+                                &sz_ir_id,
                                 &ConstantOrIrValue::I64(sz_elem),
                                 &QType::from(Type::Long),
                             );
                             self.llvm_builder.create_constant(
-                                sz_ir_id.clone(),
+                                &sz_ir_id,
                                 &ConstantOrIrValue::I64(sz_elem),
                                 &QType::from(Type::Long),
                             );
 
                             let offset_ir_id = self.get_next_ir_id();
                             self.c4ir_builder.create_bin_op(
-                                offset_ir_id.clone(),
+                                &offset_ir_id,
                                 Op::MUL,
                                 true,
                                 false,
-                                right.clone(),
-                                sz_ir_id.clone(),
+                                &right,
+                                &sz_ir_id,
                             );
                             self.llvm_builder.create_bin_op(
-                                offset_ir_id.clone(),
+                                &offset_ir_id,
                                 Op::MUL,
                                 true,
                                 false,
-                                right.clone(),
-                                sz_ir_id.clone(),
+                                &right,
+                                &sz_ir_id,
                             );
 
                             let ir_id = self.get_next_ir_id();
@@ -4615,79 +4574,65 @@ impl Compiler<'_> {
                         ) => {
                             // p1 - p2 => ((long*)p1 - (long*)p2) / sizeof(T)
                             let p1 = self.get_next_ir_id();
-                            self.c4ir_builder.create_cast(
-                                p1.clone(),
-                                &long_tp,
-                                ir_id_x.clone(),
-                                &tp_left,
-                            );
-                            self.llvm_builder.create_cast(
-                                p1.clone(),
-                                &long_tp,
-                                ir_id_x.clone(),
-                                &tp_left,
-                            );
+                            self.c4ir_builder
+                                .create_cast(&p1, &long_tp, &ir_id_x, &tp_left);
+                            self.llvm_builder
+                                .create_cast(&p1, &long_tp, &ir_id_x, &tp_left);
 
                             let p2 = self.get_next_ir_id();
                             self.c4ir_builder.create_cast(
-                                p2.clone(),
-                                &long_tp,
-                                ir_id_y.clone(),
-                                &tp_right,
+                                &p2, &long_tp, &ir_id_y, &tp_right,
                             );
                             self.llvm_builder.create_cast(
-                                p2.clone(),
-                                &long_tp,
-                                ir_id_y.clone(),
-                                &tp_right,
+                                &p2, &long_tp, &ir_id_y, &tp_right,
                             );
 
                             let diff = self.get_next_ir_id();
                             self.c4ir_builder.create_bin_op(
-                                diff.clone(),
+                                &diff,
                                 Op::SUB,
                                 true,
                                 false,
-                                p1.clone(),
-                                p2.clone(),
+                                &p1,
+                                &p2,
                             );
                             self.llvm_builder.create_bin_op(
-                                diff.clone(),
+                                &diff,
                                 Op::SUB,
                                 true,
                                 false,
-                                p1.clone(),
-                                p2.clone(),
+                                &p1,
+                                &p2,
                             );
 
                             let sz = self.get_next_ir_id();
                             self.c4ir_builder.create_constant(
-                                sz.clone(),
+                                &sz,
                                 &C::I64(sz_elem as i64),
                                 &long_tp,
                             );
                             self.llvm_builder.create_constant(
-                                sz.clone(),
+                                &sz,
                                 &C::I64(sz_elem as i64),
                                 &long_tp,
                             );
 
                             let ir_id = self.get_next_ir_id();
                             self.c4ir_builder.create_bin_op(
-                                ir_id.clone(),
+                                &ir_id,
                                 Op::DIV,
                                 true,
                                 false,
-                                diff.clone(),
-                                sz.clone(),
+                                &diff,
+                                &sz,
                             );
                             self.llvm_builder.create_bin_op(
-                                ir_id.clone(),
+                                &ir_id,
                                 Op::DIV,
                                 true,
                                 false,
-                                diff.clone(),
-                                sz.clone(),
+                                &diff,
+                                &sz,
                             );
 
                             (long_tp, Some(C::IrValue(ir_id, false)))
@@ -4789,20 +4734,20 @@ impl Compiler<'_> {
                         (C::IrValue(x, false), C::IrValue(y, false)) => {
                             let ir_id = self.get_next_ir_id();
                             self.c4ir_builder.create_bin_op(
-                                ir_id.clone(),
+                                &ir_id,
                                 op,
                                 is_signed(&tp),
                                 is_fp(&tp),
-                                x.clone(),
-                                y.clone(),
+                                &x,
+                                &y,
                             );
                             self.llvm_builder.create_bin_op(
-                                ir_id.clone(),
+                                &ir_id,
                                 op,
                                 is_signed(&tp),
                                 is_fp(&tp),
-                                x.clone(),
-                                y.clone(),
+                                &x,
+                                &y,
                             );
                             C::IrValue(ir_id, false)
                         }
@@ -4960,14 +4905,10 @@ impl Compiler<'_> {
                         ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
                         _ => unreachable!(),
                     };
-                    self.c4ir_builder.create_store(
-                        result_ir_id.clone(),
-                        short_value_ir_id.clone(),
-                    );
-                    self.llvm_builder.create_store(
-                        result_ir_id.clone(),
-                        short_value_ir_id.clone(),
-                    );
+                    self.c4ir_builder
+                        .create_store(&result_ir_id, &short_value_ir_id);
+                    self.llvm_builder
+                        .create_store(&result_ir_id, &short_value_ir_id);
                     self.c4ir_builder.create_br(&merge_bb);
                     self.llvm_builder.create_br(&merge_bb);
 
@@ -4982,14 +4923,10 @@ impl Compiler<'_> {
                         .create_zext_i1_to_i32(&right_i32_ir_id, &right_ir_id);
                     self.llvm_builder
                         .create_zext_i1_to_i32(&right_i32_ir_id, &right_ir_id);
-                    self.c4ir_builder.create_store(
-                        result_ir_id.clone(),
-                        right_i32_ir_id.clone(),
-                    );
-                    self.llvm_builder.create_store(
-                        result_ir_id.clone(),
-                        right_i32_ir_id.clone(),
-                    );
+                    self.c4ir_builder
+                        .create_store(&result_ir_id, &right_i32_ir_id);
+                    self.llvm_builder
+                        .create_store(&result_ir_id, &right_i32_ir_id);
                     self.c4ir_builder.create_br(&merge_bb);
                     self.llvm_builder.create_br(&merge_bb);
 
@@ -4999,13 +4936,13 @@ impl Compiler<'_> {
                     // i32 result = load i32* r
                     let result_rvalue_ir_id = self.get_next_ir_id();
                     self.c4ir_builder.create_load(
-                        result_rvalue_ir_id.clone(),
-                        result_ir_id.clone(),
+                        &result_rvalue_ir_id,
+                        &result_ir_id,
                         &QType::from(Type::Int),
                     );
                     self.llvm_builder.create_load(
-                        result_rvalue_ir_id.clone(),
-                        result_ir_id.clone(),
+                        &result_rvalue_ir_id,
+                        &result_ir_id,
                         &QType::from(Type::Int),
                     );
                     (
@@ -5163,15 +5100,15 @@ impl Compiler<'_> {
             // src_tp is only a marker for ir builder that indicates it's a
             // ptr->ptr conversion
             self.c4ir_builder.create_cast(
-                struct_i8_ptr_ir_id.clone(),
+                &struct_i8_ptr_ir_id,
                 &QType::char_ptr_tp(),
-                struct_ptr_ir_id.clone(),
+                &struct_ptr_ir_id,
                 &QType::char_ptr_tp(),
             );
             self.llvm_builder.create_cast(
-                struct_i8_ptr_ir_id.clone(),
+                &struct_i8_ptr_ir_id,
                 &QType::char_ptr_tp(),
-                struct_ptr_ir_id.clone(),
+                &struct_ptr_ir_id,
                 &QType::char_ptr_tp(),
             );
 
@@ -5197,15 +5134,15 @@ impl Compiler<'_> {
 
             let field_ptr_ir_id = self.get_next_ir_id();
             self.c4ir_builder.create_cast(
-                field_ptr_ir_id.clone(),
+                &field_ptr_ir_id,
                 &QType::ptr_tp(tp_field.clone()),
-                field_i8_ptr_ir_id.clone(),
+                &field_i8_ptr_ir_id,
                 &QType::char_ptr_tp(),
             );
             self.llvm_builder.create_cast(
-                field_ptr_ir_id.clone(),
+                &field_ptr_ir_id,
                 &QType::ptr_tp(tp_field.clone()),
-                field_i8_ptr_ir_id.clone(),
+                &field_i8_ptr_ir_id,
                 &QType::char_ptr_tp(),
             );
 
@@ -5231,20 +5168,20 @@ impl Compiler<'_> {
 
             let v_ir_id = self.get_next_ir_id();
             self.c4ir_builder.create_bin_op(
-                v_ir_id.clone(),
+                &v_ir_id,
                 ast::Expr_Binary_Op::BIT_AND,
                 is_signed,
                 false,
-                src_ir_id.clone(),
-                mask_ir_id.clone(),
+                &src_ir_id,
+                &mask_ir_id,
             );
             self.llvm_builder.create_bin_op(
-                v_ir_id.clone(),
+                &v_ir_id,
                 ast::Expr_Binary_Op::BIT_AND,
                 is_signed,
                 false,
-                src_ir_id.clone(),
-                mask_ir_id.clone(),
+                &src_ir_id,
+                &mask_ir_id,
             );
 
             v_ir_id
@@ -5253,13 +5190,13 @@ impl Compiler<'_> {
         {
             let orig_ir_id = self.get_next_ir_id();
             self.c4ir_builder.create_load(
-                orig_ir_id.clone(),
-                field_ptr_ir_id.clone(),
+                &orig_ir_id,
+                &field_ptr_ir_id,
                 &tp_field,
             );
             self.llvm_builder.create_load(
-                orig_ir_id.clone(),
-                field_ptr_ir_id.clone(),
+                &orig_ir_id,
+                &field_ptr_ir_id,
                 &tp_field,
             );
 
@@ -5272,20 +5209,20 @@ impl Compiler<'_> {
             // $left = *ptr & ~mask
             let left_ir_id = self.get_next_ir_id();
             self.c4ir_builder.create_bin_op(
-                left_ir_id.clone(),
+                &left_ir_id,
                 ast::Expr_Binary_Op::BIT_AND,
                 is_signed,
                 false,
-                orig_ir_id.clone(),
-                mask_ir_id.clone(),
+                &orig_ir_id,
+                &mask_ir_id,
             );
             self.llvm_builder.create_bin_op(
-                left_ir_id.clone(),
+                &left_ir_id,
                 ast::Expr_Binary_Op::BIT_AND,
                 is_signed,
                 false,
-                orig_ir_id.clone(),
-                mask_ir_id.clone(),
+                &orig_ir_id,
+                &mask_ir_id,
             );
 
             let offset = ConstantOrIrValue::U8(offset.bit_field_offset);
@@ -5299,46 +5236,44 @@ impl Compiler<'_> {
             // $right = $v << offset
             let right_ir_id = self.get_next_ir_id();
             self.c4ir_builder.create_bin_op(
-                right_ir_id.clone(),
+                &right_ir_id,
                 ast::Expr_Binary_Op::L_SHIFT,
                 is_signed,
                 false,
-                v_ir_id.clone(),
-                offset_ir_id.clone(),
+                &v_ir_id,
+                &offset_ir_id,
             );
             self.llvm_builder.create_bin_op(
-                right_ir_id.clone(),
+                &right_ir_id,
                 ast::Expr_Binary_Op::L_SHIFT,
                 is_signed,
                 false,
-                v_ir_id.clone(),
-                offset_ir_id.clone(),
+                &v_ir_id,
+                &offset_ir_id,
             );
 
             // $t = $left | $right
             let ir_id = self.get_next_ir_id();
             self.c4ir_builder.create_bin_op(
-                ir_id.clone(),
+                &ir_id,
                 ast::Expr_Binary_Op::BIT_OR,
                 is_signed,
                 false,
-                left_ir_id.clone(),
-                right_ir_id.clone(),
+                &left_ir_id,
+                &right_ir_id,
             );
             self.llvm_builder.create_bin_op(
-                ir_id.clone(),
+                &ir_id,
                 ast::Expr_Binary_Op::BIT_OR,
                 is_signed,
                 false,
-                left_ir_id.clone(),
-                right_ir_id.clone(),
+                &left_ir_id,
+                &right_ir_id,
             );
 
             // *ptr = $t
-            self.c4ir_builder
-                .create_store(field_ptr_ir_id.clone(), ir_id.clone());
-            self.llvm_builder
-                .create_store(field_ptr_ir_id.clone(), ir_id.clone());
+            self.c4ir_builder.create_store(&field_ptr_ir_id, &ir_id);
+            self.llvm_builder.create_store(&field_ptr_ir_id, &ir_id);
         }
         // $r = $v << (rem_bits + offset) >> (rem_bits + offset)
         let r_ir_id = if is_signed {
@@ -5355,38 +5290,38 @@ impl Compiler<'_> {
 
             let shl_ir_id = self.get_next_ir_id();
             self.c4ir_builder.create_bin_op(
-                shl_ir_id.clone(),
+                &shl_ir_id,
                 ast::Expr_Binary_Op::L_SHIFT,
                 true,
                 false,
-                v_ir_id.clone(),
-                shift_bits_ir_id.clone(),
+                &v_ir_id,
+                &shift_bits_ir_id,
             );
             self.llvm_builder.create_bin_op(
-                shl_ir_id.clone(),
+                &shl_ir_id,
                 ast::Expr_Binary_Op::L_SHIFT,
                 true,
                 false,
-                v_ir_id.clone(),
-                shift_bits_ir_id.clone(),
+                &v_ir_id,
+                &shift_bits_ir_id,
             );
 
             let shr_ir_id = self.get_next_ir_id();
             self.c4ir_builder.create_bin_op(
-                shr_ir_id.clone(),
+                &shr_ir_id,
                 ast::Expr_Binary_Op::R_SHIFT,
                 true,
                 false,
-                shl_ir_id.clone(),
-                shift_bits_ir_id.clone(),
+                &shl_ir_id,
+                &shift_bits_ir_id,
             );
             self.llvm_builder.create_bin_op(
-                shr_ir_id.clone(),
+                &shr_ir_id,
                 ast::Expr_Binary_Op::R_SHIFT,
                 true,
                 false,
-                shl_ir_id.clone(),
-                shift_bits_ir_id.clone(),
+                &shl_ir_id,
+                &shift_bits_ir_id,
             );
 
             shr_ir_id
@@ -5940,16 +5875,10 @@ impl Compiler<'_> {
             true,
         );
         let ret_ir_id = self.get_next_ir_id();
-        self.c4ir_builder.create_load(
-            ret_ir_id.clone(),
-            new_ir_id.clone(),
-            &ctx.return_type,
-        );
-        self.llvm_builder.create_load(
-            ret_ir_id.clone(),
-            new_ir_id.clone(),
-            &ctx.return_type,
-        );
+        self.c4ir_builder
+            .create_load(&ret_ir_id, &new_ir_id, &ctx.return_type);
+        self.llvm_builder
+            .create_load(&ret_ir_id, &new_ir_id, &ctx.return_type);
         self.c4ir_builder.create_return(&ret_ir_id);
         self.llvm_builder.create_return(&ret_ir_id);
         Ok(())
@@ -5986,16 +5915,10 @@ impl Compiler<'_> {
             c4_fail!(cond_loc, "Scalar type expected")
         } else {
             let zero = ConstantOrIrValue::U64(0);
-            self.c4ir_builder.create_constant(
-                zero_ir_id.clone(),
-                &zero,
-                &cond_tp,
-            );
-            self.llvm_builder.create_constant(
-                zero_ir_id.clone(),
-                &zero,
-                &cond_tp,
-            );
+            self.c4ir_builder
+                .create_constant(&zero_ir_id, &zero, &cond_tp);
+            self.llvm_builder
+                .create_constant(&zero_ir_id, &zero, &cond_tp);
         }
         let is_signed = match &cond_tp.tp {
             Type::UnsignedChar
@@ -6008,20 +5931,20 @@ impl Compiler<'_> {
 
         let cmp_ir_id = self.get_next_ir_id();
         self.c4ir_builder.create_cmp_op(
-            cmp_ir_id.clone(),
+            &cmp_ir_id,
             ast::Expr_Binary_Op::NEQ,
             is_signed,
             is_fp,
-            cond_ir_id.clone(),
-            zero_ir_id.clone(),
+            &cond_ir_id,
+            &zero_ir_id,
         );
         self.llvm_builder.create_cmp_op(
-            cmp_ir_id.clone(),
+            &cmp_ir_id,
             ast::Expr_Binary_Op::NEQ,
             is_signed,
             is_fp,
-            cond_ir_id,
-            zero_ir_id,
+            &cond_ir_id,
+            &zero_ir_id,
         );
         Ok(cmp_ir_id)
     }
@@ -7204,18 +7127,10 @@ impl Compiler<'_> {
                 Type::Pointer(_),
             ) => {
                 let dst_ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_cast(
-                    dst_ir_id.clone(),
-                    &dst_tp,
-                    src_ir_id.clone(),
-                    &src_tp,
-                );
-                self.llvm_builder.create_cast(
-                    dst_ir_id.clone(),
-                    &dst_tp,
-                    src_ir_id.clone(),
-                    &src_tp,
-                );
+                self.c4ir_builder
+                    .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
+                self.llvm_builder
+                    .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
                 (dst_tp, Some(ConstantOrIrValue::IrValue(dst_ir_id, false)))
             }
             (Type::Pointer(_), _, Type::Pointer(_)) => (dst_tp, v),
@@ -7236,32 +7151,18 @@ impl Compiler<'_> {
                         }
                         c => {
                             let ir_id = self.get_next_ir_id();
-                            self.c4ir_builder.create_constant(
-                                ir_id.clone(),
-                                c,
-                                &src_tp,
-                            );
-                            self.llvm_builder.create_constant(
-                                ir_id.clone(),
-                                c,
-                                &src_tp,
-                            );
+                            self.c4ir_builder
+                                .create_constant(&ir_id, c, &src_tp);
+                            self.llvm_builder
+                                .create_constant(&ir_id, c, &src_tp);
                             ir_id
                         }
                     };
                     let dst_ir_id = self.get_next_ir_id();
-                    self.c4ir_builder.create_cast(
-                        dst_ir_id.clone(),
-                        &dst_tp,
-                        src_ir_id.clone(),
-                        &src_tp,
-                    );
-                    self.llvm_builder.create_cast(
-                        dst_ir_id.clone(),
-                        &dst_tp,
-                        src_ir_id,
-                        &src_tp,
-                    );
+                    self.c4ir_builder
+                        .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
+                    self.llvm_builder
+                        .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
                     (dst_tp, Some(ConstantOrIrValue::IrValue(dst_ir_id, false)))
                 }
             }
@@ -7716,16 +7617,8 @@ impl Compiler<'_> {
             }
             (t, Some(C::IrValue(ir_id, true))) if do_deref_lvalue => {
                 let dst_ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_load(
-                    dst_ir_id.clone(),
-                    ir_id.clone(),
-                    &tp,
-                );
-                self.llvm_builder.create_load(
-                    dst_ir_id.clone(),
-                    ir_id.clone(),
-                    &tp,
-                );
+                self.c4ir_builder.create_load(&dst_ir_id, &ir_id, &tp);
+                self.llvm_builder.create_load(&dst_ir_id, &ir_id, &tp);
                 (QType::from(t), Some(C::IrValue(dst_ir_id, false)))
             }
             _ => (tp, expr),
@@ -7743,26 +7636,26 @@ impl Compiler<'_> {
             C::StrAddress(ir_id, offset_bytes) => {
                 let old_ptr_ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_cast(
-                    old_ptr_ir_id.clone(),
+                    &old_ptr_ir_id,
                     &QType::char_ptr_tp(),
-                    ir_id.clone(),
+                    &ir_id,
                     tp,
                 );
                 self.llvm_builder.create_cast(
-                    old_ptr_ir_id.clone(),
+                    &old_ptr_ir_id,
                     &QType::char_ptr_tp(),
-                    ir_id.clone(),
+                    &ir_id,
                     tp,
                 );
 
                 let offset_ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_constant(
-                    offset_ir_id.clone(),
+                    &offset_ir_id,
                     &C::I64(offset_bytes),
                     &QType::from(Type::Long),
                 );
                 self.llvm_builder.create_constant(
-                    offset_ir_id.clone(),
+                    &offset_ir_id,
                     &C::I64(offset_bytes),
                     &QType::from(Type::Long),
                 );
@@ -7781,15 +7674,15 @@ impl Compiler<'_> {
 
                 let ir_id = self.get_next_ir_id();
                 self.c4ir_builder.create_cast(
-                    ir_id.clone(),
+                    &ir_id,
                     tp,
-                    ptr_ir_id.clone(),
+                    &ptr_ir_id,
                     &QType::char_ptr_tp(),
                 );
                 self.llvm_builder.create_cast(
-                    ir_id.clone(),
+                    &ir_id,
                     tp,
-                    ptr_ir_id.clone(),
+                    &ptr_ir_id,
                     &QType::char_ptr_tp(),
                 );
                 C::IrValue(ir_id, false)
@@ -7817,23 +7710,15 @@ impl Compiler<'_> {
                 // and load
                 let ptr_tp = QType::ptr_tp(tp.clone());
                 let ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_load(
-                    ir_id.clone(),
-                    ptr_ir_id.clone(),
-                    &ptr_tp,
-                );
-                self.llvm_builder.create_load(
-                    ir_id.clone(),
-                    ptr_ir_id.clone(),
-                    &ptr_tp,
-                );
+                self.c4ir_builder.create_load(&ir_id, &ptr_ir_id, &ptr_tp);
+                self.llvm_builder.create_load(&ir_id, &ptr_ir_id, &ptr_tp);
 
                 C::IrValue(ir_id, false)
             }
             _ => {
                 let ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_constant(ir_id.clone(), &c, tp);
-                self.llvm_builder.create_constant(ir_id.clone(), &c, tp);
+                self.c4ir_builder.create_constant(&ir_id, &c, tp);
+                self.llvm_builder.create_constant(&ir_id, &c, tp);
                 C::IrValue(ir_id, false)
             }
         }
@@ -7972,16 +7857,8 @@ impl Compiler<'_> {
             }
             (C::IrValue(_, _), _) => {
                 let new_ir_id_y = self.get_next_ir_id();
-                self.c4ir_builder.create_constant(
-                    new_ir_id_y.clone(),
-                    &y,
-                    &tp_y,
-                );
-                self.llvm_builder.create_constant(
-                    new_ir_id_y.clone(),
-                    &y,
-                    &tp_y,
-                );
+                self.c4ir_builder.create_constant(&new_ir_id_y, &y, &tp_y);
+                self.llvm_builder.create_constant(&new_ir_id_y, &y, &tp_y);
                 let (new_x, new_y, new_tp) = self.do_arithmetic_conversion(
                     tp_x,
                     Some(x),
@@ -7993,16 +7870,8 @@ impl Compiler<'_> {
             }
             (_, C::IrValue(_, _)) => {
                 let new_ir_id_x = self.get_next_ir_id();
-                self.c4ir_builder.create_constant(
-                    new_ir_id_x.clone(),
-                    &x,
-                    &tp_x,
-                );
-                self.llvm_builder.create_constant(
-                    new_ir_id_x.clone(),
-                    &x,
-                    &tp_x,
-                );
+                self.c4ir_builder.create_constant(&new_ir_id_x, &x, &tp_x);
+                self.llvm_builder.create_constant(&new_ir_id_x, &x, &tp_x);
                 let (new_x, new_y, new_tp) = self.do_arithmetic_conversion(
                     tp_x,
                     Some(C::IrValue(new_ir_id_x, false)),
@@ -8097,18 +7966,10 @@ impl Compiler<'_> {
          -> (String, QType) {
             let ir_id_new = cc.get_next_ir_id();
             let tp_new = QType::from(tp_new);
-            cc.c4ir_builder.create_cast(
-                ir_id_new.clone(),
-                &tp_new,
-                ir_id_old.clone(),
-                tp_old,
-            );
-            cc.llvm_builder.create_cast(
-                ir_id_new.clone(),
-                &tp_new,
-                ir_id_old.clone(),
-                tp_old,
-            );
+            cc.c4ir_builder
+                .create_cast(&ir_id_new, &tp_new, &ir_id_old, tp_old);
+            cc.llvm_builder
+                .create_cast(&ir_id_new, &tp_new, &ir_id_old, tp_old);
             (ir_id_new, tp_new)
         };
 
@@ -8289,18 +8150,10 @@ impl Compiler<'_> {
             | Type::UnsignedShort => {
                 let ir_id_new = self.get_next_ir_id();
                 let tp_new = QType::from(Type::Int);
-                self.c4ir_builder.create_cast(
-                    ir_id_new.clone(),
-                    &tp_new,
-                    ir_id.clone(),
-                    &tp,
-                );
-                self.llvm_builder.create_cast(
-                    ir_id_new.clone(),
-                    &tp_new,
-                    ir_id.clone(),
-                    &tp,
-                );
+                self.c4ir_builder
+                    .create_cast(&ir_id_new, &tp_new, &ir_id, &tp);
+                self.llvm_builder
+                    .create_cast(&ir_id_new, &tp_new, &ir_id, &tp);
                 (ir_id_new, tp_new)
             }
             _ => (ir_id, tp),
