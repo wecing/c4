@@ -1768,7 +1768,7 @@ impl Compiler<'_> {
         };
         let mut func_def_ctx = FuncDefCtx {
             func_name: fname,
-            return_type: rtp,
+            return_type: rtp.clone(),
             basic_blocks: HashMap::new(),
             unresolved_labels: HashMap::new(),
             switch_stack: Vec::new(),
@@ -1780,6 +1780,49 @@ impl Compiler<'_> {
         if err.is_err() {
             let err = err.unwrap_err();
             panic!("{}: {}", Compiler::format_loc(&err.loc), err.msg)
+        }
+        // handles funcs without explicit returns, e.g.:
+        //
+        // void f1() {}
+        // int f2() {}
+        // int f3() {
+        //   goto END;
+        // END:
+        //   (void) 999;
+        // }
+        if rtp.is_void() {
+            self.c4ir_builder.create_return_void();
+            self.llvm_builder.create_return_void();
+        } else {
+            let alloc_ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_definition(
+                false,
+                &alloc_ir_id,
+                &rtp,
+                Linkage::NONE,
+                &None,
+            );
+            self.llvm_builder.create_definition(
+                false,
+                &alloc_ir_id,
+                &rtp,
+                Linkage::NONE,
+                &None,
+            );
+            let ptr_tp = QType::ptr_tp(rtp);
+            let r_ir_id = self.get_next_ir_id();
+            self.c4ir_builder.create_load(
+                r_ir_id.clone(),
+                alloc_ir_id.clone(),
+                &ptr_tp,
+            );
+            self.llvm_builder.create_load(
+                r_ir_id.clone(),
+                alloc_ir_id.clone(),
+                &ptr_tp,
+            );
+            self.c4ir_builder.create_return(&r_ir_id);
+            self.llvm_builder.create_return(&r_ir_id);
         }
 
         func_def_ctx.unresolved_labels.into_iter().last().map(
@@ -2933,6 +2976,7 @@ impl Compiler<'_> {
         (elem_tp, r)
     }
 
+    // TODO: struct / union (passing + returning; also visit_return_stmt)
     fn visit_func_call_expr(
         &mut self,
         func_call: &ast::Expr_FuncCall,
@@ -2958,9 +3002,7 @@ impl Compiler<'_> {
             _ => unreachable!(),
         };
         match &rtp.tp {
-            Type::Struct(_) | Type::Union(_) => {
-                unimplemented!() // TODO: return struct / union
-            }
+            Type::Struct(_) | Type::Union(_) => unimplemented!(),
             // disallowed on construction
             Type::Function(_, _) | Type::Array(_, _) => unreachable!(),
             _ => (),
@@ -5862,7 +5904,7 @@ impl Compiler<'_> {
             _ => unreachable!(),
         };
         if !tp.is_arithmetic_type() && !tp.is_pointer() {
-            unimplemented!() // TODO: return struct / union
+            unimplemented!()
         }
 
         // 3.6.6.4: If the expression has a type different from that of
