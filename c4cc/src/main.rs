@@ -3952,7 +3952,8 @@ impl Compiler<'_> {
                 use ConstantOrIrValue as C;
                 let is_equality_op = op == Op::EQ || op == Op::NEQ;
                 let is_null = |c: &Option<C>| match c {
-                    Some(C::U64(0)) => true,
+                    Some(C::Float(_)) | Some(C::Double(_)) => false,
+                    Some(c) => c.as_constant_u64() == Some(0),
                     _ => false,
                 };
                 fn cmp<T: PartialEq<T> + PartialOrd<T>>(
@@ -4018,6 +4019,16 @@ impl Compiler<'_> {
                                 || (tp_right.is_pointer()
                                     && is_null(&left))) =>
                         {
+                            let left = if is_null(&left) {
+                                Some(C::U64(0))
+                            } else {
+                                left
+                            };
+                            let right = if is_null(&right) {
+                                Some(C::U64(0))
+                            } else {
+                                right
+                            };
                             (tp_left, left, tp_right, right)
                         }
                         _ => panic!(
@@ -4052,7 +4063,24 @@ impl Compiler<'_> {
                             return (QType::from(Type::Int), None);
                         }
                     }
-                    _ => (left, right), // TODO
+                    (
+                        C::HasAddress(ir_id_left, _, false),
+                        C::HasAddress(ir_id_right, _, false),
+                    ) if ir_id_left == ir_id_right => (left, right),
+                    (C::HasAddress(_, _, false), C::U64(0))
+                    | (C::U64(0), C::HasAddress(_, _, false)) => (left, right),
+                    (C::HasAddress(_, _, _), _)
+                    | (_, C::HasAddress(_, _, _)) => {
+                        if emit_ir {
+                            (
+                                self.convert_to_ir_value(&tp_left, left),
+                                self.convert_to_ir_value(&tp_right, right),
+                            )
+                        } else {
+                            return (QType::from(Type::Int), None);
+                        }
+                    }
+                    _ => (left, right),
                 };
                 match (left, right) {
                     (C::IrValue(left, false), C::IrValue(right, false)) => {
@@ -4095,10 +4123,17 @@ impl Compiler<'_> {
                     (C::Double(x), C::Double(y)) => cmp(op, x, y),
 
                     (C::StrAddress(_, x), C::StrAddress(_, y)) => cmp(op, x, y),
-                    (C::StrAddress(_, _), C::I64(0)) => cmp(op, 999, 0),
-                    (C::I64(0), C::StrAddress(_, _)) => cmp(op, 0, 999),
+                    (C::StrAddress(_, _), C::U64(0)) => cmp(op, 999, 0),
+                    (C::U64(0), C::StrAddress(_, _)) => cmp(op, 0, 999),
 
-                    _ => unreachable!(), // TODO
+                    (
+                        C::HasAddress(_, x, false),
+                        C::HasAddress(_, y, false),
+                    ) => cmp(op, x, y),
+                    (C::HasAddress(_, _, false), C::U64(0)) => cmp(op, 999, 0),
+                    (C::U64(0), C::HasAddress(_, _, false)) => cmp(op, 0, 999),
+
+                    _ => unreachable!(),
                 }
             }
             Op::L_SHIFT | Op::R_SHIFT => {
@@ -4226,7 +4261,7 @@ impl Compiler<'_> {
                         Some(C::U64(x.checked_shr(y as u32).unwrap_or(0))),
                     ),
 
-                    _ => unreachable!(), // TODO
+                    _ => unreachable!(),
                 }
             }
             Op::ADD | Op::SUB => {
