@@ -5353,7 +5353,6 @@ impl Compiler<'_> {
         emit_ir: bool,
     ) -> R<(QType, Option<ConstantOrIrValue>)> {
         use ConstantOrIrValue as C;
-        // TODO: ternary op
         if emit_ir {
             let cond_ir_id = self.visit_cond_expr(e_cond)?;
 
@@ -5503,7 +5502,61 @@ impl Compiler<'_> {
             if !cond_tp.is_scalar_type() {
                 c4_fail!(e_cond.1, "Scalar type expected")
             }
-            unimplemented!() // TODO
+            // cond => (cond != 0) => 1 or 0
+            let (_, cond) = self.visit_simple_binary_op(
+                &QType::from(Type::Int),
+                Some(C::I32(0)),
+                e_cond.1,
+                &cond_tp,
+                cond,
+                e_cond.1,
+                ast::Expr_Binary_Op::NEQ,
+                fold_constant,
+                emit_ir,
+            );
+
+            let (then_tp, then_c) =
+                self.visit_expr(e_then, fold_constant, emit_ir);
+            let (then_tp, then_c) = self.convert_lvalue_and_func_designator(
+                then_tp, then_c, true, true, true, emit_ir,
+            );
+
+            let (else_tp, else_c) =
+                self.visit_expr(e_else, fold_constant, emit_ir);
+            let (else_tp, else_c) = self.convert_lvalue_and_func_designator(
+                else_tp, else_c, true, true, true, emit_ir,
+            );
+
+            let rtp = self.get_ternary_expr_rtp(
+                &then_tp, &then_c, &else_tp, &else_c, e_else.1,
+            )?;
+
+            if rtp.is_void() {
+                return Ok((rtp, Some(C::I32(0)))); // dummy value
+            }
+
+            let (_, then_c) = self.cast_expression(
+                then_tp,
+                then_c,
+                rtp.clone(),
+                e_then.1,
+                emit_ir,
+            );
+            let (_, else_c) = self.cast_expression(
+                else_tp,
+                else_c,
+                rtp.clone(),
+                e_else.1,
+                emit_ir,
+            );
+
+            let r = match cond {
+                None => None,
+                Some(C::I32(1)) => then_c,
+                Some(C::I32(0)) => else_c,
+                _ => unreachable!(),
+            };
+            Ok((rtp, r))
         }
     }
 
