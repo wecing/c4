@@ -1020,6 +1020,7 @@ impl IRBuilder for LLVMBuilderImpl {
     }
 
     fn set_current_basic_block(&mut self, bb: &str) {
+        self.current_basic_block = bb.to_string();
         let bb = *self.basic_blocks.get(bb).unwrap();
         unsafe {
             llvm_sys::core::LLVMPositionBuilderAtEnd(self.builder, bb);
@@ -5346,20 +5347,220 @@ impl Compiler<'_> {
     fn visit_ternary_op(
         &mut self,
         e_cond: L<&ast::Expr>,
-        _e_then: L<&ast::Expr>,
-        _e_else: L<&ast::Expr>,
+        e_then: L<&ast::Expr>,
+        e_else: L<&ast::Expr>,
         fold_constant: bool,
         emit_ir: bool,
     ) -> R<(QType, Option<ConstantOrIrValue>)> {
-        let (cond_tp, cond) = self.visit_expr(e_cond, fold_constant, emit_ir);
-        let (cond_tp, cond) = self.convert_lvalue_and_func_designator(
-            cond_tp, cond, true, true, true, emit_ir,
-        );
-        // 3.3.15: The first operand shall have scalar type.
-        if !cond_tp.is_scalar_type() {
-            c4_fail!(e_cond.1, "Scalar type expected")
+        use ConstantOrIrValue as C;
+        // TODO: ternary op
+        if emit_ir {
+            let cond_ir_id = self.visit_cond_expr(e_cond)?;
+
+            let entry_bb = self.get_current_bb();
+            let then_bb = self.create_bb();
+            let else_bb = self.create_bb();
+            let merge_bb = self.create_bb();
+
+            self.c4ir_builder.set_current_basic_block(&then_bb);
+            self.llvm_builder.set_current_basic_block(&then_bb);
+            let (then_tp, then_c) =
+                self.visit_expr(e_then, fold_constant, emit_ir);
+            let (then_tp, then_c) = self.convert_lvalue_and_func_designator(
+                then_tp, then_c, true, true, true, emit_ir,
+            );
+
+            self.c4ir_builder.set_current_basic_block(&else_bb);
+            self.llvm_builder.set_current_basic_block(&else_bb);
+            let (else_tp, else_c) =
+                self.visit_expr(e_else, fold_constant, emit_ir);
+            let (else_tp, else_c) = self.convert_lvalue_and_func_designator(
+                else_tp, else_c, true, true, true, emit_ir,
+            );
+
+            let rtp = self.get_ternary_expr_rtp(
+                &then_tp, &then_c, &else_tp, &else_c, e_else.1,
+            )?;
+
+            // emit the rest IR
+
+            self.c4ir_builder.set_current_basic_block(&entry_bb);
+            self.llvm_builder.set_current_basic_block(&entry_bb);
+            let r_ir_id = self.get_next_ir_id();
+            if !rtp.is_void() {
+                self.c4ir_builder.create_definition(
+                    false,
+                    &r_ir_id,
+                    &rtp,
+                    Linkage::NONE,
+                    &None,
+                );
+                self.llvm_builder.create_definition(
+                    false,
+                    &r_ir_id,
+                    &rtp,
+                    Linkage::NONE,
+                    &None,
+                );
+            }
+            self.c4ir_builder
+                .create_cond_br(&cond_ir_id, &then_bb, &else_bb);
+            self.llvm_builder
+                .create_cond_br(&cond_ir_id, &then_bb, &else_bb);
+
+            self.c4ir_builder.set_current_basic_block(&then_bb);
+            self.llvm_builder.set_current_basic_block(&then_bb);
+            let then_c = then_c.map(|c| self.convert_to_ir_value(&then_tp, c));
+            if !rtp.is_void() {
+                let (_, then_c) = self.cast_expression(
+                    then_tp,
+                    then_c,
+                    rtp.clone(),
+                    e_then.1,
+                    true,
+                );
+                match then_c.unwrap() {
+                    C::IrValue(ir_id, false) if rtp.is_scalar_type() => {
+                        self.c4ir_builder.create_store(&r_ir_id, &ir_id);
+                        self.llvm_builder.create_store(&r_ir_id, &ir_id);
+                    }
+                    C::IrValue(ir_id, false) => {
+                        let (size, align) =
+                            match Compiler::get_type_size_and_align_bytes(
+                                &rtp.tp,
+                            ) {
+                                Some(x) => x,
+                                None => {
+                                    c4_fail!(e_then.1, "Complete type expected")
+                                }
+                            };
+                        self.c4ir_builder
+                            .create_memcpy(&r_ir_id, &ir_id, size, align);
+                        self.llvm_builder
+                            .create_memcpy(&r_ir_id, &ir_id, size, align);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            self.c4ir_builder.create_br(&merge_bb);
+            self.llvm_builder.create_br(&merge_bb);
+
+            self.c4ir_builder.set_current_basic_block(&else_bb);
+            self.llvm_builder.set_current_basic_block(&else_bb);
+            let else_c = else_c.map(|c| self.convert_to_ir_value(&else_tp, c));
+            if !rtp.is_void() {
+                let (_, else_c) = self.cast_expression(
+                    else_tp,
+                    else_c,
+                    rtp.clone(),
+                    e_else.1,
+                    true,
+                );
+                match else_c.unwrap() {
+                    C::IrValue(ir_id, false) if rtp.is_scalar_type() => {
+                        self.c4ir_builder.create_store(&r_ir_id, &ir_id);
+                        self.llvm_builder.create_store(&r_ir_id, &ir_id);
+                    }
+                    C::IrValue(ir_id, false) => {
+                        let (size, align) =
+                            match Compiler::get_type_size_and_align_bytes(
+                                &rtp.tp,
+                            ) {
+                                Some(x) => x,
+                                None => {
+                                    c4_fail!(e_else.1, "Complete type expected")
+                                }
+                            };
+                        self.c4ir_builder
+                            .create_memcpy(&r_ir_id, &ir_id, size, align);
+                        self.llvm_builder
+                            .create_memcpy(&r_ir_id, &ir_id, size, align);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            self.c4ir_builder.create_br(&merge_bb);
+            self.llvm_builder.create_br(&merge_bb);
+
+            self.c4ir_builder.set_current_basic_block(&merge_bb);
+            self.llvm_builder.set_current_basic_block(&merge_bb);
+            if !rtp.is_void() {
+                let ptr_rtp = QType::ptr_tp(rtp.clone());
+                let ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_load(&ir_id, &r_ir_id, &ptr_rtp);
+                self.llvm_builder.create_load(&ir_id, &r_ir_id, &ptr_rtp);
+                Ok((rtp, Some(C::IrValue(ir_id, false))))
+            } else {
+                Ok((rtp, Some(C::I32(0)))) // dummy value
+            }
+        } else {
+            let (cond_tp, cond) =
+                self.visit_expr(e_cond, fold_constant, emit_ir);
+            let (cond_tp, cond) = self.convert_lvalue_and_func_designator(
+                cond_tp, cond, true, true, true, emit_ir,
+            );
+            // 3.3.15: The first operand shall have scalar type.
+            if !cond_tp.is_scalar_type() {
+                c4_fail!(e_cond.1, "Scalar type expected")
+            }
+            unimplemented!() // TODO
         }
-        unimplemented!() // TODO: ternary op
+    }
+
+    fn get_ternary_expr_rtp(
+        &mut self,
+        then_tp: &QType,
+        then_c: &Option<ConstantOrIrValue>,
+        else_tp: &QType,
+        else_c: &Option<ConstantOrIrValue>,
+        loc: &ast::Loc,
+    ) -> R<QType> {
+        use ConstantOrIrValue as C;
+        let is_null = |c: &Option<C>| -> bool {
+            match c {
+                None => false,
+                Some(C::Float(_)) | Some(C::Double(_)) => false,
+                Some(c) => c.as_constant_u64() == Some(0),
+            }
+        };
+        let is_void_ptr = |tp: &QType| -> bool {
+            match &tp.tp {
+                Type::Pointer(tp) => match &tp.tp {
+                    Type::Void => true,
+                    _ => false,
+                },
+                _ => false,
+            }
+        };
+
+        let rtp = if then_tp.is_arithmetic_type()
+            && else_tp.is_arithmetic_type()
+        {
+            self.do_arithmetic_conversion(
+                then_tp.clone(),
+                None,
+                else_tp.clone(),
+                None,
+                false,
+            )
+            .2
+        } else if then_tp.is_pointer()
+            && (is_null(else_c) || is_void_ptr(else_tp))
+        {
+            then_tp.clone()
+        } else if (is_null(then_c) || is_void_ptr(then_tp))
+            && else_tp.is_pointer()
+        {
+            else_tp.clone()
+        } else {
+            let rtp = Compiler::try_get_composite_type(then_tp, else_tp, loc);
+            if rtp.is_ok() {
+                rtp.unwrap()
+            } else {
+                c4_fail!(loc, "Incompatible expression type")
+            }
+        };
+        Ok(rtp)
     }
 
     fn visit_stmt(
