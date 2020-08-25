@@ -3,10 +3,12 @@ package c4.io
 import c4.messaging.{IllegalSourceException, Message}
 import c4.util.TestUtil
 import org.scalatest._
+import flatspec._
+import matchers._
 
 import scala.collection.mutable.ArrayBuffer
 
-class SourcePhase2ReaderTest extends FlatSpec with Matchers {
+class SourcePhase2ReaderTest extends AnyFlatSpec with should.Matchers {
   it should "replace single trigraphs" in {
     checkReader("??=\n", Seq(("#", (1, 1)), ("\n", (1, 4))))
     checkReader("??(\n", Seq(("[", (1, 1)), ("\n", (1, 4))))

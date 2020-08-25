@@ -5,10 +5,12 @@ import java.net.URL
 import c4.messaging.{SimpleMessage, IllegalSourceException, Message}
 import c4.util.{Located => L, TestUtil}
 import org.scalatest._
+import flatspec._
+import matchers._
 
 import scala.collection.mutable.ArrayBuffer
 
-class SourcePhase7ReaderTest extends FlatSpec with Matchers {
+class SourcePhase7ReaderTest extends AnyFlatSpec with should.Matchers {
   it should "pass tcc's pp tests" in {
     // TODO: ## not yet fully implemented
     // checkPP("01.c", "01.expect")

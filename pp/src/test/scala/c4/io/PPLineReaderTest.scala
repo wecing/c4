@@ -4,10 +4,12 @@ import c4.messaging.Message
 import c4.util.TestUtil
 import c4.util.legacy.Located
 import org.scalatest._
+import flatspec._
+import matchers._
 
 import scala.collection.mutable.ArrayBuffer
 
-class PPLineReaderTest extends FlatSpec with Matchers {
+class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
   it should "recognize pp-tokens" in {
     checkPPTokens("===\n", Seq(Seq("==", "=").map(PPTokSym)))
     checkPPTokens("+====\n", Seq(Seq("+=", "==", "=").map(PPTokSym)))

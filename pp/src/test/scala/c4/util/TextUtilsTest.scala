@@ -3,8 +3,10 @@ package c4.util
 import c4.messaging.IllegalSourceException
 import c4.util.legacy.{Located => L}
 import org.scalatest._
+import flatspec._
+import matchers._
 
-class TextUtilsTest extends FlatSpec with Matchers {
+class TextUtilsTest extends AnyFlatSpec with should.Matchers {
   "TextUtils.fromStrReprQ" should "evaluate C string literals correctly" in {
     eval(raw"") should be ("")
     eval(raw"1") should be ("1")

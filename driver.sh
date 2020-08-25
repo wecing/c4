@@ -21,6 +21,6 @@ if [ "$1" != '' ]; then
   echo ====================
   echo
 
-  java -jar ./pp/target/scala-2.12/c4-assembly-1.0.jar $1 \
+  java -jar ./pp/target/scala-2.13/parser.jar $1 \
     | ./cc/target/debug/c4cc
 fi

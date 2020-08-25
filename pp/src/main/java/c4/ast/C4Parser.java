@@ -6,7 +6,7 @@
 package c4.ast;
 
 import java.math.BigInteger;
-import scala.collection.Seq;
+import scala.collection.immutable.Seq;
 import scala.Tuple2;
 import scala.util.Either;
 import scala.Option;

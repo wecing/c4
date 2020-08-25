@@ -3,13 +3,22 @@
 
 pp/target
 pp/project/target
-pp/project/project/target
+pp/project/project
+
+pp/pp.iml
 pp/.idea
 pp/.ijwb
+
 pp/.ensime*
+
 pp/.metals
+pp/**/.bloop
+pp/**/metals.sbt
+
+pp/.vscode
 
 cc/target
 cc/.idea
 
 **/*.rs.bk
+stale_outputs_checked

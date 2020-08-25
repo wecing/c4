@@ -3,10 +3,12 @@ package c4.io
 import c4.messaging.{IllegalSourceException, Message}
 import c4.util.TestUtil
 import org.scalatest._
+import flatspec._
+import matchers._
 
 import scala.collection.mutable.ArrayBuffer
 
-class PPReaderTest extends FlatSpec with Matchers {
+class PPReaderTest extends AnyFlatSpec with should.Matchers {
   it should "accept function-like macros with no arguments" in {
     checkPPTokens(
       """#define f() 998

@@ -129,22 +129,22 @@ private final class ProtoConverter {
     size match {
       case Int8 =>
         p.Expr.Integer(
-          n = n.longValue() & 0xFF,
+          n = n.longValue & 0xFF,
           size = p.Expr.Integer.Size.INT8,
           signed = signed)
       case Int16 =>
         p.Expr.Integer(
-          n = n.longValue() & 0xFFFF,
+          n = n.longValue & 0xFFFF,
           size = p.Expr.Integer.Size.INT16,
           signed = signed)
       case Int32 =>
         p.Expr.Integer(
-          n = n.intValue(),
+          n = n.intValue,
           size = p.Expr.Integer.Size.INT32,
           signed = signed)
       case Int64 =>
         p.Expr.Integer(
-          n = n.longValue(),
+          n = n.longValue,
           size = p.Expr.Integer.Size.INT64,
           signed = signed)
     }
@@ -158,7 +158,7 @@ private final class ProtoConverter {
         case FloatLit(TokFloat(f)) => p.Expr.E.Float(f)
         case DoubleLit(TokDouble(d)) => p.Expr.E.Double(d)
         case LongDoubleLit(TokLongDouble(ld)) =>
-          p.Expr.E.Double(ld.doubleValue())
+          p.Expr.E.Double(ld.doubleValue)
         case CharLit(TokChar(c)) => p.Expr.E.Char(c.toInt & 0xFF)
         case WideCharLit(TokWideChar(c)) => p.Expr.E.WideChar(c.toInt)
         case StrLit(TokStr(s)) => p.Expr.E.String(s)

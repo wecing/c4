@@ -1,8 +1,15 @@
+/*
+  To generator parser, use:
+
+  java -jar src/main/resources/java-cup-11b.jar \
+       -parser C4Parser -symbols C4Symbols -destdir src/main/java/c4/ast/ \
+       src/main/resources/parser.cup
+*/
 package c4.ast;
 
 import java.math.BigInteger;
 
-import scala.collection.Seq;
+import scala.collection.immutable.Seq;
 import scala.Tuple2;
 import scala.util.Either;
 import scala.Option;
