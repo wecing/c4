@@ -1,13 +1,15 @@
 .DS_Store
 *.swp
 
-bazel-*
+pp/target
+pp/project/target
+pp/project/project/target
+pp/.idea
+pp/.ijwb
+pp/.ensime*
+pp/.metals
 
-.idea
-.ijwb/
-.ensime*
-.metals/
+cc/target
+cc/.idea
 
-c4cc/target
 **/*.rs.bk
-c4cc/.idea

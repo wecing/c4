@@ -1,8 +1,0 @@
-directories:
-  src
-
-targets:
-  //src/...
-
-additional_languages:
-  scala

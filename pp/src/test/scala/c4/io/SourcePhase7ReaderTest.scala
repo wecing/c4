@@ -41,7 +41,7 @@ class SourcePhase7ReaderTest extends FlatSpec with Matchers {
     val srcWarnings: ArrayBuffer[Message] = ArrayBuffer.empty
     val expectedWarnings: ArrayBuffer[Message] = ArrayBuffer.empty
 
-    val pathPrefix = "/src/test/scala/c4/io/pp_test_data/"
+    val pathPrefix = "/pp_test_data/"
 
     val srcUrl: URL = getClass.getResource(pathPrefix + srcPath)
     val tempSrcPath: String = TestUtil.createTempFile(srcUrl)
