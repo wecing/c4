@@ -6,7 +6,6 @@ import java_cup.runtime.Symbol
 import c4.io._
 import c4.io.SourcePhase7Reader
 
-
 class C4Scanner(val reader: SourcePhase7Reader) extends Scanner {
   var scopeList: Seq[Set[String]] = Seq(Set.empty)
 
@@ -30,23 +29,24 @@ class C4Scanner(val reader: SourcePhase7Reader) extends Scanner {
   override def next_token(): Symbol = {
     reader.get() match {
       case None => new Symbol(C4Symbols.EOF)
-      case Some(located) => located.value match {
-        case tok: TokId =>
-          if (isTypedefName(tok.id)) {
-            new Symbol(C4Symbols.TYPEDEF_NAME, located)
-          } else {
-            new Symbol(C4Symbols.ID, located)
-          }
-        case tok: TokInteger    => new Symbol(tok.cupSymbol, located)
-        case tok: TokFloat      => new Symbol(tok.cupSymbol, located)
-        case tok: TokDouble     => new Symbol(tok.cupSymbol, located)
-        case tok: TokLongDouble => new Symbol(tok.cupSymbol, located)
-        case tok: TokChar       => new Symbol(tok.cupSymbol, located)
-        case tok: TokWideChar   => new Symbol(tok.cupSymbol, located)
-        case tok: TokStr        => new Symbol(tok.cupSymbol, located)
-        case tok: TokWideStr    => new Symbol(tok.cupSymbol, located)
-        case tok => new Symbol(tok.cupSymbol, located.loc)
-      }
+      case Some(located) =>
+        located.value match {
+          case tok: TokId =>
+            if (isTypedefName(tok.id)) {
+              new Symbol(C4Symbols.TYPEDEF_NAME, located)
+            } else {
+              new Symbol(C4Symbols.ID, located)
+            }
+          case tok: TokInteger    => new Symbol(tok.cupSymbol, located)
+          case tok: TokFloat      => new Symbol(tok.cupSymbol, located)
+          case tok: TokDouble     => new Symbol(tok.cupSymbol, located)
+          case tok: TokLongDouble => new Symbol(tok.cupSymbol, located)
+          case tok: TokChar       => new Symbol(tok.cupSymbol, located)
+          case tok: TokWideChar   => new Symbol(tok.cupSymbol, located)
+          case tok: TokStr        => new Symbol(tok.cupSymbol, located)
+          case tok: TokWideStr    => new Symbol(tok.cupSymbol, located)
+          case tok                => new Symbol(tok.cupSymbol, located.loc)
+        }
     }
   }
 }

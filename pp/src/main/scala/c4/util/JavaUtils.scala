@@ -29,18 +29,18 @@ object JavaUtils {
       decls: Seq[(Located[Declarator], Option[Located[Initializer]])],
       scanner: C4Scanner
   ): Unit = {
-    val hasTypedef = dss map {_.value} exists {
+    val hasTypedef = dss map { _.value } exists {
       case DeclarationSpecifierStorageClass(Located(_, Typedef)) => true
-      case _ => false
+      case _                                                     => false
     }
     if (hasTypedef) {
       def getName(dd: DirectDeclarator): String = {
         dd match {
-          case DirectDeclaratorId(x) => x.value.id
+          case DirectDeclaratorId(x)                     => x.value.id
           case DirectDeclaratorDeclarator(Located(_, d)) => getName(d.dd.value)
-          case DirectDeclaratorArray(dd1, _) => getName(dd1.value)
-          case DirectDeclaratorFuncTypes(dd1, _, _) => getName(dd1.value)
-          case DirectDeclaratorIdsList(dd1, _) => getName(dd1.value)
+          case DirectDeclaratorArray(dd1, _)             => getName(dd1.value)
+          case DirectDeclaratorFuncTypes(dd1, _, _)      => getName(dd1.value)
+          case DirectDeclaratorIdsList(dd1, _)           => getName(dd1.value)
         }
       }
       decls

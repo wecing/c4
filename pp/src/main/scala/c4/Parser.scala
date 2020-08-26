@@ -14,10 +14,10 @@ object Parser {
     var printText = false
 
     args.foreach {
-      case "--help" | "-h" => printUsage(0)
-      case "--text" | "-t" => printText = true
+      case "--help" | "-h"        => printUsage(0)
+      case "--text" | "-t"        => printText = true
       case s if s.startsWith("-") => printUsage(1)
-      case s => fileName = Some(s)
+      case s                      => fileName = Some(s)
     }
 
     if (fileName.isEmpty) {
@@ -54,9 +54,9 @@ object Parser {
   }
 
   def printUsage(status: Int): Unit = {
-    val stream = if (status == 0) { System.out } else { System.err };
-    stream.println(
-      """USAGE: c4 [options] file
+    val stream = if (status == 0) { System.out }
+    else { System.err };
+    stream.println("""USAGE: c4 [options] file
         |
         |OPTIONS:
         |  --text | -t    Output AST in textproto format instead of binary

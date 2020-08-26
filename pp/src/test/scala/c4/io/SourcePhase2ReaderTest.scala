@@ -50,25 +50,28 @@ class SourcePhase2ReaderTest extends AnyFlatSpec with should.Matchers {
   }
 
   it should "recognize -> as an operator" in {
-    checkReader("memcpy(&sin, ai->ai_addr, sizeof sin);\n", Seq(
-      ("memcpy", (1, 1)),
-      ("(", (1, 7)),
-      ("&", (1, 8)),
-      ("sin", (1, 9)),
-      (",", (1, 12)),
-      (" ", (1, 13)),
-      ("ai", (1, 14)),
-      ("->", (1, 16)),
-      ("ai_addr", (1, 18)),
-      (",", (1, 25)),
-      (" ", (1, 26)),
-      ("sizeof", (1, 27)),
-      (" ", (1, 33)),
-      ("sin", (1, 34)),
-      (")", (1, 37)),
-      (";", (1, 38)),
-      ("\n", (1, 39))
-    ))
+    checkReader(
+      "memcpy(&sin, ai->ai_addr, sizeof sin);\n",
+      Seq(
+        ("memcpy", (1, 1)),
+        ("(", (1, 7)),
+        ("&", (1, 8)),
+        ("sin", (1, 9)),
+        (",", (1, 12)),
+        (" ", (1, 13)),
+        ("ai", (1, 14)),
+        ("->", (1, 16)),
+        ("ai_addr", (1, 18)),
+        (",", (1, 25)),
+        (" ", (1, 26)),
+        ("sizeof", (1, 27)),
+        (" ", (1, 33)),
+        ("sin", (1, 34)),
+        (")", (1, 37)),
+        (";", (1, 38)),
+        ("\n", (1, 39))
+      )
+    )
 
   }
 
@@ -109,31 +112,33 @@ class SourcePhase2ReaderTest extends AnyFlatSpec with should.Matchers {
     val e: IllegalSourceException = intercept[IllegalSourceException] {
       checkReader("hi", Seq(("hi", (1, 1))))
     }
-    e.msg.location should be (1, 2)
+    e.msg.location should be(1, 2)
   }
 
   it should "reject files that end with \\ followed by newline" in {
     val e1: IllegalSourceException = intercept[IllegalSourceException] {
       checkReader("hi\\\n", Seq(("hi", (1, 1))))
     }
-    e1.msg.location should be (1, 3)
+    e1.msg.location should be(1, 3)
     val e2: IllegalSourceException = intercept[IllegalSourceException] {
       checkReader("hi??/\n", Seq(("hi", (1, 1))))
     }
-    e2.msg.location should be (1, 3)
+    e2.msg.location should be(1, 3)
     val e3: IllegalSourceException = intercept[IllegalSourceException] {
       checkReader("hi\n\\\n", Seq(("hi\n", (1, 1))))
     }
-    e3.msg.location should be (2, 1)
+    e3.msg.location should be(2, 1)
     val e4: IllegalSourceException = intercept[IllegalSourceException] {
       checkReader("hi\n??/\n", Seq(("hi\n", (1, 1))))
     }
-    e4.msg.location should be (2, 1)
+    e4.msg.location should be(2, 1)
   }
 
-  def checkReader(input: String,
-                  expected: Seq[(String, (Int, Int))],
-                  expectedWarningsCount: Int = 0): Unit = {
+  def checkReader(
+      input: String,
+      expected: Seq[(String, (Int, Int))],
+      expectedWarningsCount: Int = 0
+  ): Unit = {
     val warnings: ArrayBuffer[Message] = ArrayBuffer.empty
     val tempFilePath: String = TestUtil.createTempFile(input)
     val reader = new SourcePhase2Reader(warnings, tempFilePath)
@@ -141,7 +146,7 @@ class SourcePhase2ReaderTest extends AnyFlatSpec with should.Matchers {
     var restExpected: Seq[(String, (Int, Int))] = expected
     while (restExpected.nonEmpty) {
       val head: (String, (Int, Int)) = restExpected.head
-      reader.read should be (Some((head._1.charAt(0), head._2)))
+      reader.read should be(Some((head._1.charAt(0), head._2)))
 
       if (1 < head._1.length) {
         restExpected = (head._1.substring(1), (head._2._1, head._2._2 + 1)) +:
@@ -151,8 +156,8 @@ class SourcePhase2ReaderTest extends AnyFlatSpec with should.Matchers {
       }
     }
 
-    reader.read() should be (None)
-    warnings.length should be (expectedWarningsCount)
+    reader.read() should be(None)
+    warnings.length should be(expectedWarningsCount)
 
     reader.close()
   }

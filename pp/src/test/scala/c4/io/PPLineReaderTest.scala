@@ -19,8 +19,10 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
     checkPPTokens("/====\n", Seq(Seq("/=", "==", "=").map(PPTokSym)))
     checkPPTokens("/+\n", Seq(Seq("/", "+").map(PPTokSym)))
     checkPPTokens("/#\n", Seq(Seq("/", "#").map(PPTokSym)))
-    checkPPTokens("F1()\n",
-      Seq(Seq(PPTokId("F1"), PPTokSym("("), PPTokSym(")"))))
+    checkPPTokens(
+      "F1()\n",
+      Seq(Seq(PPTokId("F1"), PPTokSym("("), PPTokSym(")")))
+    )
   }
 
   it should "recognize comments" in {
@@ -29,8 +31,10 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
     checkPPTokens("//\n/=\n", Seq(Seq(PPTokSym("/="))))
     checkPPTokens("//===\n/+\n", Seq(Seq("/", "+").map(PPTokSym)))
     checkPPTokens("*//\n/=\n", toPPTokSyms(Seq(Seq("*"), Seq("/="))))
-    checkPPTokens("**//===\n/+\n",
-      toPPTokSyms(Seq(Seq("*", "*"), Seq("/", "+"))))
+    checkPPTokens(
+      "**//===\n/+\n",
+      toPPTokSyms(Seq(Seq("*", "*"), Seq("/", "+")))
+    )
     checkPPTokens(
       """= =/*!!//
         |^==+=// jjj \\
@@ -40,33 +44,44 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
         |...
         |. .. ... .... ..... ......
         |""".stripMargin,
-      toPPTokSyms(Seq(
-        Seq("=", "=", ")"),
-        Seq(">", ".", "<", "<<=", ">>=", "##", "#"),
-        Seq("..."),
-        Seq(".", ".", ".", "...", "...", ".", "...", ".", ".", "...", "...")
-      )))
+      toPPTokSyms(
+        Seq(
+          Seq("=", "=", ")"),
+          Seq(">", ".", "<", "<<=", ">>=", "##", "#"),
+          Seq("..."),
+          Seq(".", ".", ".", "...", "...", ".", "...", ".", ".", "...", "...")
+        )
+      )
+    )
     checkPPTokens(
       """// /*!!
         | ^= */ ^
         |/* haskell大法坏 */ ($)
         |""".stripMargin,
-      toPPTokSyms(Seq(Seq("^=", "*", "/", "^"), Seq("(", "$", ")"))))
+      toPPTokSyms(Seq(Seq("^=", "*", "/", "^"), Seq("(", "$", ")")))
+    )
   }
 
   it should "recognize pp-numbers" in {
-    checkPPTokens("5 .5 .5. .5.. .5... .5....\n",
-      Seq(Seq("5", ".5", ".5.", ".5..", ".5...", ".5....").map(PPTokNum)))
-    checkPPTokens("42 42.42 0 08 1a 54.abc .4ab\n",
-      Seq(Seq("42", "42.42", "0", "08", "1a", "54.abc", ".4ab").map(PPTokNum)))
-    checkPPTokens("1ae 1e+ 1ae- 1aE+ 1E- 1ae-0xF.E+\n",
-      Seq(Seq("1ae", "1e+", "1ae-", "1aE+", "1E-", "1ae-0xF.E+").map(PPTokNum)))
+    checkPPTokens(
+      "5 .5 .5. .5.. .5... .5....\n",
+      Seq(Seq("5", ".5", ".5.", ".5..", ".5...", ".5....").map(PPTokNum))
+    )
+    checkPPTokens(
+      "42 42.42 0 08 1a 54.abc .4ab\n",
+      Seq(Seq("42", "42.42", "0", "08", "1a", "54.abc", ".4ab").map(PPTokNum))
+    )
+    checkPPTokens(
+      "1ae 1e+ 1ae- 1aE+ 1E- 1ae-0xF.E+\n",
+      Seq(Seq("1ae", "1e+", "1ae-", "1aE+", "1E-", "1ae-0xF.E+").map(PPTokNum))
+    )
   }
 
   it should "recognize identifiers" in {
     checkPPTokens(
       "L LO LOW OW\n",
-      Seq(Seq("L", "LO", "LOW", "OW").map(PPTokId)))
+      Seq(Seq("L", "LO", "LOW", "OW").map(PPTokId))
+    )
   }
 
   it should "recognize string and character literals" in {
@@ -94,19 +109,42 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
     checkPPTokens("'\\7778'\n", Seq(Seq(PPTokChar("'\\7778'"))))
     checkPPTokens("'\\xffff'\n", Seq(Seq(PPTokChar("'\\xffff'"))))
 
-    checkPPTokens("'\\n\\0018i\n'\n", Seq(
-      Seq(PPTokSym("'"), PPTokSym("\\"), PPTokId("n"),
-        PPTokSym("\\"), PPTokNum("0018i")),
-      Seq(PPTokSym("'"))))
+    checkPPTokens(
+      "'\\n\\0018i\n'\n",
+      Seq(
+        Seq(
+          PPTokSym("'"),
+          PPTokSym("\\"),
+          PPTokId("n"),
+          PPTokSym("\\"),
+          PPTokNum("0018i")
+        ),
+        Seq(PPTokSym("'"))
+      )
+    )
   }
 
   it should "recognize -> as an operator" in {
-    checkPPTokens("memcpy(&sin, ai->ai_addr, sizeof sin);\n", Seq(Seq(
-      PPTokId("memcpy"), PPTokSym("("), PPTokSym("&"), PPTokId("sin"),
-      PPTokSym(","), PPTokId("ai"), PPTokSym("->"),
-      PPTokId("ai_addr"), PPTokSym(","), PPTokSym("sizeof"),
-      PPTokId("sin"), PPTokSym(")"), PPTokSym(";")
-    )))
+    checkPPTokens(
+      "memcpy(&sin, ai->ai_addr, sizeof sin);\n",
+      Seq(
+        Seq(
+          PPTokId("memcpy"),
+          PPTokSym("("),
+          PPTokSym("&"),
+          PPTokId("sin"),
+          PPTokSym(","),
+          PPTokId("ai"),
+          PPTokSym("->"),
+          PPTokId("ai_addr"),
+          PPTokSym(","),
+          PPTokSym("sizeof"),
+          PPTokId("sin"),
+          PPTokSym(")"),
+          PPTokSym(";")
+        )
+      )
+    )
   }
 
   it should "recognize preprocessing directives" in {
@@ -148,38 +186,38 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
         (1, 3),
         List(
           Located((1, 6), PPTokWhiteSpc(' ')),
-          Located((1, 10), PPTokNum("0")))),
-      PPLineTokens(
-        List(
-          Located((2, 1), PPTokId("a")))),
+          Located((1, 10), PPTokNum("0"))
+        )
+      ),
+      PPLineTokens(List(Located((2, 1), PPTokId("a")))),
       PPLinePragma((3, 1)),
       PPLineNull((4, 1)),
       PPLineElif(
         (5, 1),
         List(
           Located((5, 12), PPTokWhiteSpc(' ')),
-          Located((5, 13), PPTokNum("1")))),
-      PPLineInclude(
-        (6, 1),
-        Located((6, 10), "stdio.h"),
-        isCaret = true),
-      PPLineInclude(
-        (7, 1),
-        Located((7, 10), "wow.h"),
-        isCaret = false),
+          Located((5, 13), PPTokNum("1"))
+        )
+      ),
+      PPLineInclude((6, 1), Located((6, 10), "stdio.h"), isCaret = true),
+      PPLineInclude((7, 1), Located((7, 10), "wow.h"), isCaret = false),
       PPLineDefineObj(
         (8, 1),
         Located((8, 12), "X"),
         List(
           Located((8, 13), PPTokWhiteSpc(' ')),
-          Located((8, 17), PPTokId("b")))),
+          Located((8, 17), PPTokId("b"))
+        )
+      ),
       PPLineDefineFunc(
         (9, 1),
         Located((9, 9), "F1"),
         List(),
         List(
           Located((9, 13), PPTokWhiteSpc(' ')),
-          Located((9, 14), PPTokStr("\"hi\"")))),
+          Located((9, 14), PPTokStr("\"hi\""))
+        )
+      ),
       PPLineDefineFunc(
         (10, 1),
         Located((10, 9), "F2"),
@@ -188,26 +226,26 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
           Located((10, 14), PPTokWhiteSpc(' ')),
           Located((10, 15), PPTokSym("{")),
           Located((10, 16), PPTokId("x")),
-          Located((10, 17), PPTokSym("}")))),
+          Located((10, 17), PPTokSym("}"))
+        )
+      ),
       PPLineDefineFunc(
         (11, 1),
         Located((11, 9), "F3"),
-        List(
-          Located((11, 12), "x"),
-          Located((11, 14), "y")),
+        List(Located((11, 12), "x"), Located((11, 14), "y")),
         List(
           Located((11, 16), PPTokWhiteSpc(' ')),
           Located((11, 17), PPTokSym("{")),
           Located((11, 18), PPTokId("x")),
           Located((11, 19), PPTokSym("+")),
           Located((11, 20), PPTokId("y")),
-          Located((11, 21), PPTokSym("}")))),
+          Located((11, 21), PPTokSym("}"))
+        )
+      ),
       PPLineDefineFunc(
         (12, 1),
         Located((12, 9), "F4"),
-        List(
-          Located((12, 12), "x"),
-          Located((13, 3), "y")),
+        List(Located((12, 12), "x"), Located((13, 3), "y")),
         List(
           Located((13, 5), PPTokWhiteSpc(' ')),
           Located((13, 6), PPTokSym("{")),
@@ -220,7 +258,9 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
           Located((14, 7), PPTokWhiteSpc(' ')),
           Located((15, 3), PPTokId("y")),
           Located((15, 4), PPTokWhiteSpc(' ')),
-          Located((16, 1), PPTokSym("}")))),
+          Located((16, 1), PPTokSym("}"))
+        )
+      ),
       PPLineLine((17, 1), 35, None),
       PPLineTokens(List(Located((18, 1), PPTokId("X")))),
       PPLineLine((19, 1), 32, Some(Located((19, 10), "\"naxx.c\""))),
@@ -228,7 +268,9 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
         List(
           Located((20, 1), PPTokId("F1")),
           Located((20, 3), PPTokSym("(")),
-          Located((20, 4), PPTokSym(")")))),
+          Located((20, 4), PPTokSym(")"))
+        )
+      ),
       PPLineIfndef((21, 1), Located((21, 9), "X")),
       PPLineError((22, 1), "impossible"),
       PPLineEndif((23, 1)),
@@ -248,9 +290,9 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
     def recur(rest: Seq[PPLine]): Unit = {
       reader.read() match {
         case None =>
-          rest.isEmpty should be (true)
+          rest.isEmpty should be(true)
         case Some(line) =>
-          line should be (rest.head)
+          line should be(rest.head)
           recur(rest.tail)
       }
     }
@@ -268,18 +310,19 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
     val warnings: ArrayBuffer[Message] = ArrayBuffer.empty
     val reader: PPLineReader = new PPLineReader(warnings, path)
 
-    def isPPTokWhiteSpc(t: PPTok): Boolean = t match {
-      case PPTokWhiteSpc(_) => true
-      case _ => false
-    }
+    def isPPTokWhiteSpc(t: PPTok): Boolean =
+      t match {
+        case PPTokWhiteSpc(_) => true
+        case _                => false
+      }
 
     def checkLine(tokens: Seq[Seq[PPTok]]): Unit = {
       reader.read() match {
         case None =>
-          tokens should be (Seq.empty)
+          tokens should be(Seq.empty)
         case Some(PPLineTokens(xs)) =>
           val ts: Seq[PPTok] = xs.map(x => x.value).filterNot(isPPTokWhiteSpc)
-          ts should be (tokens.head)
+          ts should be(tokens.head)
           checkLine(tokens.tail)
         case Some(x) =>
           fail(s"unexpected PPLine: $x")
@@ -287,7 +330,7 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
     }
 
     checkLine(tokens)
-    warnings.isEmpty should be (true)
+    warnings.isEmpty should be(true)
     reader.close()
   }
 }

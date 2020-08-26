@@ -6,7 +6,6 @@ import c4.util.TextUtils
 
 import scala.collection.mutable.ArrayBuffer
 
-
 sealed abstract class PPTok(val raw: String)
 final case class PPTokId(id: String) extends PPTok(id)
 final case class PPTokNum(num: String) extends PPTok(num)
@@ -20,24 +19,32 @@ final case class PPLineTokens(tokens: Seq[L[PPTok]]) extends PPLine
 final case class PPLineIf(loc: (Int, Int), tokens: Seq[L[PPTok]]) extends PPLine
 final case class PPLineIfdef(loc: (Int, Int), name: L[String]) extends PPLine
 final case class PPLineIfndef(loc: (Int, Int), name: L[String]) extends PPLine
-final case class PPLineElif(loc: (Int, Int),
-                            tokens: Seq[L[PPTok]]) extends PPLine
+final case class PPLineElif(loc: (Int, Int), tokens: Seq[L[PPTok]])
+    extends PPLine
 final case class PPLineElse(loc: (Int, Int)) extends PPLine
 final case class PPLineEndif(loc: (Int, Int)) extends PPLine
-final case class PPLineInclude(loc: (Int, Int),
-                               name: L[String],
-                               isCaret: Boolean) extends PPLine
-final case class PPLineDefineObj(loc: (Int, Int),
-                                 name: L[String],
-                                 tokens: Seq[L[PPTok]]) extends PPLine
-final case class PPLineDefineFunc(loc: (Int, Int),
-                                  name: L[String],
-                                  argNames: Seq[L[String]],
-                                  tokens: Seq[L[PPTok]]) extends PPLine
+final case class PPLineInclude(
+    loc: (Int, Int),
+    name: L[String],
+    isCaret: Boolean
+) extends PPLine
+final case class PPLineDefineObj(
+    loc: (Int, Int),
+    name: L[String],
+    tokens: Seq[L[PPTok]]
+) extends PPLine
+final case class PPLineDefineFunc(
+    loc: (Int, Int),
+    name: L[String],
+    argNames: Seq[L[String]],
+    tokens: Seq[L[PPTok]]
+) extends PPLine
 final case class PPLineUndef(loc: (Int, Int), name: L[String]) extends PPLine
-final case class PPLineLine(loc: (Int, Int),
-                            line: Int, // use repr here for __FILE__
-                            fileNameRepr: Option[L[String]]) extends PPLine
+final case class PPLineLine(
+    loc: (Int, Int),
+    line: Int, // use repr here for __FILE__
+    fileNameRepr: Option[L[String]]
+) extends PPLine
 final case class PPLineError(loc: (Int, Int), msg: String) extends PPLine
 final case class PPLinePragma(loc: (Int, Int)) extends PPLine
 final case class PPLineNull(loc: (Int, Int)) extends PPLine // null directive
@@ -47,8 +54,7 @@ object PPLineTokens {
 }
 
 // at this phase, either the file is empty or each line ends with '\n'.
-class PPLineReader(val warnings: ArrayBuffer[Message],
-                   val fileName: String) {
+class PPLineReader(val warnings: ArrayBuffer[Message], val fileName: String) {
   private val file: SourcePhase2Reader =
     new SourcePhase2Reader(warnings, fileName)
 
@@ -57,10 +63,10 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
   // returns None only on EOF
   def read(): Option[PPLine] = {
     file.read() match {
-      case None => None
-      case Some(('\n', _)) => read() // empty line, retry on next line
+      case None                                            => None
+      case Some(('\n', _))                                 => read() // empty line, retry on next line
       case Some((c: Char, _)) if TextUtils.isWhiteSpace(c) => read()
-      case Some(p@('/', loc1)) =>
+      case Some(p @ ('/', loc1))                           =>
         // it is possible that there's a pp directive after block comment,
         // so we cannot simply ungetc() then readPPTokensLine() here.
         file.read().get match {
@@ -89,7 +95,7 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
   private def ignoreLineComment(): Unit = {
     file.read().get._1 match {
       case '\n' => ()
-      case _ => ignoreLineComment()
+      case _    => ignoreLineComment()
     }
   }
 
@@ -98,11 +104,15 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
     def recur(prev: (Char, (Int, Int))): Unit = {
       (prev, file.read()) match {
         case ((_, loc), None) =>
-          throw new IllegalSourceException(new SimpleMessage(
-            fileName, loc, "file ends in incomplete block comment"
-          ))
+          throw new IllegalSourceException(
+            new SimpleMessage(
+              fileName,
+              loc,
+              "file ends in incomplete block comment"
+            )
+          )
         case (('*', _), Some(('/', _))) => ()
-        case (_, Some(c)) => recur(c)
+        case (_, Some(c))               => recur(c)
       }
     }
     recur((' ', fromLoc))
@@ -152,36 +162,37 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
     // character/string literal string.
     def readCharStrLiteral(isStr: Boolean): Option[String] = {
       val endsWith: Char = if (isStr) '"' else '\''
-      val simpleEscapeChars: Set[Char] = Set(
-        '\'', '"', '?', '\\', 'a', 'b', 'f', 'n', 'r', 't', 'v')
+      val simpleEscapeChars: Set[Char] =
+        Set('\'', '"', '?', '\\', 'a', 'b', 'f', 'n', 'r', 't', 'v')
       def isHexDigit(c: Char): Boolean = {
         isDigit(c) || ('a' <= c && c <= 'f') || ('A' <= c && c <= 'F')
       }
       def isOctDigit(c: Char): Boolean = '0' <= c && c <= '7'
       // Left is used to ungetc() all read characters back
       // when seeing '\n' in the middle of a str/char literal.
-      def recur(consumedStack: Seq[(Char, (Int, Int))]
-               ): Either[Seq[(Char, (Int, Int))], String] = {
+      def recur(
+          consumedStack: Seq[(Char, (Int, Int))]
+      ): Either[Seq[(Char, (Int, Int))], String] = {
         file.read().get match {
-          case p@('\n', _) =>
+          case p @ ('\n', _) =>
             Left(p +: consumedStack)
           case (x, _) if x == endsWith =>
             Right((x +: consumedStack.map(_._1)).reverse.mkString)
-          case p@('\\', _) =>
+          case p @ ('\\', _) =>
             file.read().get match {
-              case q@(x, _) if simpleEscapeChars.contains(x) =>
+              case q @ (x, _) if simpleEscapeChars.contains(x) =>
                 recur(q +: p +: consumedStack)
-              case q@(x, _) if isOctDigit(x) =>
+              case q @ (x, _) if isOctDigit(x) =>
                 val xs: Seq[(Char, (Int, Int))] = takeWhile(isOctDigit)
                 recur(xs.reverse ++ (q +: p +: consumedStack))
-              case q@('x', _) =>
+              case q @ ('x', _) =>
                 val xs: Seq[(Char, (Int, Int))] = takeWhile(isHexDigit)
                 if (xs.isEmpty) {
                   Left(q +: p +: consumedStack)
                 } else {
                   recur(xs.reverse ++ (q +: p +: consumedStack))
                 }
-              case q@(x, _) if isHexDigit(x) =>
+              case q @ (x, _) if isHexDigit(x) =>
                 val xs: Seq[(Char, (Int, Int))] = takeWhile(isHexDigit)
                 recur(xs.reverse ++ (q +: consumedStack))
             }
@@ -218,16 +229,20 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
           }
         case (c1, loc1) if TextUtils.isWhiteSpace(c1) =>
           if (inPPDirective && c1 != ' ' && c1 != '\t') {
-            throw IllegalSourceException(SimpleMessage(
-              fileName, loc1,
-              s"unexpected whitespace character <${TextUtils.repr(c1)}>" +
-                " inside preprocessing directive"))
+            throw IllegalSourceException(
+              SimpleMessage(
+                fileName,
+                loc1,
+                s"unexpected whitespace character <${TextUtils.repr(c1)}>" +
+                  " inside preprocessing directive"
+              )
+            )
           } else {
             recur(accum :+ L(loc1, PPTokWhiteSpc(c1)))
           }
         case ('L', loc1) =>
           file.read().get match {
-            case p@(x, loc2) if x == '\'' || x == '"' =>
+            case p @ (x, loc2) if x == '\'' || x == '"' =>
               readCharStrLiteral(x == '"') match {
                 case None =>
                   val tokL: L[PPTok] = L(loc1, PPTokId("L"))
@@ -277,7 +292,7 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
           file.read().get match {
             case (x, _) if isDigit(x) =>
               recur(accum :+ L(loc1, PPTokNum(readPPNum("." + x))))
-            case p@('.', _) =>
+            case p @ ('.', _) =>
               file.read().get match {
                 case ('.', _) =>
                   recur(accum :+ L(loc1, PPTokSym("...")))
@@ -295,30 +310,50 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
         case (c1, loc1) => // operator/punctuator/etc
           // "sizeof" and "..." are not handled here
           val s2set = Set(
-            "++", "--", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||",
-            "*=", "/=", "%=", "+=", "-=", "&=", "^=", "|=", "##", "->")
+            "++",
+            "--",
+            "<<",
+            ">>",
+            "<=",
+            ">=",
+            "==",
+            "!=",
+            "&&",
+            "||",
+            "*=",
+            "/=",
+            "%=",
+            "+=",
+            "-=",
+            "&=",
+            "^=",
+            "|=",
+            "##",
+            "->"
+          )
           val s3set = Set("<<=", ">>=")
           val sym: String = file.read().get match {
-            case p@('\n', _) =>
+            case p @ ('\n', _) =>
               file.ungetc(p)
               c1.toString
-            case p@(c2, _) => file.read().get match {
-              case q@(c3, _) =>
-                val s1 = c1.toString
-                val s2 = s1 + c2
-                val s3 = s2 + c3
-                if (s3set.contains(s3)) {
-                  s3
-                } else {
-                  file.ungetc(q)
-                  if (s2set.contains(s2)) {
-                    s2
+            case p @ (c2, _) =>
+              file.read().get match {
+                case q @ (c3, _) =>
+                  val s1 = c1.toString
+                  val s2 = s1 + c2
+                  val s3 = s2 + c3
+                  if (s3set.contains(s3)) {
+                    s3
                   } else {
-                    file.ungetc(p)
-                    s1
+                    file.ungetc(q)
+                    if (s2set.contains(s2)) {
+                      s2
+                    } else {
+                      file.ungetc(p)
+                      s1
+                    }
                   }
-                }
-            }
+              }
           }
           recur(accum :+ L(loc1, PPTokSym(sym)))
       }
@@ -331,15 +366,15 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
     // does NOT include '\n'.
     def ignoreWhiteSpaceChars(): Unit = {
       file.read().get match {
-        case (' ', _) => ignoreWhiteSpaceChars()
+        case (' ', _)  => ignoreWhiteSpaceChars()
         case ('\t', _) => ignoreWhiteSpaceChars()
-        case p1@('/', _) =>
+        case p1 @ ('/', _) =>
           file.read().get match {
             case ('/', _) =>
               // read up to the first '\n'
               def recur(): Unit = {
                 file.read().get match {
-                  case q@('\n', _) =>
+                  case q @ ('\n', _) =>
                     file.ungetc(q)
                     ()
                   case _ =>
@@ -349,15 +384,20 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
               recur()
             case ('*', loc1) =>
               def unfinishedBlockComment(loc: (Int, Int)) = {
-                IllegalSourceException(SimpleMessage(
-                  fileName, loc, "file ends with unfinished block comment"))
+                IllegalSourceException(
+                  SimpleMessage(
+                    fileName,
+                    loc,
+                    "file ends with unfinished block comment"
+                  )
+                )
               }
               // read up to the first '*/'
               def recur(prev: (Char, (Int, Int))): Unit = {
                 file.read() match {
                   case None =>
                     throw unfinishedBlockComment(prev._2)
-                  case Some(q@('/', _)) =>
+                  case Some(q @ ('/', _)) =>
                     if (prev._1 == '*') {
                       ()
                     } else {
@@ -380,16 +420,20 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
       takeWhile(c => TextUtils.isWhiteSpace(c) && c != '\n')
     }
     def unexpectedChar(p: (Char, (Int, Int))): IllegalSourceException = {
-      throw IllegalSourceException(new SimpleMessage(
-        fileName, p._2,
-        s"Unexpected character ${TextUtils.repr(p._1)} at" +
-          s" line ${p._2._1}, col ${p._2._2}; identifier expected"))
+      throw IllegalSourceException(
+        new SimpleMessage(
+          fileName,
+          p._2,
+          s"Unexpected character ${TextUtils.repr(p._1)} at" +
+            s" line ${p._2._1}, col ${p._2._2}; identifier expected"
+        )
+      )
     }
     def readEmptyLine(): Unit = {
       ignoreWhiteSpaceChars()
       file.read().get match {
         case ('\n', _) => ()
-        case p => throw unexpectedChar(p)
+        case p         => throw unexpectedChar(p)
       }
     }
     def takeWhileIsId(): Seq[(Char, (Int, Int))] = {
@@ -435,11 +479,12 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
         // TODO: c89 allows the arguments of #include to be macro-expanded
         def readIncludeHeader(endsOn: Char, accum: String): String = {
           file.read().get match {
-            case ('\n', loc1) => throw IllegalSourceException(SimpleMessage(
-              fileName, loc1,
-              "Unexpected newline character"))
+            case ('\n', loc1) =>
+              throw IllegalSourceException(
+                SimpleMessage(fileName, loc1, "Unexpected newline character")
+              )
             case (c, _) if c == endsOn => accum
-            case (c, _) => readIncludeHeader(endsOn, accum + c)
+            case (c, _)                => readIncludeHeader(endsOn, accum + c)
           }
         }
         ignoreWhiteSpaceChars()
@@ -453,18 +498,26 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
             readEmptyLine()
             PPLineInclude(loc, name, isCaret = false)
           case (c, loc1) =>
-            throw IllegalSourceException(SimpleMessage(
-              fileName, loc1,
-              s"Unexpected character ${TextUtils.repr(c)} in #include"))
+            throw IllegalSourceException(
+              SimpleMessage(
+                fileName,
+                loc1,
+                s"Unexpected character ${TextUtils.repr(c)} in #include"
+              )
+            )
         }
       case "define" =>
         def expectId(): L[String] = {
           ignoreWhiteSpaceChars()
           val idChars: Seq[(Char, (Int, Int))] = takeWhileIsId()
           if (idChars.isEmpty) {
-            throw IllegalSourceException(new SimpleMessage(
-              fileName, file.read().get._2,
-              "Illegal #define directive: identifier expected"))
+            throw IllegalSourceException(
+              new SimpleMessage(
+                fileName,
+                file.read().get._2,
+                "Illegal #define directive: identifier expected"
+              )
+            )
           }
           L(idChars.head._2, idChars.map(_._1).mkString)
         }
@@ -485,14 +538,22 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
                     case (')', _) => accum
                     case (',', _) => readArgs(accum :+ expectId())
                     case (c, loc1) =>
-                      throw IllegalSourceException(new SimpleMessage(
-                        fileName, loc1,
-                        s"Unexpected character <${TextUtils.repr(c)}> inside" +
-                          " #define, comma or ')' expected"))
+                      throw IllegalSourceException(
+                        new SimpleMessage(
+                          fileName,
+                          loc1,
+                          s"Unexpected character <${TextUtils.repr(c)}> inside" +
+                            " #define, comma or ')' expected"
+                        )
+                      )
                   }
                 }
                 PPLineDefineFunc(
-                  loc, name, readArgs(Seq(firstArg)), readPPTokensLine(true))
+                  loc,
+                  name,
+                  readArgs(Seq(firstArg)),
+                  readPPTokensLine(true)
+                )
             }
           case p =>
             file.ungetc(p)
@@ -502,42 +563,57 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
         PPLineUndef(loc, readIdLine())
       case "line" =>
         val toks: Seq[L[PPTok]] = readPPTokensLine(true)
-        def isPPTokWhiteSpc(tok: L[PPTok]): Boolean = tok.value match {
-          case PPTokWhiteSpc(_) => true
-          case _ => false
-        }
+        def isPPTokWhiteSpc(tok: L[PPTok]): Boolean =
+          tok.value match {
+            case PPTokWhiteSpc(_) => true
+            case _                => false
+          }
         def getLineNum(tok: L[PPTokNum]): Int = {
           val str: String = tok.value.num.filter(isDigit).mkString
           if (str.length == tok.value.num.length) {
             str.toInt
           } else {
-            throw IllegalSourceException(new SimpleMessage(
-              fileName, tok.loc,
-              s"Illegal line number inside #line directive: ${tok.value.num}"))
+            throw IllegalSourceException(
+              new SimpleMessage(
+                fileName,
+                tok.loc,
+                s"Illegal line number inside #line directive: ${tok.value.num}"
+              )
+            )
           }
         }
         def getFileNameRepr(tok: L[PPTokStr]): L[String] = {
           val repr: String = tok.value.repr
           if (repr.charAt(0) != '"') {
-            throw new IllegalSourceException(new SimpleMessage(
-              fileName, tok.loc,
-              s"Illegal file name inside #line directive: $repr"))
+            throw new IllegalSourceException(
+              new SimpleMessage(
+                fileName,
+                tok.loc,
+                s"Illegal file name inside #line directive: $repr"
+              )
+            )
           }
           L(tok.loc, repr)
         }
         toks.filterNot(isPPTokWhiteSpc) match {
           case num :: Seq() if num.value.isInstanceOf[PPTokNum] =>
             PPLineLine(loc, getLineNum(num.asInstanceOf[L[PPTokNum]]), None)
-          case num :: str :: Seq() if num.value.isInstanceOf[PPTokNum]
-                                      && str.value.isInstanceOf[PPTokStr] =>
+          case num :: str :: Seq()
+              if num.value.isInstanceOf[PPTokNum]
+                && str.value.isInstanceOf[PPTokStr] =>
             PPLineLine(
               loc,
               getLineNum(num.asInstanceOf[L[PPTokNum]]),
               Some(getFileNameRepr(str.asInstanceOf[L[PPTokStr]]))
             )
           case _ =>
-            throw IllegalSourceException(new SimpleMessage(
-              fileName, loc, "Illegal #line preprocessing directive"))
+            throw IllegalSourceException(
+              new SimpleMessage(
+                fileName,
+                loc,
+                "Illegal #line preprocessing directive"
+              )
+            )
         }
       case "error" =>
         PPLineError(loc, readPPTokensLine(true).map(_.value.raw).mkString.trim)
@@ -545,8 +621,13 @@ class PPLineReader(val warnings: ArrayBuffer[Message],
         readEmptyLine()
         PPLinePragma(loc)
       case _ =>
-        throw IllegalSourceException(SimpleMessage(
-          fileName, cmdLoc, s"unrecognized preprocessing directive: $cmd"))
+        throw IllegalSourceException(
+          SimpleMessage(
+            fileName,
+            cmdLoc,
+            s"unrecognized preprocessing directive: $cmd"
+          )
+        )
     }
   }
 }

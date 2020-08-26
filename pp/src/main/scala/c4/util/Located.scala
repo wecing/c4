@@ -26,10 +26,11 @@ object Located {
 }
 
 sealed abstract class Loc {
-  def head: LocPoint = this match {
-    case p: LocPoint => p
-    case LocRange(p, _) => p
-  }
+  def head: LocPoint =
+    this match {
+      case p: LocPoint    => p
+      case LocRange(p, _) => p
+    }
 }
 final case class LocPoint(pos: (Int, Int), fileName: Option[String]) extends Loc
 final case class LocRange(begin: LocPoint, end: LocPoint) extends Loc

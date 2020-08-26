@@ -28,13 +28,13 @@ class SourcePhase7ReaderTest extends AnyFlatSpec with should.Matchers {
   }
 
   it should "pass our own tests" in {
-    read("42.5") should be (Seq(TokDouble(42.5)))
-    read("42.5e0") should be (Seq(TokDouble(42.5)))
-    read("42.5e1") should be (Seq(TokDouble(425)))
-    read("42.5e+1") should be (Seq(TokDouble(425)))
-    read("42.5e-1") should be (Seq(TokDouble(4.25)))
+    read("42.5") should be(Seq(TokDouble(42.5)))
+    read("42.5e0") should be(Seq(TokDouble(42.5)))
+    read("42.5e1") should be(Seq(TokDouble(425)))
+    read("42.5e+1") should be(Seq(TokDouble(425)))
+    read("42.5e-1") should be(Seq(TokDouble(4.25)))
 
-    read("'a'") should be (Seq(TokChar('a')))
+    read("'a'") should be(Seq(TokChar('a')))
   }
 
   // TODO: more Phase7Reader specific tests here?
@@ -76,7 +76,7 @@ class SourcePhase7ReaderTest extends AnyFlatSpec with should.Matchers {
       srcWarnings.size should be(0)
       expectedWarnings.size should be(0)
     } catch {
-      case e@IllegalSourceException(msg: SimpleMessage) =>
+      case e @ IllegalSourceException(msg: SimpleMessage) =>
         val fileName =
           if (msg.fileName == tempSrcPath) {
             srcPath

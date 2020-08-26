@@ -6,10 +6,12 @@ import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 
 /**
- * Reader that combines translation phase 1 and 2.
- */
-class SourcePhase2Reader(val warnings: ArrayBuffer[Message],
-                         val fileName: String) {
+  * Reader that combines translation phase 1 and 2.
+  */
+class SourcePhase2Reader(
+    val warnings: ArrayBuffer[Message],
+    val fileName: String
+) {
   // phase 1: translate tri-graphs and handle unicode
   //    tri-graphs:
   //      ??=    #
@@ -28,8 +30,8 @@ class SourcePhase2Reader(val warnings: ArrayBuffer[Message],
   private val file: Source = Source.fromFile(fileName)
 
   /**
-   * Close the underlying reader.
-   */
+    * Close the underlying reader.
+    */
   def close() = file.close()
 
   private var ungetBuf: Seq[(Char, (Int, Int))] = Seq.empty
@@ -48,12 +50,22 @@ class SourcePhase2Reader(val warnings: ArrayBuffer[Message],
     if (buf.isEmpty) {
       (last2, last1) match {
         case (Some(('\\', loc)), Some(('\n', _))) =>
-          throw IllegalSourceException(SimpleMessage(
-            fileName, loc, "file ends with '\\' followed by newline character"))
+          throw IllegalSourceException(
+            SimpleMessage(
+              fileName,
+              loc,
+              "file ends with '\\' followed by newline character"
+            )
+          )
         case (_, Some((c: Char, loc))) =>
           if (c != '\n') {
-            throw IllegalSourceException(SimpleMessage(
-              fileName, loc, "file does not end with newline character"))
+            throw IllegalSourceException(
+              SimpleMessage(
+                fileName,
+                loc,
+                "file does not end with newline character"
+              )
+            )
           }
         case _ => ; // do nothing!
       }
@@ -68,8 +80,8 @@ class SourcePhase2Reader(val warnings: ArrayBuffer[Message],
   }
 
   /**
-   * Read the next character and its physical location (line, col).
-   */
+    * Read the next character and its physical location (line, col).
+    */
   def read(): Option[(Char, (Int, Int))] = {
     if (ungetBuf.nonEmpty) {
       val r: Option[(Char, (Int, Int))] = Some(ungetBuf.head)
@@ -124,11 +136,13 @@ class SourcePhase2Reader(val warnings: ArrayBuffer[Message],
 
       if (buffer.endsWith(Seq('\\', '\n'))) {
         if (!file.hasNext) {
-          throw IllegalSourceException(SimpleMessage(
-            fileName,
-            (bufferLoc._1, bufferLoc._2 + buffer.size - 2),
-            "file should not end with backslash followed by newline"
-          ))
+          throw IllegalSourceException(
+            SimpleMessage(
+              fileName,
+              (bufferLoc._1, bufferLoc._2 + buffer.size - 2),
+              "file should not end with backslash followed by newline"
+            )
+          )
         }
 
         buffer = buffer.dropRight(2)
@@ -144,11 +158,13 @@ class SourcePhase2Reader(val warnings: ArrayBuffer[Message],
           val c: Char = file.next()
           if (c == '\n') {
             if (!file.hasNext) {
-              throw IllegalSourceException(SimpleMessage(
-                fileName,
-                (bufferLoc._1, bufferLoc._2 + buffer.size - 1),
-                "file should not end with backslash followed by newline"
-              ))
+              throw IllegalSourceException(
+                SimpleMessage(
+                  fileName,
+                  (bufferLoc._1, bufferLoc._2 + buffer.size - 1),
+                  "file should not end with backslash followed by newline"
+                )
+              )
             }
 
             buffer = buffer.dropRight(1)

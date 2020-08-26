@@ -15,9 +15,9 @@ case object Int8 extends IntSize {
   override def nBytes: Int = 1
   override def range(signed: Boolean): (BigInt, BigInt) = {
     if (signed) {
-      (-0x80, 0x7F)
+      (-0x80, 0x7f)
     } else {
-      (0, 0xFF)
+      (0, 0xff)
     }
   }
 }
@@ -25,9 +25,9 @@ case object Int16 extends IntSize {
   override def nBytes: Int = 2
   override def range(signed: Boolean): (BigInt, BigInt) = {
     if (signed) {
-      (-0x8000, 0x7FFF)
+      (-0x8000, 0x7fff)
     } else {
-      (0, 0xFFFF)
+      (0, 0xffff)
     }
   }
 }
@@ -37,7 +37,7 @@ case object Int32 extends IntSize {
     if (signed) {
       (Int.MinValue, Int.MaxValue)
     } else {
-      (0, 0xFFffFFffL)
+      (0, 0xffffffffL)
     }
   }
 }
@@ -54,9 +54,8 @@ case object Int64 extends IntSize {
 
 sealed abstract class Tok(val cupSymbol: Int)
 final case class TokId(id: String) extends Tok(Sym.ID)
-final case class TokInteger(n: BigInt,
-                            size: IntSize,
-                            signed: Boolean) extends Tok(Sym.INTEGER_LIT)
+final case class TokInteger(n: BigInt, size: IntSize, signed: Boolean)
+    extends Tok(Sym.INTEGER_LIT)
 final case class TokFloat(f: Float) extends Tok(Sym.FLOAT_LIT)
 final case class TokDouble(d: Double) extends Tok(Sym.DOUBLE_LIT)
 final case class TokLongDouble(ld: BigDecimal) extends Tok(Sym.LONG_DOUBLE_LIT)
@@ -101,7 +100,7 @@ case object Tok_volatile extends Tok(Sym.VOLATILE)
 case object Tok_while extends Tok(Sym.WHILE)
 // symbols
 case object Tok_lsbrkt extends Tok(Sym.LSBRKT) // [
-case object Tok_rsbrkt extends Tok(Sym.RSBRKT)// ]
+case object Tok_rsbrkt extends Tok(Sym.RSBRKT) // ]
 case object Tok_lparen extends Tok(Sym.LPAREN) // (
 case object Tok_rparen extends Tok(Sym.RPAREN) // )
 case object Tok_lbrace extends Tok(Sym.LBRACE) // {
@@ -147,15 +146,16 @@ case object Tok_&= extends Tok(Sym.B_AND_ASSIGN)
 case object Tok_^= extends Tok(Sym.XOR_ASSIGN)
 case object Tok_|= extends Tok(Sym.B_OR_ASSIGN)
 
-
 /**
- * Translation phase 5, 6, 7.
- *
- * C89 translation phase 7 includes parsing / code generation, but this class
- * does not.
- */
-class SourcePhase7Reader(val warnings: ArrayBuffer[Message],
-                         val fileName: String) {
+  * Translation phase 5, 6, 7.
+  *
+  * C89 translation phase 7 includes parsing / code generation, but this class
+  * does not.
+  */
+class SourcePhase7Reader(
+    val warnings: ArrayBuffer[Message],
+    val fileName: String
+) {
   private var tokens: Seq[L[Tok]] = {
     PPReader
       .read(warnings, fileName)
@@ -194,7 +194,8 @@ class SourcePhase7Reader(val warnings: ArrayBuffer[Message],
               "unsigned" -> Tok_unsigned,
               "void" -> Tok_void,
               "volatile" -> Tok_volatile,
-              "while" -> Tok_while)
+              "while" -> Tok_while
+            )
             val newTok = dict.getOrElse(id, TokId(id))
             acc :+ L(ppTok.loc, newTok, ppTok.fileName)
           case PPTokNum(num) =>
@@ -203,8 +204,8 @@ class SourcePhase7Reader(val warnings: ArrayBuffer[Message],
             val octalPattern = "^(0[0-7]*)([ulUL]*)$".r
             val decimalPattern = "^([1-9][0-9]*)([ulUL]*)$".r
             val hexPattern = "^0[xX]([0-9a-zA-Z]+)([ulUL]*)$".r
-            def toTokInteger(s: String, radix: Int,
-                             suffix: String): TokInteger = {
+            def toTokInteger(s: String, radix: Int, suffix: String)
+                : TokInteger = {
               // The type of an integer constant is the first of the
               // corresponding list in which its value can be represented.
               //
@@ -223,28 +224,33 @@ class SourcePhase7Reader(val warnings: ArrayBuffer[Message],
               val longInt = (Int64, true)
               val unsignedLongInt = (Int64, false)
 
-              lazy val illegalEx = IllegalSourceException(SimpleMessage(
-                ppTok.fileName.getOrElse("<unknown>"), ppTok.loc,
-                s"illegal floating number syntax: $num"))
+              lazy val illegalEx = IllegalSourceException(
+                SimpleMessage(
+                  ppTok.fileName.getOrElse("<unknown>"),
+                  ppTok.loc,
+                  s"illegal floating number syntax: $num"
+                )
+              )
 
               val sizes: Seq[(IntSize, Boolean)] = suffix.toLowerCase match {
                 case "" if radix == 10 => Seq(int, longInt, unsignedLongInt)
-                case "" => Seq(int, unsignedInt, longInt, unsignedLongInt)
-                case "u" => Seq(unsignedInt, unsignedLongInt)
-                case "l" => Seq(longInt, unsignedLongInt)
-                case "ul" | "lu" => Seq(unsignedLongInt)
-                case _ => throw illegalEx
+                case ""                => Seq(int, unsignedInt, longInt, unsignedLongInt)
+                case "u"               => Seq(unsignedInt, unsignedLongInt)
+                case "l"               => Seq(longInt, unsignedLongInt)
+                case "ul" | "lu"       => Seq(unsignedLongInt)
+                case _                 => throw illegalEx
               }
 
               val v = BigInt(s, radix)
               val suitableSizes: Seq[(IntSize, Boolean)] =
-                sizes.dropWhile { case (sz, signed) =>
-                  val (min, max) = sz.range(signed)
-                  !(min <= v && v <= max)
+                sizes.dropWhile {
+                  case (sz, signed) =>
+                    val (min, max) = sz.range(signed)
+                    !(min <= v && v <= max)
                 }
               suitableSizes match {
                 case (sz, signed) +: _ => TokInteger(v, sz, signed)
-                case _ => throw illegalEx
+                case _                 => throw illegalEx
               }
             }
             num match {
@@ -255,9 +261,9 @@ class SourcePhase7Reader(val warnings: ArrayBuffer[Message],
                 val eVal = if (e.isEmpty) 0 else e.tail.toInt
                 val v = BigDecimal(f) * BigDecimal(10).pow(eVal)
                 val newTok: Tok = s match {
-                  case "" => TokDouble(v.toDouble)
+                  case ""        => TokDouble(v.toDouble)
                   case "f" | "F" => TokFloat(v.toFloat)
-                  case _ => TokLongDouble(v)
+                  case _         => TokLongDouble(v)
                 }
                 acc :+ L(ppTok.loc, newTok, ppTok.fileName)
               case octalPattern(n, suffix) =>
@@ -267,9 +273,13 @@ class SourcePhase7Reader(val warnings: ArrayBuffer[Message],
               case hexPattern(n, suffix) =>
                 acc :+ L(ppTok.loc, toTokInteger(n, 16, suffix), ppTok.fileName)
               case _ =>
-                throw IllegalSourceException(SimpleMessage(
-                  ppTok.fileName.getOrElse("<unknown>"), ppTok.loc,
-                  s"illegal floating number syntax: $num"))
+                throw IllegalSourceException(
+                  SimpleMessage(
+                    ppTok.fileName.getOrElse("<unknown>"),
+                    ppTok.loc,
+                    s"illegal floating number syntax: $num"
+                  )
+                )
             }
           case PPTokChar(repr) =>
             val isWide = repr.head == 'L'
@@ -280,7 +290,8 @@ class SourcePhase7Reader(val warnings: ArrayBuffer[Message],
           case PPTokStr(repr) =>
             val isWide = repr.head == 'L'
             val str = TextUtils.fromStrReprQ(
-              L(ppTok.loc, if (isWide) repr.tail else repr, ppTok.fileName))
+              L(ppTok.loc, if (isWide) repr.tail else repr, ppTok.fileName)
+            )
             acc.last.value match {
               case TokStr(prevStr) if !isWide =>
                 val newTok = TokStr(prevStr + str)
@@ -340,12 +351,18 @@ class SourcePhase7Reader(val warnings: ArrayBuffer[Message],
               ">>=" -> Tok_>>=,
               "&=" -> Tok_&=,
               "^=" -> Tok_^=,
-              "|=" -> Tok_|=)
+              "|=" -> Tok_|=
+            )
             dict.get(sym) match {
               case Some(tok) => acc :+ L(ppTok.loc, tok, ppTok.fileName)
-              case None => throw IllegalSourceException(SimpleMessage(
-                ppTok.fileName.getOrElse("<unknown>"), ppTok.loc,
-                s"unknown token: < $sym >"))
+              case None =>
+                throw IllegalSourceException(
+                  SimpleMessage(
+                    ppTok.fileName.getOrElse("<unknown>"),
+                    ppTok.loc,
+                    s"unknown token: < $sym >"
+                  )
+                )
             }
           case PPTokWhiteSpc(_) =>
             acc

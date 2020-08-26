@@ -6,8 +6,8 @@ import java.net.URL
 object TestUtil {
 
   /**
-   * Creates a temporary file with given content, returns its absolute path.
-   */
+    * Creates a temporary file with given content, returns its absolute path.
+    */
   def createTempFile(input: String): String = {
     val file = File.createTempFile("c4_test_", ".tmp.c")
     val stream = new FileOutputStream(file)
@@ -18,8 +18,8 @@ object TestUtil {
   }
 
   /**
-   * Creates a temporary file with given content, returns its absolute path.
-   */
+    * Creates a temporary file with given content, returns its absolute path.
+    */
   def createTempFile(input: URL): String = {
     val file = File.createTempFile("c4_test_", ".tmp.c")
     val os = new FileOutputStream(file)

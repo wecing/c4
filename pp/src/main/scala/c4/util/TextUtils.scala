@@ -25,8 +25,9 @@ object TextUtils {
     var c: Char = '\u0000'
     if (legal) {
       try {
-        val str = fromStrReprQ(L(
-          reprQ.loc, "\"" + reprQ.value.init.tail + "\"", reprQ.fileName))
+        val str = fromStrReprQ(
+          L(reprQ.loc, "\"" + reprQ.value.init.tail + "\"", reprQ.fileName)
+        )
         if (str.length != 1) {
           legal = false
         } else {
@@ -38,11 +39,13 @@ object TextUtils {
       }
     }
     if (!legal) {
-      throw IllegalSourceException(SimpleMessage(
-        reprQ.fileName.getOrElse("<unknown>"),
-        reprQ.loc,
-        "Illegal character literal"
-      ))
+      throw IllegalSourceException(
+        SimpleMessage(
+          reprQ.fileName.getOrElse("<unknown>"),
+          reprQ.loc,
+          "Illegal character literal"
+        )
+      )
     }
     c
   }
@@ -75,23 +78,33 @@ object TextUtils {
       }
     }
 
-    def f(a: Option[(String, Option[EscCase])],
-          c: Char): Option[(String, Option[EscCase])] = {
+    def f(
+        a: Option[(String, Option[EscCase])],
+        c: Char
+    ): Option[(String, Option[EscCase])] = {
       val escDict: Map[Char, Char] = Map(
-        '\'' -> '\'',     '"' -> '"',      '?' -> '\u003f', '\\' -> '\\',
-        'a' -> '\u0007', 'b' -> '\u0008', 'f' -> '\f',      'n' -> '\n',
-        'r'  -> '\r',    't' -> '\t',     'v' -> '\u000b'
+        '\'' -> '\'',
+        '"' -> '"',
+        '?' -> '\u003f',
+        '\\' -> '\\',
+        'a' -> '\u0007',
+        'b' -> '\u0008',
+        'f' -> '\f',
+        'n' -> '\n',
+        'r' -> '\r',
+        't' -> '\t',
+        'v' -> '\u000b'
       )
       val r: Option[(String, Option[EscCase])] = a flatMap {
         case (acc, None) if c == '\\' => Some((acc, Some(Unknown)))
-        case (acc, None) => Some((acc + c, None))
+        case (acc, None)              => Some((acc + c, None))
         case (acc, Some(Unknown)) if '0' <= c && c <= '7' =>
           Some((acc, Some(Oct(Seq(c - '0')))))
         case (acc, Some(Unknown)) if c == 'x' =>
           Some((acc, Some(Hex(Seq.empty))))
         case (acc, Some(Unknown)) =>
           escDict.get(c) map { s => (acc + s, None) }
-        case (acc, Some(oct@Oct(xs))) =>
+        case (acc, Some(oct @ Oct(xs))) =>
           if ('0' <= c && c <= '7') {
             val esc = Oct(xs :+ (c - '0'))
             if (esc.v.length < 3) {
@@ -106,7 +119,7 @@ object TextUtils {
               Some((acc + oct.toChar, None))
             }
           }
-        case (acc, Some(hex@Hex(xs))) =>
+        case (acc, Some(hex @ Hex(xs))) =>
           val ord: Int =
             if ('0' <= c && c <= '9') {
               c - '0'
@@ -135,26 +148,29 @@ object TextUtils {
       if s.length >= 2
       if s.head == '"' && s.last == '"'
       foldBegin: Option[(String, Option[EscCase])] = Some(("", None))
-      (acc, rem: Option[EscCase]) <- s.tail.init.foldLeft(foldBegin) {
-        (a, b) => f(a, b)
+      (acc, rem: Option[EscCase]) <- s.tail.init.foldLeft(foldBegin) { (a, b) =>
+        f(a, b)
       }
       ret <- rem match {
-        case None => Some(acc)
-        case Some(Unknown) => None
-        case Some(Oct(Seq())) => None
-        case Some(c@Oct(xs)) => Some(acc + c.toChar)
-        case Some(Hex(Seq())) => None
-        case Some(c@Hex(xs)) => c.toCharOpt.flatMap(n => Some(acc + n))
+        case None              => Some(acc)
+        case Some(Unknown)     => None
+        case Some(Oct(Seq()))  => None
+        case Some(c @ Oct(xs)) => Some(acc + c.toChar)
+        case Some(Hex(Seq()))  => None
+        case Some(c @ Hex(xs)) => c.toCharOpt.flatMap(n => Some(acc + n))
       }
     } yield ret
 
     r match {
       case Some(x) => x
-      case None => throw IllegalSourceException(SimpleMessage(
-        reprQ.fileName.getOrElse("<unknown>"),
-        reprQ.loc,
-        "Illegal string literal"
-      ))
+      case None =>
+        throw IllegalSourceException(
+          SimpleMessage(
+            reprQ.fileName.getOrElse("<unknown>"),
+            reprQ.loc,
+            "Illegal string literal"
+          )
+        )
     }
   }
 
