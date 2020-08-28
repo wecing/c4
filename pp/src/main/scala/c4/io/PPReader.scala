@@ -37,6 +37,7 @@ object PPReader {
   sealed abstract class BodyPart
   final case class TokPart(tok: L[PPTok]) extends BodyPart
   final case class ToStrPart(arg: L[String]) extends BodyPart
+  // TODO: a ## b ## c ## d should be supported
   final case class ConcatPart(arg1: L[String], arg2: L[String]) extends BodyPart
   final case class ArgPart(arg: L[String]) extends BodyPart
 
@@ -59,7 +60,6 @@ object PPReader {
     val bodyParts: Seq[BodyPart] = {
       val argNamesSet: Set[String] = Set(argNames: _*)
       def recur(tokens: Seq[L[PPTok]], accum: Seq[BodyPart]): Seq[BodyPart] = {
-        // TODO: very-large-scale-copy-and-paste detected
         tokens match {
           case Seq() => accum
           // "#x"
@@ -381,17 +381,8 @@ object PPReader {
                         collection.Map(funcMacro.argNames.zip(args): _*)
                       val argsMapRaw: collection.Map[String, Seq[T]] =
                         collection.Map(funcMacro.argNames.zip(argsRaw): _*)
-                      for ((k, v) <- argsMap.iterator) {
-                        if (v.isEmpty) {
-                          throw IllegalSourceException(
-                            SimpleMessage(
-                              ctx.logicalFileName,
-                              s.funcName.loc,
-                              s"Arg $k cannot be empty"
-                            )
-                          )
-                        }
-                      }
+                      // values of `argsMap` and `argsMapRaw` could be empty Seq
+
                       val expanded: Seq[T] = funcMacro.bodyParts.flatMap {
                         case p: TokPart =>
                           p.tok.value match {
@@ -451,7 +442,6 @@ object PPReader {
                             )
                           )
                         case p: ConcatPart =>
-                          // TODO: support other tokens as well!
                           val arg1: Seq[T] = argsMapRaw.getOrElse(
                             p.arg1.value,
                             Seq(
@@ -478,28 +468,70 @@ object PPReader {
                               )
                             )
                           )
-                          val newT: T = (arg1.last, arg2.head) match {
-                            case (Left((s1, x1)), Left((s2, x2))) =>
-                              Left(
-                                (
-                                  s1 ++ s2,
-                                  L(x1.loc, x1.value + x2.value, x1.fileName)
-                                )
-                              )
-                            case (Left((s1, x1)), Right(L(_, PPTokNum(num), _)))
-                                if !num.exists(".+-".contains(_)) =>
-                              Left((s1, L(x1.loc, x1.value + num, x1.fileName)))
-                            case _ =>
-                              throw IllegalSourceException(
-                                SimpleMessage(
-                                  ctx.logicalFileName,
-                                  s.funcName.loc,
-                                  "NOT_YET_IMPLEMENTED: Args concatination in" +
-                                    " func-like macros only supports identifiers"
-                                )
-                              )
+
+                          val newLocAndFileName
+                              : Option[((Int, Int), Option[String])] =
+                            arg1.lastOption.map {
+                              case Left((_, x)) => (x.loc, x.fileName)
+                              case Right(x)     => (x.loc, x.fileName)
+                            }
+                          val newIgnoreSet: Set[String] = {
+                            def f(t: Option[T]): Set[String] = {
+                              t match {
+                                case None               => Set.empty
+                                case Some(Left((x, _))) => x
+                                case Some(Right(_))     => Set.empty
+                              }
+                            }
+                            f(arg1.lastOption) ++ f(arg2.headOption)
                           }
-                          (arg1.init :+ newT) ++ arg2.tail
+                          val newTok: Option[String] = {
+                            def f(t: T): Option[String] = {
+                              t match {
+                                case Left((_, x)) => Some(x.value)
+                                case Right(x) =>
+                                  x.value match {
+                                    case PPTokChar(repr)  => Some(repr)
+                                    case PPTokNum(num)    => Some(num)
+                                    case PPTokStr(repr)   => Some(repr)
+                                    case PPTokSym(sym)    => Some(sym)
+                                    case PPTokWhiteSpc(_) => None
+                                    case PPTokId(_)       => ??? // unreachable
+                                  }
+                              }
+                            }
+                            val t1: Option[String] = arg1.lastOption.flatMap(f)
+                            val t2: Option[String] = arg2.headOption.flatMap(f)
+                            (t1, t2) match {
+                              case (None, None) => None
+                              case _ =>
+                                Some(t1.getOrElse("") + t2.getOrElse(""))
+                            }
+                          }
+                          val idPattern = "^[a-zA-Z_][a-zA-Z0-9_]*$".r
+                          val numPattern =
+                            "^(([0-9]*[.][0-9]+)|([0-9]+[.]?))[0-9a-zA-Z+-]*$".r
+
+                          val newT: Seq[T] =
+                            newLocAndFileName
+                              .zip(newTok)
+                              .map {
+                                case ((loc, fileName), tok) => {
+                                  if (idPattern.matches(tok)) {
+                                    Left((newIgnoreSet, L(loc, tok, fileName)))
+                                  } else if (numPattern.matches(tok)) {
+                                    Right(L(loc, PPTokNum(tok), fileName))
+                                  } else {
+                                    // Invalid newly formed tokens will be
+                                    // rejected when trying to convert PPTokSym
+                                    // to C symbols
+                                    Right(L(loc, PPTokSym(tok), fileName))
+                                  }
+                                }
+                              }
+                              .map(x => Seq(x))
+                              .getOrElse(Seq.empty)
+                          arg1.dropRight(1) ++ newT ++ arg2.drop(1)
                         case p: ArgPart =>
                           argsMap.get(p.arg.value).get.map {
                             case Left((ignoreSet, name)) =>
@@ -599,7 +631,7 @@ object PPReader {
       ctx: PPReaderCtx,
       tokens: Seq[L[PPTok]]
   ): Boolean = {
-    ??? // TODO
+    ??? // TODO: implement const expr eval
   }
 
   private def doPPCmd(ctx: PPReaderCtx, cmd: PPLine): Unit = {

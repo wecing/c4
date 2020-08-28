@@ -3,7 +3,6 @@ package c4.ast
 import c4.io._
 import c4.util.{Loc, LocRange, Located => L}
 
-// TODO: maybe TranslationUnit and ExternalDecl should also be top level defs?
 object AST {
   type TranslationUnit = Seq[L[ExternalDecl]]
   type ExternalDecl = Either[L[FunctionDef], L[Declaration]]

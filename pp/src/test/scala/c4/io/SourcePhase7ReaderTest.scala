@@ -22,7 +22,7 @@ class SourcePhase7ReaderTest extends AnyFlatSpec with should.Matchers {
     checkPP("06.c", "06.expect")
     checkPP("07.c", "07.expect")
     checkPP("08.c", "08.expect")
-    // TODO: is "a##b##c" allowed in c89?
+    // TODO: ## not yet fully implemented
     // checkPP("09.c", "09.expect")
     checkPP("10.c", "10.expect")
   }
@@ -35,6 +35,9 @@ class SourcePhase7ReaderTest extends AnyFlatSpec with should.Matchers {
     read("42.5e-1") should be(Seq(TokDouble(4.25)))
 
     read("'a'") should be(Seq(TokChar('a')))
+
+    read("#define t(x,y) x ## y\nt(1,2.0)") should be(Seq(TokDouble(12.0)))
+    read("#define t(x,y) x ## y\nt(1 , 2.0)") should be(Seq(TokDouble(12.0)))
   }
 
   // TODO: more Phase7Reader specific tests here?
