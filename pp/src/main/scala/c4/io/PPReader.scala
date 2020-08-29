@@ -37,8 +37,8 @@ object PPReader {
   sealed abstract class BodyPart
   final case class TokPart(tok: L[PPTok]) extends BodyPart
   final case class ToStrPart(arg: L[String]) extends BodyPart
-  // TODO: a ## b ## c ## d should be supported
-  final case class ConcatPart(arg1: L[String], arg2: L[String]) extends BodyPart
+  // for each "x ## y", we only keep the "## y" part here
+  final case class ConcatPart(arg: L[String]) extends BodyPart
   final case class ArgPart(arg: L[String]) extends BodyPart
 
   private final class FuncMacro(
@@ -92,49 +92,16 @@ object PPReader {
               recur(xs, accum :+ TokPart(tok1) :+ TokPart(tok2))
             }
           // "x##y"
-          case (tok1 @ L(loc1, PPTokId(id1), fileName))
-              :: (tok2 @ L(loc2, PPTokSym("##"), _))
-              :: (tok3 @ L(loc3, PPTokId(id3), _))
+          case (tok1 @ L(loc1, PPTokSym("##"), _))
+              :: (tok2 @ L(loc2, PPTokId(id2), fileName))
               :: xs =>
-            recur(
-              xs,
-              accum :+
-                ConcatPart(L(loc1, id1, fileName), L(loc3, id3, fileName))
-            )
-          // "x ##y"
-          case (tok1 @ L(loc1, PPTokId(id1), fileName))
-              :: L(_, PPTokWhiteSpc(_), _)
-              :: (tok2 @ L(loc2, PPTokSym("##"), _))
-              :: (tok3 @ L(loc3, PPTokId(id3), _))
-              :: xs =>
-            recur(
-              xs,
-              accum :+
-                ConcatPart(L(loc1, id1, fileName), L(loc3, id3, fileName))
-            )
+            recur(xs, accum :+ ConcatPart(L(loc2, id2, fileName)))
           // "x## y"
-          case (tok1 @ L(loc1, PPTokId(id1), fileName))
-              :: (tok2 @ L(loc2, PPTokSym("##"), _))
+          case (tok1 @ L(loc1, PPTokSym("##"), _))
               :: L(_, PPTokWhiteSpc(_), _)
-              :: (tok3 @ L(loc3, PPTokId(id3), _))
+              :: (tok2 @ L(loc2, PPTokId(id2), fileName))
               :: xs =>
-            recur(
-              xs,
-              accum :+
-                ConcatPart(L(loc1, id1, fileName), L(loc3, id3, fileName))
-            )
-          // "x ## y"
-          case (tok1 @ L(loc1, PPTokId(id1), fileName))
-              :: L(_, PPTokWhiteSpc(_), _)
-              :: (tok2 @ L(loc2, PPTokSym("##"), _))
-              :: L(_, PPTokWhiteSpc(_), _)
-              :: (tok3 @ L(loc3, PPTokId(id3), _))
-              :: xs =>
-            recur(
-              xs,
-              accum :+
-                ConcatPart(L(loc1, id1, fileName), L(loc3, id3, fileName))
-            )
+            recur(xs, accum :+ ConcatPart(L(loc2, id2, fileName)))
           // arg of the func macro
           case (tok @ L(loc, PPTokId(id), fileName)) :: xs =>
             val p: BodyPart =
@@ -152,19 +119,27 @@ object PPReader {
               "Token '#' not followed by argument of function-like macro"
             )
             recur(xs, accum :+ TokPart(tok))
-          // illegal "x##y"
-          case tok1 :: (tok2 @ L(loc, PPTokSym("##"), fileName)) :: xs =>
-            ctx.warnings += SimpleMessage(
-              fileName.getOrElse(ctx.logicalFileName),
-              loc,
-              "Token '##' not preceded or followed" +
-                " by argument of function-like macro"
-            )
-            recur(xs, accum :+ TokPart(tok1) :+ TokPart(tok2))
           case tok :: xs =>
             recur(xs, accum :+ TokPart(tok))
         }
       }
+
+      // sanity check
+      rawBody.find {
+        case L(_, PPTokWhiteSpc(_), _) => false
+        case _                         => true
+      } match {
+        case Some(L(loc, PPTokSym("##"), fileName)) =>
+          throw IllegalSourceException(
+            SimpleMessage(
+              fileName.getOrElse(ctx.logicalFileName),
+              loc,
+              "Token '##' not preceded by other tokens"
+            )
+          )
+        case _ => ()
+      }
+
       recur(rmExtraSpaces(rawBody), Seq.empty)
     }
   }
@@ -383,162 +358,173 @@ object PPReader {
                         collection.Map(funcMacro.argNames.zip(argsRaw): _*)
                       // values of `argsMap` and `argsMapRaw` could be empty Seq
 
-                      val expanded: Seq[T] = funcMacro.bodyParts.flatMap {
-                        case p: TokPart =>
-                          p.tok.value match {
-                            case PPTokId(id) =>
-                              Seq(
-                                Left(
-                                  (
-                                    Set(s.funcName.value),
-                                    L(s.funcName.loc, id, s.funcName.fileName)
-                                  )
-                                )
+                      def expandTokPart(p: TokPart): T = {
+                        p.tok.value match {
+                          case PPTokId(id) =>
+                            Left(
+                              (
+                                Set(s.funcName.value),
+                                L(s.funcName.loc, id, s.funcName.fileName)
                               )
-                            case t: PPTok =>
-                              Seq(
-                                Right(L(s.funcName.loc, t, s.funcName.fileName))
-                              )
-                          }
-                        case p: ToStrPart =>
-                          val str: String = {
-                            var r = ""
-                            var isPrevWhiteSpace = false
-                            argsMapRaw.get(p.arg.value).get.foreach {
-                              case Left((_, located)) =>
-                                r += located.value
-                                isPrevWhiteSpace = false
-                              case Right(located) =>
-                                located.value match {
-                                  case x: PPTokWhiteSpc =>
-                                    if (!isPrevWhiteSpace) {
-                                      r += " "
-                                      isPrevWhiteSpace = true
-                                    }
-                                  case x: PPTokStr =>
-                                    r += x.repr
-                                      .replace("\\", "\\\\") // \ => \\
-                                      .replace("\"", "\\\"") // " => \"
-                                    isPrevWhiteSpace = false
-                                  case x: PPTokChar =>
-                                    r += x.repr
-                                      .replace("\\", "\\\\") // \ => \\
-                                      .replace("\"", "\\\"") // " => \"
-                                    isPrevWhiteSpace = false
-                                  case _ =>
-                                    r += located.value.raw
-                                    isPrevWhiteSpace = false
-                                }
-                            }
-                            r
-                          }
-                          Seq(
+                            )
+
+                          case t: PPTok =>
                             Right(
+                              L(s.funcName.loc, t, s.funcName.fileName)
+                            )
+                        }
+                      }
+
+                      def expandToStrPart(p: ToStrPart): T = {
+                        val str: String = {
+                          var r = ""
+                          var isPrevWhiteSpace = false
+                          argsMapRaw.get(p.arg.value).get.foreach {
+                            case Left((_, located)) =>
+                              r += located.value
+                              isPrevWhiteSpace = false
+                            case Right(located) =>
+                              located.value match {
+                                case x: PPTokWhiteSpc =>
+                                  if (!isPrevWhiteSpace) {
+                                    r += " "
+                                    isPrevWhiteSpace = true
+                                  }
+                                case x: PPTokStr =>
+                                  r += x.repr
+                                    .replace("\\", "\\\\") // \ => \\
+                                    .replace("\"", "\\\"") // " => \"
+                                  isPrevWhiteSpace = false
+                                case x: PPTokChar =>
+                                  r += x.repr
+                                    .replace("\\", "\\\\") // \ => \\
+                                    .replace("\"", "\\\"") // " => \"
+                                  isPrevWhiteSpace = false
+                                case _ =>
+                                  r += located.value.raw
+                                  isPrevWhiteSpace = false
+                              }
+                          }
+                          r
+                        }
+                        Right(
+                          L(
+                            s.funcName.loc,
+                            PPTokStr("\"" + str + "\""),
+                            s.funcName.fileName
+                          )
+                        )
+                      }
+
+                      def expandConcatPart(
+                          accumOrig: Seq[T],
+                          p: ConcatPart
+                      ): Seq[T] = {
+                        val cntTaken: Int =
+                          1 + accumOrig.reverse.indexWhere {
+                            case Right(L(_, PPTokWhiteSpc(_), _)) => false
+                            case _                                => true
+                          }
+                        val accum: Seq[T] = accumOrig.dropRight(cntTaken)
+                        val arg1Orig: Seq[T] = accumOrig.takeRight(cntTaken)
+
+                        val arg1 = trim(arg1Orig)
+                        val arg2: Seq[T] = argsMapRaw.getOrElse(
+                          p.arg.value,
+                          Seq(
+                            Left( // not arg, just an identifier
+                              Set.empty[String],
                               L(
                                 s.funcName.loc,
-                                PPTokStr("\"" + str + "\""),
+                                p.arg.value,
                                 s.funcName.fileName
                               )
                             )
                           )
-                        case p: ConcatPart =>
-                          val arg1: Seq[T] = argsMapRaw.getOrElse(
-                            p.arg1.value,
-                            Seq(
-                              Left( // not arg, just an identifier
-                                Set.empty[String],
-                                L(
-                                  s.funcName.loc,
-                                  p.arg1.value,
-                                  s.funcName.fileName
-                                )
-                              )
-                            )
-                          )
-                          val arg2: Seq[T] = argsMapRaw.getOrElse(
-                            p.arg2.value,
-                            Seq(
-                              Left( // not arg, just an identifier
-                                Set.empty[String],
-                                L(
-                                  s.funcName.loc,
-                                  p.arg2.value,
-                                  s.funcName.fileName
-                                )
-                              )
-                            )
-                          )
+                        )
 
-                          val newLocAndFileName
-                              : Option[((Int, Int), Option[String])] =
-                            arg1.lastOption.map {
-                              case Left((_, x)) => (x.loc, x.fileName)
-                              case Right(x)     => (x.loc, x.fileName)
-                            }
-                          val newIgnoreSet: Set[String] = {
-                            def f(t: Option[T]): Set[String] = {
-                              t match {
-                                case None               => Set.empty
-                                case Some(Left((x, _))) => x
-                                case Some(Right(_))     => Set.empty
-                              }
-                            }
-                            f(arg1.lastOption) ++ f(arg2.headOption)
+                        val newLocAndFileName
+                            : Option[((Int, Int), Option[String])] =
+                          arg1.lastOption.orElse(arg2.headOption).map {
+                            case Left((_, x)) => (x.loc, x.fileName)
+                            case Right(x)     => (x.loc, x.fileName)
                           }
-                          val newTok: Option[String] = {
-                            def f(t: T): Option[String] = {
-                              t match {
-                                case Left((_, x)) => Some(x.value)
-                                case Right(x) =>
-                                  x.value match {
-                                    case PPTokChar(repr)  => Some(repr)
-                                    case PPTokNum(num)    => Some(num)
-                                    case PPTokStr(repr)   => Some(repr)
-                                    case PPTokSym(sym)    => Some(sym)
-                                    case PPTokWhiteSpc(_) => None
-                                    case PPTokId(_)       => ??? // unreachable
-                                  }
-                              }
-                            }
-                            val t1: Option[String] = arg1.lastOption.flatMap(f)
-                            val t2: Option[String] = arg2.headOption.flatMap(f)
-                            (t1, t2) match {
-                              case (None, None) => None
-                              case _ =>
-                                Some(t1.getOrElse("") + t2.getOrElse(""))
+                        val newIgnoreSet: Set[String] = {
+                          def f(t: Option[T]): Set[String] = {
+                            t match {
+                              case None               => Set.empty
+                              case Some(Left((x, _))) => x
+                              case Some(Right(_))     => Set.empty
                             }
                           }
-                          val idPattern = "^[a-zA-Z_][a-zA-Z0-9_]*$".r
-                          val numPattern =
-                            "^(([0-9]*[.][0-9]+)|([0-9]+[.]?))[0-9a-zA-Z+-]*$".r
+                          f(arg1.lastOption) ++ f(arg2.headOption)
+                        }
+                        val newTok: Option[String] = {
+                          def f(t: T): String = {
+                            t match {
+                              case Left((_, x)) => x.value
+                              case Right(x) =>
+                                x.value match {
+                                  case PPTokChar(repr)  => repr
+                                  case PPTokNum(num)    => num
+                                  case PPTokStr(repr)   => repr
+                                  case PPTokSym(sym)    => sym
+                                  case PPTokWhiteSpc(_) => ??? // unreachable
+                                  case PPTokId(_)       => ??? // unreachable
+                                }
+                            }
+                          }
+                          val t1: Option[String] = arg1.lastOption.map(f)
+                          val t2: Option[String] = arg2.headOption.map(f)
+                          (t1, t2) match {
+                            case (None, None) => None
+                            case _ =>
+                              Some(t1.getOrElse("") + t2.getOrElse(""))
+                          }
+                        }
+                        val idPattern = "^[a-zA-Z_][a-zA-Z0-9_]*$".r
+                        val numPattern =
+                          "^(([0-9]*[.][0-9]+)|([0-9]+[.]?))[0-9a-zA-Z+-]*$".r
 
-                          val newT: Seq[T] =
-                            newLocAndFileName
-                              .zip(newTok)
-                              .map {
-                                case ((loc, fileName), tok) => {
-                                  if (idPattern.matches(tok)) {
-                                    Left((newIgnoreSet, L(loc, tok, fileName)))
-                                  } else if (numPattern.matches(tok)) {
-                                    Right(L(loc, PPTokNum(tok), fileName))
-                                  } else {
-                                    // Invalid newly formed tokens will be
-                                    // rejected when trying to convert PPTokSym
-                                    // to C symbols
-                                    Right(L(loc, PPTokSym(tok), fileName))
-                                  }
+                        val newT: Seq[T] =
+                          newLocAndFileName
+                            .zip(newTok)
+                            .map {
+                              case ((loc, fileName), tok) => {
+                                if (idPattern.matches(tok)) {
+                                  Left(
+                                    (newIgnoreSet, L(loc, tok, fileName))
+                                  )
+                                } else if (numPattern.matches(tok)) {
+                                  Right(L(loc, PPTokNum(tok), fileName))
+                                } else {
+                                  // Invalid newly formed tokens will be
+                                  // rejected when trying to convert PPTokSym
+                                  // to C symbols
+                                  Right(L(loc, PPTokSym(tok), fileName))
                                 }
                               }
-                              .map(x => Seq(x))
-                              .getOrElse(Seq.empty)
-                          arg1.dropRight(1) ++ newT ++ arg2.drop(1)
-                        case p: ArgPart =>
-                          argsMap.get(p.arg.value).get.map {
-                            case Left((ignoreSet, name)) =>
-                              Left((ignoreSet + s.funcName.value, name))
-                            case x => x
-                          }
+                            }
+                            .map(x => Seq(x))
+                            .getOrElse(Seq.empty)
+                        accum ++ arg1.dropRight(1) ++ newT ++ arg2.drop(1)
                       }
+
+                      val expanded: Seq[T] = funcMacro.bodyParts.foldLeft(
+                        Seq.empty[T]
+                      )((accum: Seq[T], p: BodyPart) =>
+                        p match {
+                          case p: TokPart    => accum :+ expandTokPart(p)
+                          case p: ToStrPart  => accum :+ expandToStrPart(p)
+                          case p: ConcatPart => expandConcatPart(accum, p)
+                          case p: ArgPart =>
+                            accum ++ argsMap.get(p.arg.value).get.map {
+                              case Left((ignoreSet, name)) =>
+                                Left((ignoreSet + s.funcName.value, name))
+                              case x => x
+                            }
+                        }
+                      )
                       status = None
                       accum ++ expand(expanded)
                     } else {

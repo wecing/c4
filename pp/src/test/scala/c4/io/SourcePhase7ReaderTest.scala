@@ -17,13 +17,11 @@ class SourcePhase7ReaderTest extends AnyFlatSpec with should.Matchers {
     checkPP("02.c", "02.expect")
     checkPP("03.c", "03.expect")
     checkPP("04.c", "04.expect")
-    // TODO: ## not yet fully implemented
-    // checkPP("05.c", "05.expect")
+    checkPP("05.c", "05.expect")
     checkPP("06.c", "06.expect")
     checkPP("07.c", "07.expect")
     checkPP("08.c", "08.expect")
-    // TODO: ## not yet fully implemented
-    // checkPP("09.c", "09.expect")
+    checkPP("09.c", "09.expect")
     checkPP("10.c", "10.expect")
   }
 
@@ -38,6 +36,16 @@ class SourcePhase7ReaderTest extends AnyFlatSpec with should.Matchers {
 
     read("#define t(x,y) x ## y\nt(1,2.0)") should be(Seq(TokDouble(12.0)))
     read("#define t(x,y) x ## y\nt(1 , 2.0)") should be(Seq(TokDouble(12.0)))
+    read("#define t(x,y,z) x ## y ## z\nt(1,2,3.0)") should be(
+      Seq(TokDouble(123.0))
+    )
+    read("#define t(x,y,z) x ## y ## z\nt(,4,5.0)") should be(
+      Seq(TokDouble(45.0))
+    )
+
+    read("#define t(x,y) x ## y\nt(1,2)") should be(
+      Seq(TokInteger(12, Int32, true))
+    )
   }
 
   // TODO: more Phase7Reader specific tests here?
