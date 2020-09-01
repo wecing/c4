@@ -682,7 +682,103 @@ object PPReader {
       ctx: PPReaderCtx,
       tokens: Seq[L[PPTok]]
   ): Boolean = {
-    ??? // TODO: implement const expr eval
+    // prePP: handle "defined(x)" in #if
+    val prePP: Seq[L[PPTok]] = {
+      def recur(
+          accumRev: Seq[L[PPTok]],
+          tokens: Seq[L[PPTok]]
+      ): Seq[L[PPTok]] = {
+        tokens match {
+          case L(loc, PPTokId("defined"), fileName)
+              :: L(_, PPTokId(id), _)
+              :: xs => {
+            val n =
+              if (ctx.macros.contains(id)) {
+                "1"
+              } else {
+                "0"
+              }
+            recur(L(loc, PPTokNum(n), fileName) +: accumRev, xs)
+          }
+          case L(loc, PPTokId("defined"), fileName)
+              :: L(_, PPTokSym("("), _)
+              :: L(_, PPTokId(id), _)
+              :: L(_, PPTokSym(")"), _)
+              :: xs => {
+            val n =
+              if (ctx.macros.contains(id)) {
+                "1"
+              } else {
+                "0"
+              }
+            recur(L(loc, PPTokNum(n), fileName) +: accumRev, xs)
+          }
+          case x :: xs => recur(x +: accumRev, xs)
+          case Nil     => accumRev
+        }
+      }
+      def rmSpaces(ts: Seq[L[PPTok]]): Seq[L[PPTok]] = {
+        ts.filter {
+          case L(_, PPTokWhiteSpc(_), _) => false
+          case _                         => true
+        }
+      }
+      recur(Seq.empty, rmSpaces(tokens)).reverse
+    }
+    // postPP: pp + replace undefined ids with 0
+    val postPP: Seq[L[PPTok]] = pp(ctx, prePP).map {
+      case L(loc, PPTokId(_), fileName) => L(loc, PPTokNum("0"), fileName)
+      case x                            => x
+    }
+    // preEval: convert to just numbers and operators, not yet parsed
+    sealed abstract class EvalToken
+    final case class Num(num: Long, signed: Boolean) extends EvalToken
+    final case class Sym(sym: String) extends EvalToken
+    val preEval: Seq[L[EvalToken]] = postPP.flatMap {
+      case L(_, PPTokId(_), _)       => ??? // unreachable
+      case L(_, PPTokWhiteSpc(_), _) => None // may be introduced by macros
+      case L(loc, PPTokStr(_), fileName) =>
+        throw IllegalSourceException(
+          SimpleMessage(
+            fileName.getOrElse(ctx.logicalFileName),
+            loc,
+            "Invalid preprocessing token"
+          )
+        )
+      case t @ L(loc, PPTokNum(num), fileName) => {
+        val octalPattern = "^(0[0-7]*)[ulUL]*$".r
+        val decimalPattern = "^([1-9][0-9]*)[ulUL]*$".r
+        val hexPattern = "^0[xX]([0-9a-zA-Z]+)[ulUL]*$".r
+        val n: BigInt =
+          try {
+            num match {
+              case octalPattern(n) =>
+                BigInt(n, 8)
+              case decimalPattern(n) =>
+                BigInt(n, 10)
+              case hexPattern(n) =>
+                BigInt(n, 16)
+            }
+          } catch {
+            case e: java.lang.NumberFormatException =>
+              throw IllegalSourceException(
+                SimpleMessage(
+                  fileName.getOrElse(ctx.logicalFileName),
+                  loc,
+                  "Invalid preprocessing token"
+                )
+              )
+          }
+        Some(t.copy(value = Num(n.longValue, n <= Long.MaxValue)))
+      }
+      case t @ L(_, PPTokChar(repr), _) => {
+        val c: Char = TextUtils.fromCharReprQ(t.copy(value = repr))
+        Some(t.copy(value = Num(c.toInt, true)))
+      }
+      case t @ L(_, PPTokSym(sym), _) => Some(t.copy(value = Sym(sym)))
+    }
+    // TODO: implement const expr eval
+    ???
   }
 
   private def doPPCmd(ctx: PPReaderCtx, cmd: PPLine): Unit = {
