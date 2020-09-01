@@ -12,8 +12,7 @@ import scala.collection.mutable.ArrayBuffer
 
 class SourcePhase7ReaderTest extends AnyFlatSpec with should.Matchers {
   it should "pass tcc's pp tests" in {
-    // TODO: ## not yet fully implemented
-    // checkPP("01.c", "01.expect")
+    checkPP("01.c", "01.expect")
     checkPP("02.c", "02.expect")
     checkPP("03.c", "03.expect")
     checkPP("04.c", "04.expect")
@@ -47,8 +46,6 @@ class SourcePhase7ReaderTest extends AnyFlatSpec with should.Matchers {
       Seq(TokInteger(12, Int32, true))
     )
   }
-
-  // TODO: more Phase7Reader specific tests here?
 
   def checkPP(srcPath: String, expectedPath: String): Unit = {
     val srcWarnings: ArrayBuffer[Message] = ArrayBuffer.empty

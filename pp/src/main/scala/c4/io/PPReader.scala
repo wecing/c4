@@ -145,7 +145,73 @@ object PPReader {
   }
 
   sealed private class ObjMacro(rawBody: Seq[L[PPTok]]) {
-    val bodyTokens: Seq[PPTok] = rmExtraSpaces(rawBody).map(_.value)
+    val bodyTokens: Seq[PPTok] = {
+      def merge(t1: PPTok, t2: PPTok): PPTok = {
+        def f(t: PPTok): String = {
+          t match {
+            case PPTokId(id)      => id
+            case PPTokChar(repr)  => repr
+            case PPTokNum(num)    => num
+            case PPTokStr(repr)   => repr
+            case PPTokSym(sym)    => sym
+            case PPTokWhiteSpc(_) => ??? // unreachable
+          }
+        }
+        val t = f(t1) + f(t2)
+
+        val idPattern = "^[a-zA-Z_][a-zA-Z0-9_]*$".r
+        val numPattern =
+          "^(([0-9]*[.][0-9]+)|([0-9]+[.]?))[0-9a-zA-Z+-]*$".r
+        if (idPattern.matches(t)) {
+          PPTokId(t)
+        } else if (numPattern.matches(t)) {
+          PPTokNum(t)
+        } else {
+          PPTokSym(t)
+        }
+      }
+      def recur(tokens: Seq[PPTok], accumRev: Seq[PPTok]): Seq[PPTok] = {
+        (accumRev, tokens) match {
+          // x ## y
+          case (
+                PPTokWhiteSpc(_) :: t1 :: acc,
+                PPTokSym("##") :: PPTokWhiteSpc(_) :: t2 :: ts
+              ) => {
+            recur(ts, merge(t1, t2) :: acc)
+          }
+          // x## y
+          case (t1 :: acc, PPTokSym("##") :: PPTokWhiteSpc(_) :: t2 :: ts) => {
+            recur(ts, merge(t1, t2) :: acc)
+          }
+          // x ##y
+          case (PPTokWhiteSpc(_) :: t1 :: acc, PPTokSym("##") :: t2 :: ts) => {
+            recur(ts, merge(t1, t2) :: acc)
+          }
+          // x##y
+          case (t1 :: acc, PPTokSym("##") :: t2 :: ts) => {
+            recur(ts, merge(t1, t2) :: acc)
+          }
+          // other cases
+          case (acc, t :: ts) => recur(ts, t +: acc)
+          case (acc, Seq())   => acc
+        }
+      }
+      val sanitized: Seq[L[PPTok]] = rmExtraSpaces(rawBody)
+      sanitized.headOption
+        .filter(_.value == PPTokSym("##"))
+        .orElse(sanitized.lastOption.filter(_.value == PPTokSym("##")))
+        .map {
+          case L(loc, _, fileName) =>
+            throw IllegalSourceException(
+              SimpleMessage(
+                fileName.getOrElse("<unknown>"),
+                loc,
+                "Token '##' not preceded or followed by other tokens"
+              )
+            )
+        }
+      recur(sanitized.map(_.value), Seq.empty).reverse
+    }
 
     def predefinedName: Option[String] = None
 
@@ -242,7 +308,6 @@ object PPReader {
                           // set foundMacro only when search is complete
                           accum
                         case Some(Right(objMacro: ObjMacro)) =>
-                          // TODO: c89 also allows '##' to be used inside objMacros.
                           foundMacro = true
                           val located: L[Any] = tok match {
                             case Left((_, x)) => x
