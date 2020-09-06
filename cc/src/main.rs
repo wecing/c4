@@ -928,7 +928,7 @@ impl LLVMBuilderImpl {
         format!("$.t.{}", r)
     }
 
-    fn sanitize(&mut self) {
+    fn sanitize_basic_blocks(&mut self) {
         for bb in self.basic_blocks.values() {
             unsafe {
                 let mut v = llvm_sys::core::LLVMGetFirstInstruction(*bb);
@@ -1030,6 +1030,7 @@ impl IRBuilder for LLVMBuilderImpl {
             llvm_sys::core::LLVMClearInsertionPosition(self.builder);
         }
         self.current_function = llvm_func;
+        self.sanitize_basic_blocks();
         self.basic_blocks.clear();
     }
 
@@ -1519,7 +1520,7 @@ impl IRBuilder for LLVMBuilderImpl {
     }
 
     fn print_to_file(&mut self, file_name: &str) {
-        self.sanitize();
+        self.sanitize_basic_blocks();
 
         let file_name_c = CString::new(file_name).unwrap();
         unsafe {
@@ -1537,7 +1538,7 @@ impl IRBuilder for LLVMBuilderImpl {
     }
 
     fn write_bitcode_to_file(&mut self, file_name: &str) {
-        self.sanitize();
+        self.sanitize_basic_blocks();
 
         let file_name_c = CString::new(file_name).unwrap();
         let r = unsafe {
@@ -1595,7 +1596,8 @@ impl Compiler<'_> {
             }
         }
 
-        cc.c4ir_builder.print_to_file("-");
+        // this writes the human readable bitcode format; for binary format, use
+        // write_bitcode_to_file() instead.
         cc.llvm_builder.print_to_file("-");
     }
 
@@ -7812,8 +7814,8 @@ impl Compiler<'_> {
     ) -> QType {
         for &(q, loc) in tqs {
             use ast::TypeQualifier as TQ;
-            let is_const = qtype.is_const && q == TQ::CONST;
-            let is_volatile = qtype.is_volatile && q == TQ::VOLATILE;
+            let is_const = qtype.is_const || q == TQ::CONST;
+            let is_volatile = qtype.is_volatile || q == TQ::VOLATILE;
 
             // 3.5.3: The same type qualifier shall not appear more than once in
             // the same specifier list or qualifier list, either directly or via
