@@ -997,24 +997,14 @@ impl IRBuilder for LLVMBuilderImpl {
         linkage: Linkage,
         param_ir_ids: &Vec<String>,
     ) {
-        let llvm_tp = self.get_llvm_type(&tp.tp);
-        let c_func_name = CString::new(name).unwrap();
-        let llvm_func = unsafe {
-            llvm_sys::core::LLVMAddFunction(
-                self.module,
-                c_func_name.as_ptr(),
-                llvm_tp,
-            )
-        };
-        self.symbol_table.insert(String::from(name), llvm_func);
-        let llvm_linkage = if linkage == Linkage::INTERNAL {
-            llvm_sys::LLVMLinkage::LLVMInternalLinkage
+        let linkage = if linkage == Linkage::INTERNAL {
+            Linkage::INTERNAL
         } else {
-            llvm_sys::LLVMLinkage::LLVMExternalLinkage
+            Linkage::EXTERNAL
         };
+        self.create_definition(true, name, tp, linkage, &None);
+        let llvm_func = *self.symbol_table.get(name).unwrap();
         unsafe {
-            llvm_sys::core::LLVMSetLinkage(llvm_func, llvm_linkage);
-
             let mut llvm_param = llvm_sys::core::LLVMGetFirstParam(llvm_func);
             param_ir_ids.into_iter().for_each(|ir_id| {
                 let c_ir_id = CString::new(ir_id.clone()).unwrap();
@@ -1072,12 +1062,22 @@ impl IRBuilder for LLVMBuilderImpl {
         let name_c = CString::new(name).unwrap();
         let tp_llvm = self.get_llvm_type(&tp.tp);
         let v = unsafe {
-            if is_global {
-                llvm_sys::core::LLVMAddGlobal(
-                    self.module,
-                    tp_llvm,
-                    name_c.as_ptr(),
-                )
+            if is_global && self.symbol_table.contains_key(name) {
+                *self.symbol_table.get(name).unwrap()
+            } else if is_global {
+                if tp.is_function() {
+                    llvm_sys::core::LLVMAddFunction(
+                        self.module,
+                        name_c.as_ptr(),
+                        tp_llvm,
+                    )
+                } else {
+                    llvm_sys::core::LLVMAddGlobal(
+                        self.module,
+                        tp_llvm,
+                        name_c.as_ptr(),
+                    )
+                }
             } else {
                 llvm_sys::core::LLVMBuildAlloca(
                     self.builder,
@@ -1753,6 +1753,7 @@ impl Compiler<'_> {
             .create_function(&fname, &ftp, linkage, &param_ir_ids);
         self.llvm_builder
             .create_function(&fname, &ftp, linkage, &param_ir_ids);
+        self.has_link_time_addr.insert(fname.clone());
 
         // current_scope assumes arguments are all lvalues, but
         // IRBuilder.create_function creates regular values; i.e. for argument
@@ -3026,6 +3027,7 @@ impl Compiler<'_> {
         let func = (func, func_call.get_fn_loc());
         // Implicit function declarations are allowed in C89 but not C99.
         let (func_tp, func) = self.visit_expr(func, fold_constant, emit_ir);
+        let func = func.map(|f| self.convert_to_ir_value(&func_tp, f));
         let (func_ptr_tp, func) = self.convert_lvalue_and_func_designator(
             func_tp, func, true, true, true, emit_ir,
         );
@@ -7346,8 +7348,8 @@ impl Compiler<'_> {
             //   to by the right;
             (Type::Pointer(tp_l), Type::Pointer(tp_r))
                 if Compiler::try_get_composite_type(
-                    tp_l.as_ref(),
-                    tp_r.as_ref(),
+                    &QType::from(tp_l.tp.clone()),
+                    &QType::from(tp_r.tp.clone()),
                     loc_right,
                 )
                 .is_ok()
