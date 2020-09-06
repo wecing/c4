@@ -539,6 +539,8 @@ trait IRBuilder {
 
     // use "-" to print to stdout.
     fn print_to_file(&mut self, file_name: &str);
+
+    fn write_bitcode_to_file(&mut self, file_name: &str);
 }
 
 struct DummyIRBuilder {}
@@ -690,6 +692,8 @@ impl IRBuilder for DummyIRBuilder {
     fn create_return(&mut self, _ir_id: &str) {}
 
     fn print_to_file(&mut self, _file_name: &str) {}
+
+    fn write_bitcode_to_file(&mut self, _file_name: &str) {}
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -922,6 +926,28 @@ impl LLVMBuilderImpl {
         let r = self.next_uuid;
         self.next_uuid += 1;
         format!("$.t.{}", r)
+    }
+
+    fn sanitize(&mut self) {
+        for bb in self.basic_blocks.values() {
+            unsafe {
+                let mut v = llvm_sys::core::LLVMGetFirstInstruction(*bb);
+                while !v.is_null()
+                    && llvm_sys::core::LLVMIsATerminatorInst(v).is_null()
+                {
+                    v = llvm_sys::core::LLVMGetNextInstruction(v)
+                }
+                // v is now the last terminator inst, or null
+                if !v.is_null() {
+                    v = llvm_sys::core::LLVMGetNextInstruction(v)
+                }
+                while !v.is_null() {
+                    let t = v;
+                    v = llvm_sys::core::LLVMGetNextInstruction(v);
+                    llvm_sys::core::LLVMInstructionEraseFromParent(t);
+                }
+            }
+        }
     }
 }
 
@@ -1493,6 +1519,8 @@ impl IRBuilder for LLVMBuilderImpl {
     }
 
     fn print_to_file(&mut self, file_name: &str) {
+        self.sanitize();
+
         let file_name_c = CString::new(file_name).unwrap();
         unsafe {
             let mut err_msg_c: *mut i8 = ptr::null_mut();
@@ -1505,6 +1533,21 @@ impl IRBuilder for LLVMBuilderImpl {
                 let msg = CStr::from_ptr(err_msg_c).to_str().unwrap();
                 panic!("Error returned by LLVM backend: {}", msg);
             }
+        }
+    }
+
+    fn write_bitcode_to_file(&mut self, file_name: &str) {
+        self.sanitize();
+
+        let file_name_c = CString::new(file_name).unwrap();
+        let r = unsafe {
+            llvm_sys::bit_writer::LLVMWriteBitcodeToFile(
+                self.module,
+                file_name_c.as_ptr(),
+            )
+        };
+        if r != 0 {
+            panic!("Error code returned by LLVM backend: {}", r)
         }
     }
 }
