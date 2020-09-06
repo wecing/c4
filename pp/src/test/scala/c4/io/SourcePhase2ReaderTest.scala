@@ -146,7 +146,7 @@ class SourcePhase2ReaderTest extends AnyFlatSpec with should.Matchers {
     var restExpected: Seq[(String, (Int, Int))] = expected
     while (restExpected.nonEmpty) {
       val head: (String, (Int, Int)) = restExpected.head
-      reader.read should be(Some((head._1.charAt(0), head._2)))
+      reader.read() should be(Some((head._1.charAt(0), head._2)))
 
       if (1 < head._1.length) {
         restExpected = (head._1.substring(1), (head._2._1, head._2._2 + 1)) +:

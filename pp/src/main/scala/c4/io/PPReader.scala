@@ -404,7 +404,10 @@ object PPReader {
                       val argsRaw: Seq[Seq[T]] = // not expanded yet
                         checkNoArg(s.foundArgs.map(_._1) :+ s.curArg).map(trim)
                       val funcMacro: FuncMacro =
-                        ctx.macros.get(s.funcName.value).get.left.get
+                        ctx.macros
+                          .get(s.funcName.value)
+                          .flatMap(_.left.toOption)
+                          .get
                       if (args.length != funcMacro.argNames.length) {
                         throw IllegalSourceException(
                           SimpleMessage(
@@ -778,7 +781,17 @@ object PPReader {
       case t @ L(_, PPTokSym(sym), _) => Some(t.copy(value = Sym(sym)))
     }
     // TODO: implement const expr eval
-    ???
+    preEval.map(_.value) match {
+      case Num(x, _) :: Nil                           => x != 0
+      case Sym("!") :: Num(x, _) :: Nil               => x == 0
+      case Num(x, _) :: Sym(">") :: Num(y, _) :: Nil  => x > y
+      case Num(x, _) :: Sym(">=") :: Num(y, _) :: Nil => x >= y
+      case Num(x, _) :: Sym("<") :: Num(y, _) :: Nil  => x < y
+      case Num(x, _) :: Sym("<=") :: Num(y, _) :: Nil => x <= y
+      case Num(x, _) :: Sym("==") :: Num(y, _) :: Nil => x == y
+      case Num(x, _) :: Sym("!=") :: Num(y, _) :: Nil => x != y
+      case _                                          => ???
+    }
   }
 
   private def doPPCmd(ctx: PPReaderCtx, cmd: PPLine): Unit = {

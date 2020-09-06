@@ -8,7 +8,7 @@ object IllegalSourceException {
 
 final case class IllegalSourceException(msg: Message)
     extends RuntimeException(msg.toString()) {
-  def this(loc: Loc, msg: String) {
+  def this(loc: Loc, msg: String) = {
     this(new LocMessage(loc, msg))
   }
 }
