@@ -945,11 +945,19 @@ object PPReader {
         val oldLogicalFileNameRepr = ctx.logicalFileNameRepr
         val oldLogicalFileName = ctx.logicalFileName
         val oldIfStatusStack = ctx.ifStatusStack
-        // TODO: use PPLineReader.isCaret
-        ctx.ppLineReader = new PPLineReader(
-          ctx.warnings,
-          SearchPath.find(ctx.fileName, ppCmd.name.value)
-        )
+
+        val newFileName =
+          SearchPath.find(ctx.fileName, ppCmd.name.value, ppCmd.isCaret)
+        if (newFileName.isEmpty) {
+          throw IllegalSourceException(
+            SimpleMessage(
+              ctx.logicalFileName,
+              (ppCmd.name.loc._1 + ctx.logicalLineNumOffset, ppCmd.name.loc._2),
+              s"File ${ppCmd.name.value} is not found"
+            )
+          )
+        }
+        ctx.ppLineReader = new PPLineReader(ctx.warnings, newFileName.get)
         ctx.logicalFileNameRepr = TextUtils.strReprQ(ppCmd.name.value)
         ctx.logicalFileName = ppCmd.name.value
         ctx.ifStatusStack = mutable.Stack()

@@ -2,6 +2,8 @@ package c4.io
 
 import c4.messaging.{SimpleMessage, IllegalSourceException, Message}
 
+import java.net.URI
+
 import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 
@@ -27,7 +29,13 @@ class SourcePhase2Reader(
   // phase 2: remove "\\\n". a non-empty source file shall end with "\n" but
   //          not "\\\n".
 
-  private val file: Source = Source.fromFile(fileName)
+  private val file: Source =
+    if (fileName.startsWith("jar:")) {
+      // jar resources
+      Source.fromResource(fileName.drop(4))
+    } else {
+      Source.fromFile(fileName)
+    }
 
   /**
     * Close the underlying reader.
