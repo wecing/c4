@@ -235,7 +235,7 @@ object PPReader {
 
   private final class PPReaderCtx(
       val warnings: ArrayBuffer[Message],
-      fileName: String
+      val fileName: String
   ) {
     var ppLineReader: PPLineReader = new PPLineReader(warnings, fileName)
 
@@ -946,7 +946,10 @@ object PPReader {
         val oldLogicalFileName = ctx.logicalFileName
         val oldIfStatusStack = ctx.ifStatusStack
         // TODO: use PPLineReader.isCaret
-        ctx.ppLineReader = new PPLineReader(ctx.warnings, ppCmd.name.value)
+        ctx.ppLineReader = new PPLineReader(
+          ctx.warnings,
+          SearchPath.find(ctx.fileName, ppCmd.name.value)
+        )
         ctx.logicalFileNameRepr = TextUtils.strReprQ(ppCmd.name.value)
         ctx.logicalFileName = ppCmd.name.value
         ctx.ifStatusStack = mutable.Stack()

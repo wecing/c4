@@ -29,9 +29,10 @@ object Parser {
     try {
       val warnings: ArrayBuffer[Message] = ArrayBuffer.empty
       if (ppOnly) {
+        var prevFileName: Option[String] = None
         var prevLn = 1
         for (tok <- PPReader.read(warnings, fileName.get)) {
-          if (tok.loc._1 != prevLn) {
+          if (tok.loc._1 != prevLn || tok.fileName != prevFileName) {
             System.out.println()
             if (prevLn + 1 < tok.loc._1) {
               System.out.println()
@@ -41,6 +42,7 @@ object Parser {
             }
           }
           prevLn = tok.loc._1
+          prevFileName = tok.fileName
           System.out.print(tok.value.raw)
         }
         System.out.println()
