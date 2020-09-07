@@ -771,7 +771,11 @@ impl LLVMBuilderImpl {
                     )
                 }
                 Type::Pointer(tp) => llvm_sys::core::LLVMPointerType(
-                    self.get_llvm_type(&tp.tp),
+                    if !tp.is_void() {
+                        self.get_llvm_type(&tp.tp)
+                    } else {
+                        llvm_sys::core::LLVMInt8TypeInContext(self.context)
+                    },
                     0,
                 ),
                 Type::Array(tp, sz) => {
@@ -1110,13 +1114,28 @@ impl IRBuilder for LLVMBuilderImpl {
     }
 
     fn create_constant_buffer(&mut self, ir_id: &str, buf: Vec<u8>) {
+        let ir_id_c = CString::new(ir_id).unwrap();
         let v = unsafe {
-            llvm_sys::core::LLVMConstStringInContext(
+            let v = llvm_sys::core::LLVMAddGlobal(
+                self.module,
+                self.get_llvm_type(&Type::Array(
+                    Box::new(QType::from(Type::Char)),
+                    Some(buf.len() as u32),
+                )),
+                ir_id_c.as_ptr(),
+            );
+            llvm_sys::core::LLVMSetLinkage(
+                v,
+                llvm_sys::LLVMLinkage::LLVMLinkerPrivateLinkage,
+            );
+            let s = llvm_sys::core::LLVMConstStringInContext(
                 self.context,
                 buf.as_ptr() as *const i8,
                 buf.len() as u32,
                 1,
-            )
+            );
+            llvm_sys::core::LLVMSetInitializer(v, s);
+            v
         };
         self.symbol_table.insert(ir_id.to_string(), v);
     }
