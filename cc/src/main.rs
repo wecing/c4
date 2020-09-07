@@ -1597,7 +1597,7 @@ struct Compiler<'a> {
 type L<'a, T> = (T, &'a ast::Loc);
 
 impl Compiler<'_> {
-    fn visit(tu: ast::TranslationUnit) {
+    fn visit(tu: ast::TranslationUnit, pretty_print_ir: bool) {
         let mut cc = Compiler {
             translation_unit: &tu,
             current_scope: Scope::new(),
@@ -1615,9 +1615,11 @@ impl Compiler<'_> {
             }
         }
 
-        // this writes the human readable bitcode format; for binary format, use
-        // write_bitcode_to_file() instead.
-        cc.llvm_builder.print_to_file("-");
+        if pretty_print_ir {
+            cc.llvm_builder.print_to_file("-");
+        } else {
+            cc.llvm_builder.write_bitcode_to_file("-");
+        }
     }
 
     fn visit_function_def(&mut self, fd: &ast::FunctionDef) {
@@ -8547,7 +8549,15 @@ impl Compiler<'_> {
 }
 
 fn main() {
-    let input_path: Option<String> = env::args().into_iter().skip(1).next();
+    let pretty_print_ir = env::args()
+        .into_iter()
+        .find(|x| x == "-emit-llvm")
+        .is_some();
+    let input_path: Option<String> = env::args()
+        .into_iter()
+        .filter(|x| x != "-emit-llvm")
+        .skip(1)
+        .next();
 
     let parse =
         |input| ::protobuf::parse_from_reader::<ast::TranslationUnit>(input);
@@ -8560,5 +8570,5 @@ fn main() {
         Ok(tu) => tu,
         Err(e) => panic!(e.to_string()),
     };
-    Compiler::visit(translation_unit);
+    Compiler::visit(translation_unit, pretty_print_ir);
 }

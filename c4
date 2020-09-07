@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 import subprocess
 import tempfile
 
@@ -11,23 +12,70 @@ parser.add_argument("-E", "--preprocessor-only",
                     help="Only run the preprocessor", action="store_true")
 parser.add_argument("-c", "--object-file-only", help="Only output object file",
                     action="store_true")
+parser.add_argument("-S", "--asm-only",
+                    help="Only output asm file", action="store_true")
+parser.add_argument(
+    "-emit-llvm", help="Emit LLVM IR (must be used with -S)", action="store_true")
 args = parser.parse_args()
 
-pp = subprocess.Popen(
-    ['java', '-jar', 'pp/target/scala-2.13/parser.jar', args.file],
-    stdout=subprocess.PIPE)
-cc = subprocess.Popen(['cc/target/debug/c4cc'],
-                      stdin=pp.stdout, stdout=subprocess.PIPE)
-opt = subprocess.Popen(['opt'], stdin=cc.stdout, stdout=subprocess.PIPE)
 
-obj_file = tempfile.NamedTemporaryFile(delete=False)
-ass = subprocess.Popen(['llc', '--filetype=obj'],
-                       stdin=opt.stdout, stdout=obj_file)
+def pipeTo(x): return subprocess.PIPE if x else None
+
+
+base_filename = os.path.basename(args.file)
+if base_filename.endswith('.c'):
+    base_filename = base_filename[:-2]
+
+# steps
+pp = ['java', '-jar', 'pp/target/scala-2.13/parser.jar'] + \
+    (['-E'] if args.preprocessor_only else []) + [args.file]
+
+ir_file = None
+if not args.preprocessor_only and args.asm_only and args.emit_llvm:
+    if args.output:
+        ir_file = open(args.output, 'w')
+    else:
+        ir_file = open(base_filename + '.ll', 'w')
+cc = (['cc/target/debug/c4cc'] + (['-emit-llvm'] if ir_file else [])
+      ) if not args.preprocessor_only else None
+
+opt = ['opt'] if cc and not ir_file else None
+
+asm_file_type = 'asm' if args.asm_only else 'obj'
+asm = ['llc', '--filetype=' + asm_file_type] if opt else None
+
+obj_file = None
+if asm:
+    if not args.object_file_only and not args.asm_only:
+        obj_file = tempfile.NamedTemporaryFile(delete=False) if asm else None
+    elif args.output:
+        obj_file = open(args.output, 'w+b')
+    elif args.object_file_only:
+        obj_file = open(base_filename + '.o', 'w+b')
+    elif args.emit_llvm:
+        obj_file = open(base_filename + '.ll', 'w')
+    else:
+        obj_file = open(base_filename + '.s', 'w')
+
+skip_ln = not asm or args.object_file_only or args.asm_only
+ln = ['clang', obj_file.name, '-o',
+      args.output or 'a.out'] if not skip_ln else None
+
+# execute steps
+pp = subprocess.Popen(pp, stdout=pipeTo(cc))
+cc = subprocess.Popen(cc, stdin=pp.stdout,
+                      stdout=(ir_file or pipeTo(opt))) if cc else None
+opt = subprocess.Popen(opt, stdin=cc.stdout,
+                       stdout=pipeTo(asm)) if opt else None
+asm = subprocess.Popen(asm, stdin=opt.stdout, stdout=obj_file) if asm else None
+
+# wait for completion
 pp.wait()
-cc.wait()
-opt.wait()
-ass.wait()
-obj_file.close()
+cc.wait() if cc else None
+opt.wait() if opt else None
+asm.wait() if asm else None
 
-ln = subprocess.Popen(['clang', obj_file.name, '-o', args.output or 'a.out'])
-ln.wait()
+obj_file.close() if obj_file else None
+
+ln = subprocess.Popen(ln) if ln else None
+ln.wait() if ln else None

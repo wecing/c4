@@ -1,7 +1,7 @@
 package c4
 
 import c4.ast.{AST, C4Scanner, C4Parser, ProtoConverter}
-import c4.io.SourcePhase7Reader
+import c4.io.{PPReader, SourcePhase7Reader}
 import c4.messaging.{IllegalSourceException, Message}
 
 import java.io.FileNotFoundException
@@ -12,10 +12,12 @@ object Parser {
   def main(args: Array[String]): Unit = {
     var fileName: Option[String] = None
     var printText = false
+    var ppOnly = false
 
     args.foreach {
       case "--help" | "-h"        => printUsage(0)
       case "--text" | "-t"        => printText = true
+      case "-E"                   => ppOnly = true
       case s if s.startsWith("-") => printUsage(1)
       case s                      => fileName = Some(s)
     }
@@ -26,22 +28,40 @@ object Parser {
 
     try {
       val warnings: ArrayBuffer[Message] = ArrayBuffer.empty
-      val reader = new SourcePhase7Reader(warnings, fileName.get)
-      val parser = new C4Parser(new C4Scanner(reader))
-      val ast = parser.parse().value.asInstanceOf[AST.TranslationUnit]
-      val astProto = ProtoConverter.toProto(ast)
-
-      if (warnings.nonEmpty) {
-        for (w <- warnings) {
-          println(s"warning: $w")
+      if (ppOnly) {
+        var prevLn = 1
+        for (tok <- PPReader.read(warnings, fileName.get)) {
+          if (tok.loc._1 != prevLn) {
+            System.out.println()
+            if (prevLn + 1 < tok.loc._1) {
+              System.out.println()
+            }
+            for (i <- 1 until tok.loc._2) {
+              System.out.print(' ')
+            }
+          }
+          prevLn = tok.loc._1
+          System.out.print(tok.value.raw)
         }
-        System.exit(1)
-      }
-
-      if (printText) {
-        System.out.print(astProto.toProtoString)
+        System.out.println()
       } else {
-        astProto.writeTo(System.out)
+        val reader = new SourcePhase7Reader(warnings, fileName.get)
+        val parser = new C4Parser(new C4Scanner(reader))
+        val ast = parser.parse().value.asInstanceOf[AST.TranslationUnit]
+        val astProto = ProtoConverter.toProto(ast)
+
+        if (warnings.nonEmpty) {
+          for (w <- warnings) {
+            println(s"warning: $w")
+          }
+          System.exit(1)
+        }
+
+        if (printText) {
+          System.out.print(astProto.toProtoString)
+        } else {
+          astProto.writeTo(System.out)
+        }
       }
     } catch {
       case e: IllegalSourceException =>
@@ -61,6 +81,7 @@ object Parser {
         |OPTIONS:
         |  --text | -t    Output AST in textproto format instead of binary
         |  --help | -h    Print help
+        |  -E             Only run the preprocessor
         |""".stripMargin)
     System.exit(status)
   }
