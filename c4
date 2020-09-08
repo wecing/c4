@@ -4,6 +4,7 @@ import argparse
 import os
 import subprocess
 import tempfile
+from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument("file", help="Input file")
@@ -22,12 +23,14 @@ args = parser.parse_args()
 def pipeTo(x): return subprocess.PIPE if x else None
 
 
+c4_path = str(Path(__file__).resolve().parent)
+
 base_filename = os.path.basename(args.file)
 if base_filename.endswith('.c'):
     base_filename = base_filename[:-2]
 
 # steps
-pp = ['java', '-jar', 'pp/target/scala-2.13/parser.jar'] + \
+pp = ['java', '-jar', c4_path + '/pp/target/scala-2.13/parser.jar'] + \
     (['-E'] if args.preprocessor_only else []) + [args.file]
 
 ir_file = None
@@ -36,7 +39,7 @@ if not args.preprocessor_only and args.asm_only and args.emit_llvm:
         ir_file = open(args.output, 'w')
     else:
         ir_file = open(base_filename + '.ll', 'w')
-cc = (['cc/target/debug/c4cc'] + (['-emit-llvm'] if ir_file else [])
+cc = ([c4_path + '/cc/target/debug/c4cc'] + (['-emit-llvm'] if ir_file else [])
       ) if not args.preprocessor_only else None
 
 opt = ['opt'] if cc and not ir_file else None
