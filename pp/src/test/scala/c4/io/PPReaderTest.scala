@@ -157,7 +157,7 @@ class PPReaderTest extends AnyFlatSpec with should.Matchers {
     val warnings: ArrayBuffer[Message] = ArrayBuffer.empty
     val tokens: Seq[String] =
       PPReader
-        .read(warnings, fileName)
+        .read(warnings, fileName, Map.empty)
         .map(_.value)
         .filterNot(_.isInstanceOf[PPTokWhiteSpc])
         .map(_.raw)

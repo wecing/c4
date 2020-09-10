@@ -6,6 +6,7 @@ import c4.messaging.{IllegalSourceException, Message}
 
 import java.io.FileNotFoundException
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
 object Parser {
@@ -13,11 +14,16 @@ object Parser {
     var fileName: Option[String] = None
     var printText = false
     var ppOnly = false
+    var macros: mutable.Map[String, String] = mutable.Map.empty
 
     args.foreach {
-      case "--help" | "-h"        => printUsage(0)
-      case "--text" | "-t"        => printText = true
-      case "-E"                   => ppOnly = true
+      case "--help" | "-h" => printUsage(0)
+      case "--text" | "-t" => printText = true
+      case "-E"            => ppOnly = true
+      case s if s.startsWith("-D") => {
+        val Seq(k, v) = (s.drop(2).split("=", 2).toSeq ++ Seq("1")).take(2)
+        macros += (k -> v)
+      }
       case s if s.startsWith("-") => printUsage(1)
       case s                      => fileName = Some(s)
     }
@@ -31,7 +37,7 @@ object Parser {
       if (ppOnly) {
         var prevFileName: Option[String] = None
         var prevLn = 1
-        for (tok <- PPReader.read(warnings, fileName.get)) {
+        for (tok <- PPReader.read(warnings, fileName.get, macros.to(Map))) {
           if (tok.loc._1 != prevLn || tok.fileName != prevFileName) {
             System.out.println()
             if (prevLn + 1 < tok.loc._1) {
@@ -47,7 +53,8 @@ object Parser {
         }
         System.out.println()
       } else {
-        val reader = new SourcePhase7Reader(warnings, fileName.get)
+        val reader =
+          new SourcePhase7Reader(warnings, fileName.get, macros.to(Map))
         val parser = new C4Parser(new C4Scanner(reader))
         val ast = parser.parse().value.asInstanceOf[AST.TranslationUnit]
         val astProto = ProtoConverter.toProto(ast)
@@ -84,6 +91,7 @@ object Parser {
         |  --text | -t    Output AST in textproto format instead of binary
         |  --help | -h    Print help
         |  -E             Only run the preprocessor
+        |  -Dname=def     Define preprocessing macro
         |""".stripMargin)
     System.exit(status)
   }

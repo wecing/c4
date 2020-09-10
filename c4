@@ -7,16 +7,18 @@ import tempfile
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
-parser.add_argument("file", help="Input file")
-parser.add_argument("-o", "--output", help="Output file")
-parser.add_argument("-E", "--preprocessor-only",
-                    help="Only run the preprocessor", action="store_true")
-parser.add_argument("-c", "--object-file-only", help="Only output object file",
-                    action="store_true")
-parser.add_argument("-S", "--asm-only",
-                    help="Only output asm file", action="store_true")
+parser.add_argument('file', help='Input file')
+parser.add_argument('-o', '--output', help='Output file')
+parser.add_argument('-D', '--define-macro',
+                    help='Define preprocessing macro', action='append')
+parser.add_argument('-E', '--preprocessor-only',
+                    help='Only run the preprocessor', action='store_true')
+parser.add_argument('-c', '--object-file-only', help='Only output object file',
+                    action='store_true')
+parser.add_argument('-S', '--asm-only',
+                    help='Only output asm file', action='store_true')
 parser.add_argument(
-    "-emit-llvm", help="Emit LLVM IR (must be used with -S)", action="store_true")
+    '-emit-llvm', help='Emit LLVM IR (must be used with -S)', action='store_true')
 args = parser.parse_args()
 
 
@@ -31,7 +33,9 @@ if base_filename.endswith('.c'):
 
 # steps
 pp = ['java', '-jar', c4_path + '/pp/target/scala-2.13/parser.jar'] + \
-    (['-E'] if args.preprocessor_only else []) + [args.file]
+    (['-E'] if args.preprocessor_only else []) + \
+    ['-D' + m for m in args.define_macro or []] + \
+    [args.file]
 
 ir_file = None
 if not args.preprocessor_only and args.asm_only and args.emit_llvm:

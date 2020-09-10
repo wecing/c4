@@ -154,11 +154,12 @@ case object Tok_|= extends Tok(Sym.B_OR_ASSIGN)
   */
 class SourcePhase7Reader(
     val warnings: ArrayBuffer[Message],
-    val fileName: String
+    val fileName: String,
+    predefMacros: Map[String, String]
 ) {
   private var tokens: Seq[L[Tok]] = {
     PPReader
-      .read(warnings, fileName)
+      .read(warnings, fileName, predefMacros)
       .foldLeft(Seq.empty[L[Tok]]) { (acc: Seq[L[Tok]], ppTok: L[PPTok]) =>
         ppTok.value match {
           case PPTokId(id) =>

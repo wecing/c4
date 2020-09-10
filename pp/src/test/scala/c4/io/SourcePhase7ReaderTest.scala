@@ -60,8 +60,10 @@ class SourcePhase7ReaderTest extends AnyFlatSpec with should.Matchers {
     val tempExpPath: String = TestUtil.createTempFile(expUrl)
 
     try {
-      val srcReader = new SourcePhase7Reader(srcWarnings, tempSrcPath)
-      val expReader = new SourcePhase7Reader(expectedWarnings, tempExpPath)
+      val srcReader =
+        new SourcePhase7Reader(srcWarnings, tempSrcPath, Map.empty)
+      val expReader =
+        new SourcePhase7Reader(expectedWarnings, tempExpPath, Map.empty)
 
       var quit = false
       while (!quit) {
@@ -103,7 +105,7 @@ class SourcePhase7ReaderTest extends AnyFlatSpec with should.Matchers {
   def read(content: String): Seq[Tok] = {
     val srcUrl = TestUtil.createTempFile(content + "\n")
     val srcWarnings: ArrayBuffer[Message] = ArrayBuffer.empty
-    val srcReader = new SourcePhase7Reader(srcWarnings, srcUrl)
+    val srcReader = new SourcePhase7Reader(srcWarnings, srcUrl, Map.empty)
 
     val toks: ArrayBuffer[Tok] = ArrayBuffer.empty
     while (srcReader.get().map(t => toks += t.value).isDefined) {

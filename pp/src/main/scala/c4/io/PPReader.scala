@@ -235,7 +235,8 @@ object PPReader {
 
   private final class PPReaderCtx(
       val warnings: ArrayBuffer[Message],
-      val fileName: String
+      val fileName: String,
+      predefMacros: Map[String, String]
   ) {
     var ppLineReader: PPLineReader = new PPLineReader(warnings, fileName)
 
@@ -256,7 +257,23 @@ object PPReader {
       LineMacro.predefinedName.get -> Right(LineMacro),
       FileMacro.predefinedName.get -> Right(FileMacro),
       DateMacro.predefinedName.get -> Right(DateMacro)
-    )
+    ) ++ predefMacros.map {
+      case (k, v) => {
+        val idPattern = "^[a-zA-Z_][a-zA-Z0-9_]*$".r
+        val numPattern =
+          "^(([0-9]*[.][0-9]+)|([0-9]+[.]?))[0-9a-zA-Z+-]*$".r
+        val tok = if (idPattern.matches(v)) {
+          PPTokId(v)
+        } else if (numPattern.matches(v)) {
+          PPTokNum(v)
+        } else {
+          throw new NotImplementedError(
+            s"Complex cmdline macro ${k} not supported"
+          )
+        }
+        (k -> Right(new ObjMacro(Seq(L((0, 0), tok, None)))))
+      }
+    }
   }
 
   // pp = macro expansion + #line processing
@@ -975,7 +992,15 @@ object PPReader {
     }
   }
 
-  def read(warnings: ArrayBuffer[Message], fileName: String): Seq[L[PPTok]] = {
-    read(new PPReaderCtx(warnings, fileName), Seq.empty, Seq.empty)
+  def read(
+      warnings: ArrayBuffer[Message],
+      fileName: String,
+      predefMacros: Map[String, String]
+  ): Seq[L[PPTok]] = {
+    read(
+      new PPReaderCtx(warnings, fileName, predefMacros),
+      Seq.empty,
+      Seq.empty
+    )
   }
 }
