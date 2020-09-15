@@ -917,7 +917,6 @@ impl LLVMBuilderImpl {
                     vals.push(zero_padding);
                 }
                 unsafe {
-                    // TODO: LLVMConstNamedStruct
                     if struct_tp.is_none() {
                         llvm_sys::core::LLVMConstStruct(
                             vals.as_mut_ptr(),
