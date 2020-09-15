@@ -893,6 +893,7 @@ impl LLVMBuilderImpl {
     fn get_llvm_constant_init(
         &mut self,
         init: &Initializer,
+        struct_tp: Option<&QType>,
     ) -> llvm_sys::prelude::LLVMValueRef {
         use ConstantOrIrValue as C;
         match init {
@@ -903,7 +904,7 @@ impl LLVMBuilderImpl {
             Initializer::Struct(inits, zero_padding_bytes) => {
                 let mut vals: Vec<llvm_sys::prelude::LLVMValueRef> = inits
                     .into_iter()
-                    .map(|init| self.get_llvm_constant_init(init))
+                    .map(|init| self.get_llvm_constant_init(init, None))
                     .collect();
                 if *zero_padding_bytes > 0 {
                     let zero_padding_tp = self.get_llvm_type(&Type::Array(
@@ -916,11 +917,20 @@ impl LLVMBuilderImpl {
                     vals.push(zero_padding);
                 }
                 unsafe {
-                    llvm_sys::core::LLVMConstStruct(
-                        vals.as_mut_ptr(),
-                        vals.len() as u32,
-                        1,
-                    )
+                    // TODO: LLVMConstNamedStruct
+                    if struct_tp.is_none() {
+                        llvm_sys::core::LLVMConstStruct(
+                            vals.as_mut_ptr(),
+                            vals.len() as u32,
+                            0,
+                        )
+                    } else {
+                        llvm_sys::core::LLVMConstNamedStruct(
+                            self.get_llvm_type(&struct_tp.unwrap().tp),
+                            vals.as_mut_ptr(),
+                            vals.len() as u32,
+                        )
+                    }
                 }
             }
         }
@@ -1098,8 +1108,9 @@ impl IRBuilder for LLVMBuilderImpl {
         };
         linkage_llvm.map(|ln| unsafe { llvm_sys::core::LLVMSetLinkage(v, ln) });
 
-        init.as_ref().map(|x| self.get_llvm_constant_init(x)).map(
-            |value| unsafe {
+        init.as_ref()
+            .map(|x| self.get_llvm_constant_init(x, Some(tp)))
+            .map(|value| unsafe {
                 if is_global {
                     llvm_sys::core::LLVMSetInitializer(v, value);
                 } else {
@@ -1107,8 +1118,7 @@ impl IRBuilder for LLVMBuilderImpl {
                     // option would be to create a global const and memcpy.
                     llvm_sys::core::LLVMBuildStore(self.builder, value, v);
                 }
-            },
-        );
+            });
 
         self.symbol_table.insert(String::from(name), v);
     }
@@ -3091,6 +3101,7 @@ impl Compiler<'_> {
                 (arg_tp, arg)
             })
             .collect();
+
         // 3.3.2.2: If the expression that denotes the called function has a
         // type that does not include a prototype, the integral promotions are
         // performed on each argument and arguments that have type float are
@@ -3849,13 +3860,17 @@ impl Compiler<'_> {
                 Compiler::check_types_for_assign(
                     &tp_left, &tp_right, &right, loc_right,
                 );
-                let (_, right) = self.cast_expression(
-                    tp_right,
-                    right,
-                    tp_left.clone(),
-                    loc_right,
-                    emit_ir,
-                );
+                let (_, right) = if tp_right.is_scalar_type() {
+                    self.cast_expression(
+                        tp_right,
+                        right,
+                        tp_left.clone(),
+                        loc_right,
+                        emit_ir,
+                    )
+                } else {
+                    (tp_right, right)
+                };
                 if !emit_ir {
                     return (QType::from(tp_left.tp), None);
                 }
@@ -7956,6 +7971,18 @@ impl Compiler<'_> {
                 if do_deref_lvalue && !emit_ir =>
             {
                 (QType::from(t), None)
+            }
+            (t @ Type::Struct(_), Some(c @ C::HasAddress(_, _, true)))
+            | (t @ Type::Union(_), Some(c @ C::HasAddress(_, _, true)))
+                if do_deref_lvalue =>
+            {
+                // get address
+                let ptr_ir_id = match self.convert_to_ir_value(&tp, c) {
+                    C::IrValue(ir_id, true) => ir_id,
+                    _ => unreachable!(),
+                };
+
+                (QType::from(t), Some(C::IrValue(ptr_ir_id, false)))
             }
             (t, Some(c @ C::HasAddress(_, _, true))) if do_deref_lvalue => {
                 // get address
