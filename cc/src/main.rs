@@ -5113,8 +5113,8 @@ impl Compiler<'_> {
             _ => None,
         };
         let (tp_field, offset) = match offset {
-            Some(x) => x,
-            None => {
+            Some(x) if x.1.bit_field_mask != 0 => x,
+            Some(_) | None => {
                 let (tp_left, left) =
                     self.visit_expr(left, fold_constant, emit_ir);
                 let (tp_right, right) =
