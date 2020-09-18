@@ -818,14 +818,27 @@ object PPReader {
       case x: PPLineInclude =>
         throw new RuntimeException("programming error")
       case x: PPLineIf =>
-        val b: Boolean = ppEvalConstBoolExpr(ctx, x.tokens)
-        ctx.ifStatusStack.push((b, b, false))
+        // nested #if
+        if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
+          val b: Boolean = ppEvalConstBoolExpr(ctx, x.tokens)
+          ctx.ifStatusStack.push((b, b, false))
+        } else {
+          ctx.ifStatusStack.push((false, true, false))
+        }
       case x: PPLineIfdef =>
-        val b: Boolean = ctx.macros.contains(x.name.value)
-        ctx.ifStatusStack.push((b, b, false))
+        if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
+          val b: Boolean = ctx.macros.contains(x.name.value)
+          ctx.ifStatusStack.push((b, b, false))
+        } else {
+          ctx.ifStatusStack.push((false, true, false))
+        }
       case x: PPLineIfndef =>
-        val b: Boolean = !ctx.macros.contains(x.name.value)
-        ctx.ifStatusStack.push((b, b, false))
+        if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
+          val b: Boolean = !ctx.macros.contains(x.name.value)
+          ctx.ifStatusStack.push((b, b, false))
+        } else {
+          ctx.ifStatusStack.push((false, true, false))
+        }
       case x: PPLineElif =>
         val b: Boolean = ppEvalConstBoolExpr(ctx, x.tokens)
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._3) {
@@ -870,73 +883,83 @@ object PPReader {
           ctx.ifStatusStack.pop()
         }
       case x: PPLineDefineObj =>
-        val objMacro: ObjMacro = new ObjMacro(x.tokens)
-        ctx.macros.get(x.name.value) match {
-          case None =>
-            ctx.macros.put(x.name.value, Right(objMacro))
-          case Some(m) =>
-            if (m != Right(objMacro)) {
-              throw IllegalSourceException(
-                SimpleMessage(
-                  ctx.logicalFileName,
-                  (x.loc._1 + ctx.logicalLineNumOffset, x.loc._2),
-                  s"Redefinition of macro ${x.name.value}"
+        if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
+          val objMacro: ObjMacro = new ObjMacro(x.tokens)
+          ctx.macros.get(x.name.value) match {
+            case None =>
+              ctx.macros.put(x.name.value, Right(objMacro))
+            case Some(m) =>
+              if (m != Right(objMacro)) {
+                throw IllegalSourceException(
+                  SimpleMessage(
+                    ctx.logicalFileName,
+                    (x.loc._1 + ctx.logicalLineNumOffset, x.loc._2),
+                    s"Redefinition of macro ${x.name.value}"
+                  )
                 )
-              )
-            }
+              }
+          }
         }
       case x: PPLineDefineFunc =>
-        val funcMacro: FuncMacro =
-          new FuncMacro(ctx, x.argNames, x.tokens)
-        ctx.macros.get(x.name.value) match {
-          case None =>
-            ctx.macros.put(x.name.value, Left(funcMacro))
-          case Some(m) =>
-            if (m != Left(funcMacro)) {
-              throw IllegalSourceException(
-                SimpleMessage(
-                  ctx.logicalFileName,
-                  (x.loc._1 + ctx.logicalLineNumOffset, x.loc._2),
-                  s"Redefinition of macro ${x.name.value}"
+        if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
+          val funcMacro: FuncMacro =
+            new FuncMacro(ctx, x.argNames, x.tokens)
+          ctx.macros.get(x.name.value) match {
+            case None =>
+              ctx.macros.put(x.name.value, Left(funcMacro))
+            case Some(m) =>
+              if (m != Left(funcMacro)) {
+                throw IllegalSourceException(
+                  SimpleMessage(
+                    ctx.logicalFileName,
+                    (x.loc._1 + ctx.logicalLineNumOffset, x.loc._2),
+                    s"Redefinition of macro ${x.name.value}"
+                  )
                 )
-              )
-            }
+              }
+          }
         }
       case x: PPLineUndef =>
-        if (ctx.macros.contains(x.name.value)) {
-          ctx.macros.remove(x.name.value)
-        } else {
+        if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
+          if (ctx.macros.contains(x.name.value)) {
+            ctx.macros.remove(x.name.value)
+          } else {
+            throw IllegalSourceException(
+              SimpleMessage(
+                ctx.logicalFileName,
+                (x.loc._1 + ctx.logicalLineNumOffset, x.loc._2),
+                s"macro ${x.name.value} is not defined"
+              )
+            )
+          }
+        }
+      case x: PPLineLine =>
+        if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
+          // this uses the '#' as the line where #line appears; that is probably
+          // incorrect, since the '#line' could be prefixed by comment blocks.
+          if (x.fileNameRepr.isDefined) {
+            ctx.logicalFileNameRepr = x.fileNameRepr.get.value
+            // this directive is not affected by itself. :)
+            // so if parsing of fileNameRepr fails, we need to use the old data
+            // in ctx to report code location.
+            ctx.logicalFileName = TextUtils.fromStrReprQ(
+              x.fileNameRepr.get
+                .transform(ctx.logicalFileName, ctx.logicalLineNumOffset)
+            )
+          }
+          // x.loc._1 + lineNumOffset == x.line - 1
+          ctx.logicalLineNumOffset = x.line - 1 - x.loc._1
+        }
+      case x: PPLineError =>
+        if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           throw IllegalSourceException(
             SimpleMessage(
               ctx.logicalFileName,
               (x.loc._1 + ctx.logicalLineNumOffset, x.loc._2),
-              s"macro ${x.name.value} is not defined"
+              x.msg
             )
           )
         }
-      case x: PPLineLine =>
-        // this uses the '#' as the line where #line appears; that is probably
-        // incorrect, since the '#line' could be prefixed by comment blocks.
-        if (x.fileNameRepr.isDefined) {
-          ctx.logicalFileNameRepr = x.fileNameRepr.get.value
-          // this directive is not affected by itself. :)
-          // so if parsing of fileNameRepr fails, we need to use the old data
-          // in ctx to report code location.
-          ctx.logicalFileName = TextUtils.fromStrReprQ(
-            x.fileNameRepr.get
-              .transform(ctx.logicalFileName, ctx.logicalLineNumOffset)
-          )
-        }
-        // x.loc._1 + lineNumOffset == x.line - 1
-        ctx.logicalLineNumOffset = x.line - 1 - x.loc._1
-      case x: PPLineError =>
-        throw IllegalSourceException(
-          SimpleMessage(
-            ctx.logicalFileName,
-            (x.loc._1 + ctx.logicalLineNumOffset, x.loc._2),
-            x.msg
-          )
-        )
       case x: PPLinePragma => ()
       case x: PPLineNull   => ()
     }
@@ -958,33 +981,40 @@ object PPReader {
           read(ctx, accum, toBeExpanded)
         }
       case Some(ppCmd: PPLineInclude) =>
-        val oldPPLineReader = ctx.ppLineReader
-        val oldLogicalFileNameRepr = ctx.logicalFileNameRepr
-        val oldLogicalFileName = ctx.logicalFileName
-        val oldIfStatusStack = ctx.ifStatusStack
+        if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
+          val oldPPLineReader = ctx.ppLineReader
+          val oldLogicalFileNameRepr = ctx.logicalFileNameRepr
+          val oldLogicalFileName = ctx.logicalFileName
+          val oldIfStatusStack = ctx.ifStatusStack
 
-        val newFileName =
-          SearchPath.find(ctx.fileName, ppCmd.name.value, ppCmd.isCaret)
-        if (newFileName.isEmpty) {
-          throw IllegalSourceException(
-            SimpleMessage(
-              ctx.logicalFileName,
-              (ppCmd.name.loc._1 + ctx.logicalLineNumOffset, ppCmd.name.loc._2),
-              s"File ${ppCmd.name.value} is not found"
+          val newFileName =
+            SearchPath.find(ctx.fileName, ppCmd.name.value, ppCmd.isCaret)
+          if (newFileName.isEmpty) {
+            throw IllegalSourceException(
+              SimpleMessage(
+                ctx.logicalFileName,
+                (
+                  ppCmd.name.loc._1 + ctx.logicalLineNumOffset,
+                  ppCmd.name.loc._2
+                ),
+                s"File ${ppCmd.name.value} is not found"
+              )
             )
-          )
+          }
+          ctx.ppLineReader = new PPLineReader(ctx.warnings, newFileName.get)
+          ctx.logicalFileNameRepr = TextUtils.strReprQ(ppCmd.name.value)
+          ctx.logicalFileName = ppCmd.name.value
+          ctx.ifStatusStack = mutable.Stack()
+          val newAccum: Seq[L[PPTok]] =
+            read(ctx, accum ++ pp(ctx, toBeExpanded), Seq.empty)
+          ctx.ppLineReader = oldPPLineReader
+          ctx.logicalFileNameRepr = oldLogicalFileNameRepr
+          ctx.logicalFileName = oldLogicalFileName
+          ctx.ifStatusStack = oldIfStatusStack
+          read(ctx, newAccum, Seq.empty)
+        } else {
+          read(ctx, accum, toBeExpanded)
         }
-        ctx.ppLineReader = new PPLineReader(ctx.warnings, newFileName.get)
-        ctx.logicalFileNameRepr = TextUtils.strReprQ(ppCmd.name.value)
-        ctx.logicalFileName = ppCmd.name.value
-        ctx.ifStatusStack = mutable.Stack()
-        val newAccum: Seq[L[PPTok]] =
-          read(ctx, accum ++ pp(ctx, toBeExpanded), Seq.empty)
-        ctx.ppLineReader = oldPPLineReader
-        ctx.logicalFileNameRepr = oldLogicalFileNameRepr
-        ctx.logicalFileName = oldLogicalFileName
-        ctx.ifStatusStack = oldIfStatusStack
-        read(ctx, newAccum, Seq.empty)
       case Some(ppCmd) =>
         val newAccum: Seq[L[PPTok]] = accum ++ pp(ctx, toBeExpanded)
         doPPCmd(ctx, ppCmd)

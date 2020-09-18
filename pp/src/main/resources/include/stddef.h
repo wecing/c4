@@ -8,6 +8,7 @@ typedef short wchar_t; // this is int on linux x64
 typedef long __off_t;
 typedef long __off64_t;
 
+// TODO: offsetof does not work correctly for some reasons
 #define NULL ((void *) 0)
 #define offsetof(TYPE, MEMBER) \
     ((size_t) ((void *) &(((TYPE *) NULL)->MEMBER) - NULL))
