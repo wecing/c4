@@ -1,8 +1,6 @@
 #ifndef _ASSERT_H_
 #define _ASSERT_H_
 
-// TODO:  assert() cannot yet be processed correctly by c4
-
 #ifdef NDEBUG
 # define assert(expr) ((void) 0)
 #else

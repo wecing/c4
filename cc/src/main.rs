@@ -3239,8 +3239,23 @@ impl Compiler<'_> {
             let args: Vec<String> =
                 args.into_iter().map(|arg| arg.unwrap()).collect();
             let ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_call(&ir_id, &func, &args);
-            self.llvm_builder.create_call(&ir_id, &func, &args);
+            if rtp.is_void() {
+                self.c4ir_builder.create_call("", &func, &args);
+                self.llvm_builder.create_call("", &func, &args);
+                self.c4ir_builder.create_constant(
+                    &ir_id,
+                    &ConstantOrIrValue::I8(0),
+                    &QType::from(Type::Char),
+                );
+                self.llvm_builder.create_constant(
+                    &ir_id,
+                    &ConstantOrIrValue::I8(0),
+                    &QType::from(Type::Char),
+                );
+            } else {
+                self.c4ir_builder.create_call(&ir_id, &func, &args);
+                self.llvm_builder.create_call(&ir_id, &func, &args);
+            }
             Ok((rtp, Some(ConstantOrIrValue::IrValue(ir_id, false))))
         }
     }
