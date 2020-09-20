@@ -7,6 +7,7 @@ import c4.messaging.{SimpleMessage, IllegalSourceException, Message}
 import c4.util.legacy.{Located => L}
 import c4.util.TextUtils
 
+import scala.collection.immutable.Queue
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
@@ -297,8 +298,8 @@ object PPReader {
       var status: Option[FuncArgSearch] = None
       var foundMacro: Boolean = false
 
-      val ret: Seq[T] =
-        tokens.foldLeft(Seq.empty[T]) { (accum: Seq[T], tok: T) =>
+      val ret: Queue[T] =
+        tokens.foldLeft(Queue.empty[T]) { (accum: Queue[T], tok: T) =>
           if (foundMacro) { accum :+ tok }
           else
             status match {
@@ -799,15 +800,17 @@ object PPReader {
     }
     // TODO: implement const expr eval
     preEval.map(_.value) match {
-      case Num(x, _) :: Nil                           => x != 0
-      case Sym("!") :: Num(x, _) :: Nil               => x == 0
-      case Num(x, _) :: Sym(">") :: Num(y, _) :: Nil  => x > y
-      case Num(x, _) :: Sym(">=") :: Num(y, _) :: Nil => x >= y
-      case Num(x, _) :: Sym("<") :: Num(y, _) :: Nil  => x < y
-      case Num(x, _) :: Sym("<=") :: Num(y, _) :: Nil => x <= y
-      case Num(x, _) :: Sym("==") :: Num(y, _) :: Nil => x == y
-      case Num(x, _) :: Sym("!=") :: Num(y, _) :: Nil => x != y
-      case _                                          => ???
+      case Nil :+ Num(x, _)                           => x != 0
+      case Nil :+ Sym("!") :+ Num(x, _)               => x == 0
+      case Nil :+ Num(x, _) :+ Sym(">") :+ Num(y, _)  => x > y
+      case Nil :+ Num(x, _) :+ Sym(">=") :+ Num(y, _) => x >= y
+      case Nil :+ Num(x, _) :+ Sym("<") :+ Num(y, _)  => x < y
+      case Nil :+ Num(x, _) :+ Sym("<=") :+ Num(y, _) => x <= y
+      case Nil :+ Num(x, _) :+ Sym("==") :+ Num(y, _) => x == y
+      case Nil :+ Num(x, _) :+ Sym("!=") :+ Num(y, _) => x != y
+      case Nil :+ Num(x, _) :+ Sym("&&") :+ Sym("!") :+ Num(y, _) =>
+        x != 0 && y == 0
+      case _ => ???
     }
   }
 
