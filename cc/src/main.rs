@@ -7314,7 +7314,7 @@ impl Compiler<'_> {
                     ),
                     _ => {
                         let linkage = linkage_fn(None);
-                        let ir_id = if linkage == Linkage::EXTERNAL {
+                        let ir_id = if linkage == Linkage::EXTERNAL || is_func {
                             String::from(id)
                         } else {
                             format!("${}.{}", id, next_uuid)
