@@ -769,7 +769,7 @@ object PPReader {
       case t @ L(loc, PPTokNum(num), fileName) => {
         val octalPattern = "^(0[0-7]*)[ulUL]*$".r
         val decimalPattern = "^([1-9][0-9]*)[ulUL]*$".r
-        val hexPattern = "^0[xX]([0-9a-zA-Z]+)[ulUL]*$".r
+        val hexPattern = "^0[xX]([0-9a-fA-F]+)[ulUL]*$".r
         val n: BigInt =
           try {
             num match {

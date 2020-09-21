@@ -204,7 +204,7 @@ class SourcePhase7Reader(
               "^(([0-9]*[.][0-9]+)|([0-9]+[.]))(([eE][-+]?[0-9]+)?)([flFL]?)$".r
             val octalPattern = "^(0[0-7]*)([ulUL]*)$".r
             val decimalPattern = "^([1-9][0-9]*)([ulUL]*)$".r
-            val hexPattern = "^0[xX]([0-9a-zA-Z]+)([ulUL]*)$".r
+            val hexPattern = "^0[xX]([0-9a-fA-F]+)([ulUL]*)$".r
             def toTokInteger(s: String, radix: Int, suffix: String)
                 : TokInteger = {
               // The type of an integer constant is the first of the
