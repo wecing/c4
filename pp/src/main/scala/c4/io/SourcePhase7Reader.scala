@@ -5,6 +5,7 @@ import c4.messaging.{IllegalSourceException, Message, SimpleMessage}
 import c4.util.{Located, TextUtils}
 import c4.util.legacy.{Located => L}
 
+import scala.collection.immutable.Queue
 import scala.collection.mutable.ArrayBuffer
 
 sealed abstract class IntSize {
@@ -160,7 +161,7 @@ class SourcePhase7Reader(
   private var tokens: Seq[L[Tok]] = {
     PPReader
       .read(warnings, fileName, predefMacros)
-      .foldLeft(Seq.empty[L[Tok]]) { (acc: Seq[L[Tok]], ppTok: L[PPTok]) =>
+      .foldLeft(Queue.empty[L[Tok]]) { (acc: Queue[L[Tok]], ppTok: L[PPTok]) =>
         ppTok.value match {
           case PPTokId(id) =>
             val dict = Map(
