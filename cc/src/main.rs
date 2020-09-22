@@ -7244,6 +7244,7 @@ impl Compiler<'_> {
         use ast::StorageClassSpecifier as SCS;
         let scs: Option<SCS> = match l_scs {
             None => None,
+            Some((SCS::REGISTER, _)) => None,
             Some((SCS::EXTERN, _)) => Some(SCS::EXTERN),
             Some((SCS::STATIC, _)) => Some(SCS::STATIC),
             Some((other_scs, loc)) => panic!(
@@ -7967,6 +7968,17 @@ impl Compiler<'_> {
                 // ir_id should already have func ptr type in IR
                 (tp, Some(C::IrValue(ir_id, false)))
             }
+            (Type::Function(_, _), Some(c @ C::HasAddress(_, _, _)))
+                if do_fun_to_ptr =>
+            {
+                match self.convert_to_ir_value(&tp, c) {
+                    C::IrValue(ir_id, _) => {
+                        let tp = QType::from(Type::Pointer(Box::new(tp)));
+                        (tp, Some(C::IrValue(ir_id, false)))
+                    }
+                    _ => unreachable!(),
+                }
+            }
             (Type::Function(_, _), None) if do_fun_to_ptr => {
                 let tp = QType::from(Type::Pointer(Box::new(tp)));
                 (tp, None)
@@ -8085,7 +8097,13 @@ impl Compiler<'_> {
                 C::IrValue(ir_id, false)
             }
             C::HasAddress(ir_id, offset_bytes, is_lvalue) => {
-                let ptr_tp = QType::ptr_tp(tp.clone());
+                let ptr_tp = if is_lvalue {
+                    // when is_lvalue, tp is T but ir_id is T*
+                    QType::ptr_tp(tp.clone())
+                } else {
+                    // otherwise tp is T* and ir_id is T*
+                    tp.clone()
+                };
                 match self.convert_to_ir_value(
                     &ptr_tp,
                     C::StrAddress(ir_id, offset_bytes),
