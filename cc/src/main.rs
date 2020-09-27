@@ -2089,7 +2089,8 @@ impl Compiler<'_> {
                 // 3.7.2: If the declaration of an identifier for an object is a
                 // tentative definition and has internal linkage, the declared
                 // type shall not be an incomplete type.
-                let is_tentative = self.current_scope.is_file_scope()
+                let is_tentative = !qtype.is_function()
+                    && self.current_scope.is_file_scope()
                     && init.is_none()
                     && (scs.is_none() || scs == Some(SCS::STATIC));
                 if is_tentative
@@ -2099,7 +2100,7 @@ impl Compiler<'_> {
                 {
                     panic!(
                         "{}: Incomplete type for variable {}",
-                        Compiler::format_loc(id.get_init_loc()),
+                        Compiler::format_loc(id.get_d_loc()),
                         name
                     )
                 }
