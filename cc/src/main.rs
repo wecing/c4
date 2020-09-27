@@ -5840,7 +5840,12 @@ impl Compiler<'_> {
                         "Redeclaration of label '{}'",
                         id.get_id()
                     ),
-                    (None, None) => self.create_bb(),
+                    (None, None) => {
+                        let bb_id = self.create_bb();
+                        ctx.basic_blocks
+                            .insert(id.get_id().to_string(), bb_id.clone());
+                        bb_id
+                    }
                 };
 
                 self.c4ir_builder.create_br(&bb_id);
