@@ -810,7 +810,7 @@ object PPReader {
       case Nil :+ Num(x, _) :+ Sym("!=") :+ Num(y, _) => x != y
       case Nil :+ Num(x, _) :+ Sym("&&") :+ Sym("!") :+ Num(y, _) =>
         x != 0 && y == 0
-      case _ => ???
+      case xs => throw new NotImplementedError("pp expr: " + preEval)
     }
   }
 
@@ -926,14 +926,16 @@ object PPReader {
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           if (ctx.macros.contains(x.name.value)) {
             ctx.macros.remove(x.name.value)
-          } else {
-            throw IllegalSourceException(
-              SimpleMessage(
-                ctx.logicalFileName,
-                (x.loc._1 + ctx.logicalLineNumOffset, x.loc._2),
-                s"macro ${x.name.value} is not defined"
-              )
-            )
+            // seems like it's common to #undef macros unconditionally
+            //
+            // } else {
+            //   throw IllegalSourceException(
+            //     SimpleMessage(
+            //       ctx.logicalFileName,
+            //       (x.loc._1 + ctx.logicalLineNumOffset, x.loc._2),
+            //       s"macro ${x.name.value} is not defined"
+            //     )
+            //   )
           }
         }
       case x: PPLineLine =>

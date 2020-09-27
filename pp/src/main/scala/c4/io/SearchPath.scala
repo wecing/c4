@@ -3,6 +3,13 @@ package c4.io
 import java.nio.file.{Files, Paths}
 
 object SearchPath {
+  val standardSystemDirs = Seq(
+    "/usr/lib/gcc/x86_64-linux-gnu/9/include",
+    "/usr/local/include",
+    "/usr/include/x86_64-linux-gnu",
+    "/usr/include"
+  )
+
   def exists(f: String): Boolean = Files.exists(Paths.get(f))
 
   def find(curFile: String, file: String, isCaret: Boolean): Option[String] = {
@@ -25,6 +32,10 @@ object SearchPath {
       }
     }
 
-    None
+    if (isCaret) {
+      standardSystemDirs.map(_ + "/" + file).find(exists(_))
+    } else {
+      None
+    }
   }
 }
