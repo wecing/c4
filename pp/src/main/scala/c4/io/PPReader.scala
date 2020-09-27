@@ -10,6 +10,7 @@ import c4.util.TextUtils
 import scala.collection.immutable.Queue
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+import scala.util.parsing.combinator.JavaTokenParsers
 
 object PPReader {
 
@@ -798,20 +799,73 @@ object PPReader {
       }
       case t @ L(_, PPTokSym(sym), _) => Some(t.copy(value = Sym(sym)))
     }
-    // TODO: implement const expr eval
-    preEval.map(_.value) match {
-      case Nil :+ Num(x, _)                           => x != 0
-      case Nil :+ Sym("!") :+ Num(x, _)               => x == 0
-      case Nil :+ Num(x, _) :+ Sym(">") :+ Num(y, _)  => x > y
-      case Nil :+ Num(x, _) :+ Sym(">=") :+ Num(y, _) => x >= y
-      case Nil :+ Num(x, _) :+ Sym("<") :+ Num(y, _)  => x < y
-      case Nil :+ Num(x, _) :+ Sym("<=") :+ Num(y, _) => x <= y
-      case Nil :+ Num(x, _) :+ Sym("==") :+ Num(y, _) => x == y
-      case Nil :+ Num(x, _) :+ Sym("!=") :+ Num(y, _) => x != y
-      case Nil :+ Num(x, _) :+ Sym("&&") :+ Sym("!") :+ Num(y, _) =>
-        x != 0 && y == 0
-      case xs => throw new NotImplementedError("pp expr: " + preEval)
+    // TODO: implement const expr eval: location, sign, efficiency
+    val exprStr = preEval
+      .map(_.value)
+      .map {
+        case Num(x, signed) => s"${signed.toString.toUpperCase} $x"
+        case Sym(s)         => s
+      }
+      .mkString(" ")
+    object ExprEvaluator extends JavaTokenParsers {
+      def num: Parser[Num] =
+        ident ~ wholeNumber ^^ evalNum | "(" ~> expr <~ ")"
+
+      def prefix: Parser[Num] = rep("!") ~ num ^^ evalUnary
+      def rel: Parser[Num] =
+        prefix ~ rep(("<" | "<=" | ">" | ">=") ~ prefix) ^^ evalBin
+      def eq: Parser[Num] = rel ~ rep(("==" | "!=") ~ rel) ^^ evalBin
+      def lAnd: Parser[Num] = eq ~ rep("&&" ~ eq) ^^ evalBin
+      def lOr: Parser[Num] = lAnd ~ rep("||" ~ lAnd) ^^ evalBin
+      def expr = lOr
+
+      def evalNum: String ~ String => Num = {
+        case id ~ n => Num(n.toLong, id == "TRUE")
+      }
+      def evalUnary: List[String] ~ Num => Num = {
+        case ops ~ n =>
+          ops.foldRight(n) {
+            case ("!", n) => n.copy(num = if (n.num == 0) 1 else 0)
+            case _        => ??? // unreachable
+          }
+      }
+      def evalBin: Num ~ List[String ~ Num] => Num = {
+        case n ~ xs =>
+          xs.foldLeft(n) {
+            case (x, "<" ~ y)  => toN(x.num < y.num)
+            case (x, "<=" ~ y) => toN(x.num <= y.num)
+            case (x, ">" ~ y)  => toN(x.num > y.num)
+            case (x, ">=" ~ y) => toN(x.num >= y.num)
+            case (x, "==" ~ y) => toN(x.num == y.num)
+            case (x, "!=" ~ y) => toN(x.num != y.num)
+            case (x, "&&" ~ y) => toN(x.num != 0 && y.num != 0)
+            case (x, "||" ~ y) => toN(x.num != 0 || y.num != 0)
+          }
+      }
+      def toN(b: Boolean): Num = Num(if (b) 1 else 0, true)
+
+      def eval(s: String): Boolean =
+        parseAll(expr, s) match {
+          case Error(msg, _) =>
+            throw IllegalSourceException(
+              SimpleMessage(
+                preEval.head.fileName.getOrElse(ctx.fileName),
+                preEval.head.loc,
+                msg
+              )
+            )
+          case Failure(msg, _) =>
+            throw IllegalSourceException(
+              SimpleMessage(
+                preEval.head.fileName.getOrElse(ctx.fileName),
+                preEval.head.loc,
+                msg
+              )
+            )
+          case Success(num, _) => num.num != 0
+        }
     }
+    ExprEvaluator.eval(exprStr)
   }
 
   private def doPPCmd(ctx: PPReaderCtx, cmd: PPLine): Unit = {

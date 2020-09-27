@@ -6,6 +6,7 @@ scalacOptions ++= Seq("-deprecation", "-feature")
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.0" % "test"
 libraryDependencies += "org.typelevel" %% "cats-core" % "2.1.1"
+libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.1.2"
 
 PB.targets in Compile := Seq(
   scalapb.gen(flatPackage = true) -> (sourceManaged in Compile).value / "scala"
