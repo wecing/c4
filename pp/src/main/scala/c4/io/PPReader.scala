@@ -258,7 +258,14 @@ object PPReader {
     val macros: mutable.Map[String, Either[FuncMacro, ObjMacro]] = mutable.Map(
       LineMacro.predefinedName.get -> Right(LineMacro),
       FileMacro.predefinedName.get -> Right(FileMacro),
-      DateMacro.predefinedName.get -> Right(DateMacro)
+      DateMacro.predefinedName.get -> Right(DateMacro),
+      // predef macros used by x64 linux but not part of C89 spec
+      "__amd64__" -> Right(new ObjMacro(Seq(L((0, 0), PPTokNum("1"), None)))),
+      "__amd64" -> Right(new ObjMacro(Seq(L((0, 0), PPTokNum("1"), None)))),
+      "__x86_64__" -> Right(new ObjMacro(Seq(L((0, 0), PPTokNum("1"), None)))),
+      "__x86_64" -> Right(new ObjMacro(Seq(L((0, 0), PPTokNum("1"), None)))),
+      "__STDC__" -> Right(new ObjMacro(Seq(L((0, 0), PPTokNum("1"), None)))),
+      "__linux__" -> Right(new ObjMacro(Seq(L((0, 0), PPTokNum("1"), None))))
     ) ++ predefMacros.map {
       case (k, v) => {
         val idPattern = "^[a-zA-Z_][a-zA-Z0-9_]*$".r
