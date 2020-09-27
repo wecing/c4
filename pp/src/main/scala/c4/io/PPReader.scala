@@ -813,7 +813,7 @@ object PPReader {
 
       def prefix: Parser[Num] = rep("!") ~ num ^^ evalUnary
       def rel: Parser[Num] =
-        prefix ~ rep(("<" | "<=" | ">" | ">=") ~ prefix) ^^ evalBin
+        prefix ~ rep(("<=" | "<" | ">=" | ">") ~ prefix) ^^ evalBin
       def eq: Parser[Num] = rel ~ rep(("==" | "!=") ~ rel) ^^ evalBin
       def lAnd: Parser[Num] = eq ~ rep("&&" ~ eq) ^^ evalBin
       def lOr: Parser[Num] = lAnd ~ rep("||" ~ lAnd) ^^ evalBin

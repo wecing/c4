@@ -615,7 +615,8 @@ class PPLineReader(val warnings: ArrayBuffer[Message], val fileName: String) {
               )
             )
         }
-      case "error" =>
+      // #warning is not part of C89 but is used in linux x86 features.h
+      case "error" | "warning" =>
         PPLineError(loc, readPPTokensLine(true).map(_.value.raw).mkString.trim)
       case "pragma" =>
         readEmptyLine()
