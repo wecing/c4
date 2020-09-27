@@ -811,13 +811,19 @@ object PPReader {
       def num: Parser[Num] =
         ident ~ wholeNumber ^^ evalNum | "(" ~> expr <~ ")"
 
-      def prefix: Parser[Num] = rep("!") ~ num ^^ evalUnary
-      def rel: Parser[Num] =
-        prefix ~ rep(("<=" | "<" | ">=" | ">") ~ prefix) ^^ evalBin
+      def prefix: Parser[Num] = rep("!" | "+" | "-" | "~") ~ num ^^ evalUnary
+      def mul: Parser[Num] = prefix ~ rep(("*" | "/" | "%") ~ prefix) ^^ evalBin
+      def add: Parser[Num] = mul ~ rep(("+" | "-") ~ mul) ^^ evalBin
+      def sh: Parser[Num] = add ~ rep(("<<" | ">>") ~ add) ^^ evalBin
+      def rel: Parser[Num] = sh ~ rep(("<=" | "<" | ">=" | ">") ~ sh) ^^ evalBin
       def eq: Parser[Num] = rel ~ rep(("==" | "!=") ~ rel) ^^ evalBin
-      def lAnd: Parser[Num] = eq ~ rep("&&" ~ eq) ^^ evalBin
+      def bAnd: Parser[Num] = eq ~ rep("&" ~ eq) ^^ evalBin
+      def bXor: Parser[Num] = bAnd ~ rep("^" ~ bAnd) ^^ evalBin
+      def bOr: Parser[Num] = bXor ~ rep("|" ~ bXor) ^^ evalBin
+      def lAnd: Parser[Num] = bOr ~ rep("&&" ~ bOr) ^^ evalBin
       def lOr: Parser[Num] = lAnd ~ rep("||" ~ lAnd) ^^ evalBin
-      def expr = lOr
+      def ter: Parser[Num] = rep((lOr <~ "?") ~ (lOr <~ ":")) ~ lOr ^^ evalTer
+      def expr = ter
 
       def evalNum: String ~ String => Num = {
         case id ~ n => Num(n.toLong, id == "TRUE")
@@ -825,22 +831,42 @@ object PPReader {
       def evalUnary: List[String] ~ Num => Num = {
         case ops ~ n =>
           ops.foldRight(n) {
-            case ("!", n) => n.copy(num = if (n.num == 0) 1 else 0)
+            case ("!", n) => toN(n.num == 0)
+            case ("+", n) => Num(n.num, true)
+            case ("-", n) => Num(-n.num, true)
+            case ("~", n) => Num(~n.num, false)
             case _        => ??? // unreachable
           }
       }
       def evalBin: Num ~ List[String ~ Num] => Num = {
         case n ~ xs =>
           xs.foldLeft(n) {
+            case (x, "+" ~ y)  => Num(x.num + y.num, x.signed || y.signed)
+            case (x, "-" ~ y)  => Num(x.num - y.num, x.signed || y.signed)
+            case (x, "*" ~ y)  => Num(x.num * y.num, x.signed || y.signed)
+            case (x, "/" ~ y)  => Num(x.num / y.num, x.signed || y.signed)
+            case (x, "%" ~ y)  => Num(x.num % y.num, x.signed || y.signed)
+            case (x, "<<" ~ y) => Num(x.num << y.num, x.signed || y.signed)
+            case (x, ">>" ~ y) => Num(x.num >> y.num, x.signed || y.signed)
             case (x, "<" ~ y)  => toN(x.num < y.num)
             case (x, "<=" ~ y) => toN(x.num <= y.num)
             case (x, ">" ~ y)  => toN(x.num > y.num)
             case (x, ">=" ~ y) => toN(x.num >= y.num)
             case (x, "==" ~ y) => toN(x.num == y.num)
             case (x, "!=" ~ y) => toN(x.num != y.num)
+            case (x, "&" ~ y)  => Num(x.num & y.num, false)
+            case (x, "^" ~ y)  => Num(x.num ^ y.num, false)
+            case (x, "|" ~ y)  => Num(x.num | y.num, false)
             case (x, "&&" ~ y) => toN(x.num != 0 && y.num != 0)
             case (x, "||" ~ y) => toN(x.num != 0 || y.num != 0)
           }
+      }
+      // desired behavior: x1 ? y1 : (x2 ? y2 : (x3 ? y3 : z))
+      def evalTer: List[Num ~ Num] ~ Num => Num = {
+        case xs ~ end =>
+          xs.find { case c ~ _ => c.num != 0 }
+            .map { case _ ~ x => x }
+            .getOrElse(end)
       }
       def toN(b: Boolean): Num = Num(if (b) 1 else 0, true)
 
