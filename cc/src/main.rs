@@ -6398,6 +6398,11 @@ impl Compiler<'_> {
             | [TS::unsigned(_), TS::long(_), TS::int(_)] => {
                 q(Type::UnsignedLong)
             }
+            // added in C99 and used by glibc headers
+            [TS::unsigned(_), TS::long(_), TS::long(_)]
+            | [TS::unsigned(_), TS::long(_), TS::long(_), TS::int(_)] => {
+                q(Type::UnsignedLong)
+            }
             [TS::float(_)] => q(Type::Float),
             [TS::double(_)] => q(Type::Double),
             [TS::long(_), TS::double(_)] => q(Type::Double),

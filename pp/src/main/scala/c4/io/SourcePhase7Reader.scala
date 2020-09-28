@@ -240,7 +240,10 @@ class SourcePhase7Reader(
                 case "u"               => Seq(unsignedInt, unsignedLongInt)
                 case "l"               => Seq(longInt, unsignedLongInt)
                 case "ul" | "lu"       => Seq(unsignedLongInt)
-                case _                 => throw illegalEx
+                // LL and ULL are added in C99, and used by glibc headers
+                case "ll"          => Seq(longInt, unsignedLongInt)
+                case "ull" | "llu" => Seq(unsignedLongInt)
+                case _             => throw illegalEx
               }
 
               val v = BigInt(s, radix)
