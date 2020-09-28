@@ -874,15 +874,12 @@ impl LLVMBuilderImpl {
             C::Double(v) => f_fp(T::Double, *v),
             C::StrAddress(ir_id, offset_bytes)
             | C::HasAddress(ir_id, offset_bytes, false) => {
-                let src_tp = Type::Pointer(Box::new(QType::from(Type::Void)));
-                let src_tp_llvm = self.get_llvm_type(&src_tp);
-                let char_ptr_tp = self.get_llvm_type(&Type::Pointer(Box::new(
-                    QType::from(Type::Char),
-                )));
+                let char_ptr_tp = QType::char_ptr_tp().tp;
+                let char_ptr_tp_llvm = self.get_llvm_type(&char_ptr_tp);
                 let ptr: llvm_sys::prelude::LLVMValueRef =
                     *self.symbol_table.get(ir_id).unwrap();
                 let ptr = unsafe {
-                    llvm_sys::core::LLVMConstBitCast(ptr, char_ptr_tp)
+                    llvm_sys::core::LLVMConstBitCast(ptr, char_ptr_tp_llvm)
                 };
                 let mut offset = unsafe {
                     llvm_sys::core::LLVMConstInt(
@@ -894,10 +891,7 @@ impl LLVMBuilderImpl {
                 let src = unsafe {
                     llvm_sys::core::LLVMConstGEP(ptr, &mut offset, 1)
                 };
-                let src = unsafe {
-                    llvm_sys::core::LLVMConstBitCast(src, src_tp_llvm)
-                };
-                (src, QType::from(src_tp))
+                (src, QType::from(char_ptr_tp))
             }
             C::HasAddress(_, _, true) => unreachable!(),
             C::IrValue(_, _) => unreachable!(),
@@ -938,8 +932,12 @@ impl LLVMBuilderImpl {
                             0,
                         )
                     } else if struct_tp.map(|t| t.is_array()) == Some(true) {
+                        let elem_tp: QType = match &struct_tp.unwrap().tp {
+                            Type::Array(elem_tp, _) => *elem_tp.clone(),
+                            _ => unreachable!(),
+                        };
                         llvm_sys::core::LLVMConstArray(
-                            self.get_llvm_type(&struct_tp.unwrap().tp),
+                            self.get_llvm_type(&elem_tp.tp),
                             vals.as_mut_ptr(),
                             vals.len() as u32,
                         )
