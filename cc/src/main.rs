@@ -7236,6 +7236,17 @@ impl Compiler<'_> {
                 ),
             }
         };
+        fn arr_to_ptr(tp: QType) -> QType {
+            QType {
+                is_const: tp.is_const,
+                is_volatile: tp.is_volatile,
+                tp: match tp.tp {
+                    Type::Array(elem_tp, None) => Type::Pointer(elem_tp),
+                    tp => tp,
+                },
+            }
+        }
+
         use ast::ParamDeclaration_oneof_pd as PD;
         match pd.0.pd.as_ref().unwrap() {
             PD::name(named) => {
@@ -7244,7 +7255,7 @@ impl Compiler<'_> {
                 let (tp, name) = self.unwrap_declarator(tp, d, false);
                 TypedFuncParam {
                     is_register,
-                    tp,
+                    tp: arr_to_ptr(tp),
                     name: Some(name),
                 }
             }
@@ -7255,7 +7266,7 @@ impl Compiler<'_> {
                 let tp = self.unwrap_abstract_declarator(tp, ad);
                 TypedFuncParam {
                     is_register,
-                    tp,
+                    tp: arr_to_ptr(tp),
                     name: None,
                 }
             }
