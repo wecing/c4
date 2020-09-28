@@ -3,6 +3,9 @@
 
 #include <stddef.h>
 
+// for __USE_POSIX
+#include <features.h>
+
 // for __off_t and __off64_t
 #include <bits/types.h>
 
@@ -118,5 +121,10 @@ extern void clearerr(FILE *stream);
 extern int feof(FILE *stream);
 extern int ferror(FILE *stream);
 extern void perror(const char *s);
+
+#ifdef __USE_POSIX
+extern int fileno(FILE *stream);
+extern FILE *fdopen(int fd, const char *mode);
+#endif
 
 #endif
