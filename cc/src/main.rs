@@ -6417,6 +6417,8 @@ impl Compiler<'_> {
             | [TS::unsigned(_), TS::long(_), TS::long(_), TS::int(_)] => {
                 q(Type::UnsignedLong)
             }
+            [TS::long(_), TS::long(_)]
+            | [TS::long(_), TS::long(_), TS::int(_)] => q(Type::Long),
             [TS::float(_)] => q(Type::Float),
             [TS::double(_)] => q(Type::Double),
             [TS::long(_), TS::double(_)] => q(Type::Double),

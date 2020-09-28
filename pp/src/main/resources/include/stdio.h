@@ -3,6 +3,9 @@
 
 #include <stddef.h>
 
+// for __off_t and __off64_t
+#include <bits/types.h>
+
 struct _IO_FILE;
 struct _IO_marker;
 struct _IO_codecvt;
