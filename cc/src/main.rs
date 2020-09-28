@@ -937,6 +937,12 @@ impl LLVMBuilderImpl {
                             vals.len() as u32,
                             0,
                         )
+                    } else if struct_tp.map(|t| t.is_array()) == Some(true) {
+                        llvm_sys::core::LLVMConstArray(
+                            self.get_llvm_type(&struct_tp.unwrap().tp),
+                            vals.as_mut_ptr(),
+                            vals.len() as u32,
+                        )
                     } else {
                         llvm_sys::core::LLVMConstNamedStruct(
                             self.get_llvm_type(&struct_tp.unwrap().tp),
