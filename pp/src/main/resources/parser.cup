@@ -460,6 +460,12 @@ struct_declaration_list // Seq[L[StructDeclaration]]
 struct_declaration // L[StructDeclaration]
     ::= specifier_qualifier_list:a struct_declarator_list:b SEMICOLON:c
         {: RESULT = StructDeclaration$.MODULE$.ofLoc(a, b, c); :}
+      // unnamed fields is a C11 feature used by glibc headers.
+      | specifier_qualifier_list:a                          SEMICOLON:c
+        {:
+          RESULT = StructDeclaration$.MODULE$.ofLoc(
+            a, JavaUtils.seq(pair(none(), none())), c);
+        :}
       ;
 
 specifier_qualifier_list // Seq<Located<Either<TypeSpecifier, TypeQualifier>>>

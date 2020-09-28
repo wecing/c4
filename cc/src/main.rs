@@ -124,6 +124,20 @@ impl QType {
         }
     }
 
+    fn is_struct_type(&self) -> bool {
+        match self.tp {
+            Type::Struct(_) => true,
+            _ => false,
+        }
+    }
+
+    fn is_union_type(&self) -> bool {
+        match self.tp {
+            Type::Union(_) => true,
+            _ => false,
+        }
+    }
+
     fn is_void(&self) -> bool {
         match self.tp {
             Type::Void => true,
@@ -6843,6 +6857,17 @@ impl Compiler<'_> {
                         }
                         Some(sz)
                     };
+                    // unnamed fields is a C11 feature.
+                    if field_name_opt.is_none()
+                        && bit_field_size.is_none()
+                        && !tp.is_struct_type()
+                        && !tp.is_union_type()
+                    {
+                        panic!(
+                            "{}: Unnamed field must be struct or union",
+                            Compiler::format_loc(sd.1)
+                        )
+                    }
                     SuField {
                         name: field_name_opt,
                         tp,
