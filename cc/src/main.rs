@@ -1992,6 +1992,7 @@ impl Compiler<'_> {
                     // 3.7.2: tentative definition
                     if self.current_scope.is_file_scope()
                         && (scs == None || scs == Some(SCS::STATIC))
+                        && !qtype.is_function()
                     {
                         let zero = if qtype.is_scalar_type() {
                             Initializer::Expr(
