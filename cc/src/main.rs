@@ -778,7 +778,7 @@ impl LLVMBuilderImpl {
                 }
                 Type::Struct(su) | Type::Union(su) => {
                     let type_name =
-                        CString::new(format!("$.{}", su.uuid)).unwrap();
+                        CString::new(format!(".{}", su.uuid)).unwrap();
                     llvm_sys::core::LLVMGetTypeByName(
                         self.module,
                         type_name.as_ptr(),
@@ -963,7 +963,7 @@ impl LLVMBuilderImpl {
     fn get_next_tmp_ir_id(&mut self) -> String {
         let r = self.next_uuid;
         self.next_uuid += 1;
-        format!("$.t.{}", r)
+        format!("t.{}", r)
     }
 
     fn sanitize_basic_blocks(&mut self) {
@@ -1775,7 +1775,7 @@ impl Compiler<'_> {
                 None
             };
             // insert the mapping from C param decl `int x` to the IR variable
-            // `i32* $.1004` into current_scope.
+            // `i32* %.1004` into current_scope.
             self.add_declaration(
                 &param.name.clone().unwrap(),
                 &param_scs,
@@ -1825,7 +1825,7 @@ impl Compiler<'_> {
         //         store %.1004 %.1005
         //       }
 
-        let entry_bb_id = format!("$entry.{}", self.get_next_uuid());
+        let entry_bb_id = format!("entry.{}", self.get_next_uuid());
         self.c4ir_builder.create_basic_block(&entry_bb_id);
         self.llvm_builder.create_basic_block(&entry_bb_id);
         self.c4ir_builder.set_current_basic_block(&entry_bb_id);
@@ -6591,11 +6591,11 @@ impl Compiler<'_> {
                     uuid: self.get_next_uuid(),
                 };
                 let tag_name = if name.0.is_empty() {
-                    format!("$.{}", su_type.uuid)
+                    format!(".{}", su_type.uuid)
                 } else {
                     String::from(name.0)
                 };
-                let ir_type_name = format!("$.{}", su_type.uuid);
+                let ir_type_name = format!(".{}", su_type.uuid);
 
                 let sue_type = if is_struct {
                     SueType::Struct(Box::new(su_type.clone()))
@@ -6665,7 +6665,7 @@ impl Compiler<'_> {
     ) -> Type {
         let uuid = self.get_next_uuid();
         let tag_name = if s.0.name.is_empty() {
-            format!("$.{}", uuid)
+            format!(".{}", uuid)
         } else {
             s.0.name.clone()
         };
@@ -7394,7 +7394,7 @@ impl Compiler<'_> {
                         let ir_id = if linkage == Linkage::EXTERNAL || is_func {
                             String::from(id)
                         } else {
-                            format!("${}.{}", id, next_uuid)
+                            format!("{}.{}", id, next_uuid)
                         };
                         scope.ordinary_ids_ns.insert(
                             String::from(id),
@@ -8667,11 +8667,11 @@ impl Compiler<'_> {
     }
 
     fn get_next_ir_id(&mut self) -> String {
-        format!("$.{}", self.get_next_uuid())
+        format!(".{}", self.get_next_uuid())
     }
 
     fn create_bb(&mut self) -> String {
-        let bb_id = format!("$bb.{}", self.get_next_uuid());
+        let bb_id = format!("bb.{}", self.get_next_uuid());
         self.c4ir_builder.create_basic_block(&bb_id);
         self.llvm_builder.create_basic_block(&bb_id);
         bb_id
