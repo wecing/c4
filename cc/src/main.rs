@@ -1989,7 +1989,22 @@ impl Compiler<'_> {
                 }
 
                 let mut init = if id.init_idx == 0 {
-                    Option::None
+                    // 3.7.2: tentative definition
+                    if self.current_scope.is_file_scope()
+                        && (scs == None || scs == Some(SCS::STATIC))
+                    {
+                        let zero = if qtype.is_scalar_type() {
+                            Initializer::Expr(
+                                QType::from(Type::Int),
+                                ConstantOrIrValue::I32(0),
+                            )
+                        } else {
+                            Initializer::Struct(VecDeque::new(), 0)
+                        };
+                        Some(zero)
+                    } else {
+                        Option::None
+                    }
                 } else if linkage != Linkage::NONE
                     && !self.current_scope.is_file_scope()
                 {
@@ -2003,7 +2018,7 @@ impl Compiler<'_> {
                         name
                     )
                 } else if is_defined {
-                    // covers internal linkage global redefinitions, e.g.:
+                    // covers global redefinitions, e.g.:
                     //
                     // static int a = 0;
                     // static int a = 0;
