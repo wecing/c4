@@ -901,12 +901,19 @@ impl LLVMBuilderImpl {
     fn get_llvm_constant_init(
         &mut self,
         init: &Initializer,
-        struct_tp: Option<&QType>,
+        init_tp: Option<&QType>,
     ) -> llvm_sys::prelude::LLVMValueRef {
         use ConstantOrIrValue as C;
         match init {
             Initializer::Expr(_, C::IrValue(ir_id, false)) => {
                 *self.symbol_table.get(ir_id).unwrap()
+            }
+            Initializer::Expr(_, c)
+                if init_tp.map(|t| t.is_pointer()) == Some(true)
+                    && c.as_constant_u64() == Some(0) =>
+            {
+                let init_tp = self.get_llvm_type(&init_tp.unwrap().tp);
+                unsafe { llvm_sys::core::LLVMConstNull(init_tp) }
             }
             Initializer::Expr(_, c) => self.get_llvm_constant(c).0,
             Initializer::Struct(inits, zero_padding_bytes) => {
@@ -925,14 +932,14 @@ impl LLVMBuilderImpl {
                     vals.push(zero_padding);
                 }
                 unsafe {
-                    if struct_tp.is_none() {
+                    if init_tp.is_none() {
                         llvm_sys::core::LLVMConstStruct(
                             vals.as_mut_ptr(),
                             vals.len() as u32,
                             0,
                         )
-                    } else if struct_tp.map(|t| t.is_array()) == Some(true) {
-                        let elem_tp: QType = match &struct_tp.unwrap().tp {
+                    } else if init_tp.map(|t| t.is_array()) == Some(true) {
+                        let elem_tp: QType = match &init_tp.unwrap().tp {
                             Type::Array(elem_tp, _) => *elem_tp.clone(),
                             _ => unreachable!(),
                         };
@@ -943,7 +950,7 @@ impl LLVMBuilderImpl {
                         )
                     } else {
                         llvm_sys::core::LLVMConstNamedStruct(
-                            self.get_llvm_type(&struct_tp.unwrap().tp),
+                            self.get_llvm_type(&init_tp.unwrap().tp),
                             vals.as_mut_ptr(),
                             vals.len() as u32,
                         )
