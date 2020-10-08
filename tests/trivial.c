@@ -21,6 +21,9 @@ int main() {
     f();
   }
 
+  if (np == 0) {
+  }
+
   do {
   } while (0);
 

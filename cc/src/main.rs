@@ -4208,15 +4208,17 @@ impl Compiler<'_> {
                                 || (tp_right.is_pointer()
                                     && is_null(&left))) =>
                         {
-                            let left = if is_null(&left) {
-                                Some(C::U64(0))
+                            let (tp_left, left) = if is_null(&left) {
+                                // now `right` is the pointer type
+                                (tp_right.clone(), Some(C::U64(0)))
                             } else {
-                                left
+                                (tp_left.clone(), left)
                             };
-                            let right = if is_null(&right) {
-                                Some(C::U64(0))
+                            let (tp_right, right) = if is_null(&right) {
+                                // now `left` is the pointer type
+                                (tp_left.clone(), Some(C::U64(0)))
                             } else {
-                                right
+                                (tp_right.clone(), right)
                             };
                             (tp_left, left, tp_right, right)
                         }
