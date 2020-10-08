@@ -6,6 +6,7 @@ static struct S s1;
 struct S s2;
 
 int *np = 0;
+char s[10] = "hi";
 
 void f() {}
 

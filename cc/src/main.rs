@@ -2338,16 +2338,23 @@ impl Compiler<'_> {
                 };
                 let str_buf = self.str_constants.get(str_ir_id).unwrap();
                 str_lit_inits = if qtype.is_char_arr() {
-                    Some(
-                        str_buf
-                            .into_iter()
-                            .map(|c| ConstantOrIrValue::I8(*c as i8))
-                            .map(|c| {
-                                Initializer::Expr(QType::from(Type::Char), c)
-                            })
-                            .take(arr_len.unwrap_or(u32::MAX) as usize)
-                            .collect(),
-                    )
+                    let mut inits: VecDeque<Initializer> = str_buf
+                        .into_iter()
+                        .map(|c| ConstantOrIrValue::I8(*c as i8))
+                        .map(|c| Initializer::Expr(QType::from(Type::Char), c))
+                        .take(arr_len.unwrap_or(u32::MAX) as usize)
+                        .collect();
+                    // seems like this is also implicitly allowed:
+                    //   char s[10] = "hi";
+                    arr_len.map(|len| {
+                        for _ in inits.len()..(len as usize) {
+                            inits.push_back(Initializer::Expr(
+                                QType::from(Type::Char),
+                                ConstantOrIrValue::I8(0),
+                            ));
+                        }
+                    });
+                    Some(inits)
                 } else {
                     // qtype.is_wchar_arr() == true
                     let mut inits: VecDeque<Initializer> = VecDeque::new();
@@ -2361,6 +2368,14 @@ impl Compiler<'_> {
                         ))
                     }
                     arr_len.map(|len| inits.truncate(len as usize));
+                    arr_len.map(|len| {
+                        for _ in inits.len()..(len as usize) {
+                            inits.push_back(Initializer::Expr(
+                                QType::from(Type::Short),
+                                ConstantOrIrValue::I16(0),
+                            ));
+                        }
+                    });
                     Some(inits)
                 };
             }
