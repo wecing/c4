@@ -8,5 +8,11 @@ struct S s2;
 int *np = 0;
 
 int main() {
+
+  switch (0) {
+  case 1:
+    break;
+  }
+
   return 0;
 }
