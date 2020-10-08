@@ -1132,6 +1132,10 @@ impl IRBuilder for LLVMBuilderImpl {
         };
         linkage_llvm.map(|ln| unsafe { llvm_sys::core::LLVMSetLinkage(v, ln) });
 
+        // TODO: this does not yet work for:
+        //   nested structs;
+        //   partially initialized structs;
+        //   arrays without explicit initializer.
         init.as_ref()
             .map(|x| self.get_llvm_constant_init(x, Some(tp)))
             .map(|value| unsafe {
