@@ -1858,7 +1858,7 @@ impl Compiler<'_> {
                     );
                     self.c4ir_builder.create_store(&new_ir_id, &ir_id);
                     self.llvm_builder.create_store(&new_ir_id, &ir_id);
-                    mem::replace(ir_id, new_ir_id);
+                    *ir_id = new_ir_id;
                 }
                 _ => unreachable!(),
             }
@@ -2106,7 +2106,7 @@ impl Compiler<'_> {
                 match self.current_scope.ordinary_ids_ns.get_mut(&name).unwrap()
                 {
                     OrdinaryIdRef::ObjFnRef(_, tp, _, _) => {
-                        mem::replace(tp, qtype.clone());
+                        *tp = qtype.clone();
                     }
                     _ => unreachable!(),
                 }
