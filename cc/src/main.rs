@@ -6069,10 +6069,16 @@ impl Compiler<'_> {
         let body = (body, switch_s.get_body_loc());
         self.visit_stmt(body, ctx)?;
 
+        // last case may not have explicit break
+        self.c4ir_builder.create_br(&break_bb);
+        self.llvm_builder.create_br(&break_bb);
+
+        // default case may be absent
         self.c4ir_builder.set_current_basic_block(&default_bb);
         self.llvm_builder.set_current_basic_block(&default_bb);
         self.c4ir_builder.create_br(&break_bb);
         self.llvm_builder.create_br(&break_bb);
+
         self.c4ir_builder.set_current_basic_block(&break_bb);
         self.llvm_builder.set_current_basic_block(&break_bb);
 
