@@ -6131,7 +6131,7 @@ impl Compiler<'_> {
         let cond_bb = self.create_bb();
         let break_bb = self.create_bb();
         self.c4ir_builder.create_br(&body_bb);
-        self.c4ir_builder.create_br(&body_bb);
+        self.llvm_builder.create_br(&body_bb);
 
         self.c4ir_builder.set_current_basic_block(&body_bb);
         self.llvm_builder.set_current_basic_block(&body_bb);
