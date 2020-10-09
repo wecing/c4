@@ -4308,10 +4308,20 @@ impl Compiler<'_> {
                     (C::IrValue(left, false), C::IrValue(right, false)) => {
                         let i1_ir_id = self.get_next_ir_id();
                         self.c4ir_builder.create_cmp_op(
-                            &i1_ir_id, op, false, false, &left, &right,
+                            &i1_ir_id,
+                            op,
+                            is_signed(&tp_left),
+                            is_fp(&tp_left),
+                            &left,
+                            &right,
                         );
                         self.llvm_builder.create_cmp_op(
-                            &i1_ir_id, op, false, false, &left, &right,
+                            &i1_ir_id,
+                            op,
+                            is_signed(&tp_left),
+                            is_fp(&tp_left),
+                            &left,
+                            &right,
                         );
                         let ir_id = self.get_next_ir_id();
                         self.c4ir_builder

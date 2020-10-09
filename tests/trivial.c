@@ -11,6 +11,7 @@ char s[10] = "hi";
 void f() {}
 
 int main() {
+  int i;
 
   switch (0) {
   case 1:
@@ -26,6 +27,8 @@ int main() {
 
   do {
   } while (0);
+
+  for (i = 10; i >= 0; i--) {}
 
   return 0;
 }
