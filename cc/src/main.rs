@@ -916,6 +916,12 @@ impl LLVMBuilderImpl {
                 unsafe { llvm_sys::core::LLVMConstNull(init_tp) }
             }
             Initializer::Expr(_, c) => self.get_llvm_constant(c).0,
+            Initializer::Struct(inits, _)
+                if inits.is_empty() && init_tp.is_some() =>
+            {
+                let llvm_tp = self.get_llvm_type(&init_tp.unwrap().tp);
+                unsafe { llvm_sys::core::LLVMConstNull(llvm_tp) }
+            }
             Initializer::Struct(inits, zero_padding_bytes) => {
                 let mut vals: Vec<llvm_sys::prelude::LLVMValueRef> = inits
                     .into_iter()
@@ -1097,6 +1103,27 @@ impl IRBuilder for LLVMBuilderImpl {
         linkage: Linkage,
         init: &Option<Initializer>,
     ) {
+        // C allows global external tentative defs of arrays of unknown size:
+        //   int x[];
+        // as long as it's redeclared later with a size:
+        //   int x[];
+        //   int x[10];
+        // on seeing the first def, clang implicitly gives it a size of 1. Since
+        // this seems to be an undefined behavior, we mimick clang's behavior
+        // here but without signaling a warning.
+        let tp = match &tp.tp {
+            Type::Array(elem_tp, None)
+                if is_global && linkage == Linkage::EXTERNAL =>
+            {
+                QType {
+                    is_const: tp.is_const,
+                    is_volatile: tp.is_volatile,
+                    tp: Type::Array(elem_tp.clone(), Some(1)),
+                }
+            }
+            _ => tp.clone(),
+        };
+
         let name_c = CString::new(name).unwrap();
         let tp_llvm = self.get_llvm_type(&tp.tp);
         let v = unsafe {
@@ -1135,9 +1162,9 @@ impl IRBuilder for LLVMBuilderImpl {
         // TODO: this does not yet work for:
         //   nested structs;
         //   partially initialized structs;
-        //   arrays without explicit initializer.
+        //   partially initialized arrays.
         init.as_ref()
-            .map(|x| self.get_llvm_constant_init(x, Some(tp)))
+            .map(|x| self.get_llvm_constant_init(x, Some(&tp)))
             .map(|value| unsafe {
                 if is_global {
                     llvm_sys::core::LLVMSetInitializer(v, value);
@@ -2093,7 +2120,7 @@ impl Compiler<'_> {
                     (
                         Type::Array(elem_tp, None),
                         Some(Initializer::Struct(inits, 0)),
-                    ) => QType {
+                    ) if id.init_idx != 0 => QType {
                         is_const: qtype.is_const,
                         is_volatile: qtype.is_volatile,
                         tp: Type::Array(
@@ -2136,7 +2163,7 @@ impl Compiler<'_> {
                 // type shall not be an incomplete type.
                 let is_tentative = !qtype.is_function()
                     && self.current_scope.is_file_scope()
-                    && init.is_none()
+                    && id.init_idx == 0
                     && (scs.is_none() || scs == Some(SCS::STATIC));
                 if is_tentative
                     && linkage == Linkage::INTERNAL
