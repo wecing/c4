@@ -8,6 +8,7 @@ import tempfile
 
 tests_passed = 0
 
+print('===== small tests =====')
 for test_file in filter(lambda x: x.endswith('.c'), os.listdir('tests')):
     src = 'tests/' + test_file
     expected = src + '.expected'
@@ -17,7 +18,6 @@ for test_file in filter(lambda x: x.endswith('.c'), os.listdir('tests')):
     exe_file = None
     with tempfile.NamedTemporaryFile(delete=False) as f:
         exe_file = f.name
-
     subprocess.Popen(['c4', src, '-o', exe_file]).wait()
 
     output_file = None
@@ -32,6 +32,17 @@ for test_file in filter(lambda x: x.endswith('.c'), os.listdir('tests')):
         print('FAIL')
         print()
         subprocess.Popen(['diff', expected, output_file]).wait()
+        sys.exit(1)
+
+print('===== large tests =====')
+for d in ['bzip2']:
+    print('running test', d, '... ', end='', flush=True)
+    r = subprocess.Popen(['python3', 'tests/' + d + '/test.py']).wait()
+    if r == 0:
+        print('pass')
+        tests_passed += 1
+    else:
+        print('FAIL')
         sys.exit(1)
 
 print()

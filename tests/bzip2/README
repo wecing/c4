@@ -1,0 +1,6 @@
+This version of bzip2 is based on:
+
+    https://people.csail.mit.edu/smcc/projects/single-file-programs/
+
+I reformatted the code, and made minor adjustments to make it more C89 compliant
+so it could be compiled by c4.
