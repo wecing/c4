@@ -142,80 +142,93 @@ class SourcePhase2Reader(
       }
       nextCharLoc = (nextCharLoc._1, nextCharLoc._2 + 1)
 
-      if (buffer.endsWith(Seq('\\', '\n'))) {
-        if (!file.hasNext) {
-          throw IllegalSourceException(
-            SimpleMessage(
-              fileName,
-              (bufferLoc._1, bufferLoc._2 + buffer.size - 2),
-              "file should not end with backslash followed by newline"
-            )
-          )
-        }
-
-        buffer = buffer.dropRight(2)
-        if (buffer.nonEmpty) {
-          cont = false
-        } else {
-          bufferLoc = (bufferLoc._1 + 1, 1)
-        }
-        nextCharLoc = (nextCharLoc._1 + 1, 1)
-      } else if (buffer.endsWith(Seq('?', '?', '/'))) {
-        buffer = buffer.dropRight(3) :+ '\\'
-        if (file.hasNext) { // peek next
-          val c: Char = file.next()
-          if (c == '\n') {
-            if (!file.hasNext) {
-              throw IllegalSourceException(
-                SimpleMessage(
-                  fileName,
-                  (bufferLoc._1, bufferLoc._2 + buffer.size - 1),
-                  "file should not end with backslash followed by newline"
-                )
+      buffer.reverse match {
+        case Seq('\n', '\\', _*) => {
+          if (!file.hasNext) {
+            throw IllegalSourceException(
+              SimpleMessage(
+                fileName,
+                (bufferLoc._1, bufferLoc._2 + buffer.size - 2),
+                "file should not end with backslash followed by newline"
               )
-            }
+            )
+          }
 
-            buffer = buffer.dropRight(1)
-            if (buffer.nonEmpty) {
-              cont = false
-            } else {
-              bufferLoc = (bufferLoc._1 + 1, 1)
-            }
-            nextCharLoc = (nextCharLoc._1 + 1, 1)
-          } else {
-            bufferedExtra = Some(c) // does not incr nextCharLoc
+          buffer = buffer.dropRight(2)
+          if (buffer.nonEmpty) {
             cont = false
+          } else {
+            bufferLoc = (bufferLoc._1 + 1, 1)
+          }
+          nextCharLoc = (nextCharLoc._1 + 1, 1)
+        }
+        case Seq('/', '?', '?', _*) => {
+          buffer = buffer.dropRight(3) :+ '\\'
+          if (file.hasNext) { // peek next
+            val c: Char = file.next()
+            if (c == '\n') {
+              if (!file.hasNext) {
+                throw IllegalSourceException(
+                  SimpleMessage(
+                    fileName,
+                    (bufferLoc._1, bufferLoc._2 + buffer.size - 1),
+                    "file should not end with backslash followed by newline"
+                  )
+                )
+              }
+
+              buffer = buffer.dropRight(1)
+              if (buffer.nonEmpty) {
+                cont = false
+              } else {
+                bufferLoc = (bufferLoc._1 + 1, 1)
+              }
+              nextCharLoc = (nextCharLoc._1 + 1, 1)
+            } else {
+              bufferedExtra = Some(c) // does not incr nextCharLoc
+              cont = false
+            }
           }
         }
-      } else if (buffer.endsWith(Seq('?', '?', '='))) {
-        buffer = buffer.dropRight(3) :+ '#'
-        cont = false
-      } else if (buffer.endsWith(Seq('?', '?', '('))) {
-        buffer = buffer.dropRight(3) :+ '['
-        cont = false
-      } else if (buffer.endsWith(Seq('?', '?', ')'))) {
-        buffer = buffer.dropRight(3) :+ ']'
-        cont = false
-      } else if (buffer.endsWith(Seq('?', '?', '\''))) {
-        buffer = buffer.dropRight(3) :+ '^'
-        cont = false
-      } else if (buffer.endsWith(Seq('?', '?', '<'))) {
-        buffer = buffer.dropRight(3) :+ '{'
-        cont = false
-      } else if (buffer.endsWith(Seq('?', '?', '!'))) {
-        buffer = buffer.dropRight(3) :+ '|'
-        cont = false
-      } else if (buffer.endsWith(Seq('?', '?', '>'))) {
-        buffer = buffer.dropRight(3) :+ '}'
-        cont = false
-      } else if (buffer.endsWith(Seq('?', '?', '-'))) {
-        buffer = buffer.dropRight(3) :+ '~'
-        cont = false
-      } else if (buffer.endsWith(Seq('\n'))) {
-        cont = false
-        nextCharLoc = (nextCharLoc._1 + 1, 1)
-        // '\\\s+\n' should probably be caught here and produce warning messages
-        // but given that we cannot catch '??/\s+\n', this check is omitted.
+        case Seq('=', '?', '?', _*) => {
+          buffer = buffer.dropRight(3) :+ '#'
+          cont = false
+        }
+        case Seq('(', '?', '?', _*) => {
+          buffer = buffer.dropRight(3) :+ '['
+          cont = false
+        }
+        case Seq(')', '?', '?', _*) => {
+          buffer = buffer.dropRight(3) :+ ']'
+          cont = false
+        }
+        case Seq('\'', '?', '?', _*) => {
+          buffer = buffer.dropRight(3) :+ '^'
+          cont = false
+        }
+        case Seq('<', '?', '?', _*) => {
+          buffer = buffer.dropRight(3) :+ '{'
+          cont = false
+        }
+        case Seq('!', '?', '?', _*) => {
+          buffer = buffer.dropRight(3) :+ '|'
+          cont = false
+        }
+        case Seq('>', '?', '?', _*) => {
+          buffer = buffer.dropRight(3) :+ '}'
+          cont = false
+        }
+        case Seq('-', '?', '?', _*) => {
+          buffer = buffer.dropRight(3) :+ '~'
+          cont = false
+        }
+        case Seq('\n', _*) => {
+          cont = false
+          nextCharLoc = (nextCharLoc._1 + 1, 1)
+          // '\\\s+\n' should probably be caught here and produce warning messages
+          // but given that we cannot catch '??/\s+\n', this check is omitted.
+        }
+        case _ => ()
       }
     }
 
