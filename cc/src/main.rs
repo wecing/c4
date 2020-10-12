@@ -4708,6 +4708,11 @@ impl Compiler<'_> {
                         Type::Pointer(elem) => *elem.clone(),
                         _ => unreachable!(),
                     };
+                    // special case for void* minus void*
+                    let tp_elem = match &tp_elem.tp {
+                        Type::Void => QType::from(Type::Char),
+                        _ => tp_elem,
+                    };
                     let sz_elem = match Compiler::get_type_size_and_align_bytes(
                         &tp_elem.tp,
                     ) {
