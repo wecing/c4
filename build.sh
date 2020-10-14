@@ -8,6 +8,14 @@ if [ `uname` != 'Linux' ]; then
   export LLVM_SYS_100_PREFIX="/usr/local/opt/llvm"
 fi
 
+if [ "$(diff proto/ast.proto pp/src/main/resources/ast.proto)" != "" ]; then
+  cp proto/ast.proto pp/src/main/resources/ast.proto
+fi
+
+if [ "$(diff proto/ast.proto cc/ast.proto)" != "" ]; then
+  cp proto/ast.proto cc/ast.proto
+fi
+
 cd pp
 sbt assembly
 cd ..

@@ -1,6 +1,8 @@
 .DS_Store
 *.swp
 
+pp/src/main/resources/ast.proto
+
 pp/target
 pp/project/target
 pp/project/project
@@ -17,7 +19,9 @@ pp/**/metals.sbt
 
 pp/.vscode
 
+cc/ast.proto
 cc/src/ast.rs
+
 cc/target
 cc/.idea
 
