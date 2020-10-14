@@ -17,6 +17,7 @@ pp/**/metals.sbt
 
 pp/.vscode
 
+cc/src/ast.rs
 cc/target
 cc/.idea
 

@@ -9,4 +9,7 @@ default = ["llvm-sys"]
 
 [dependencies]
 llvm-sys = { version = "100.0.1", optional = true }
-protobuf = "2.10.1"
+protobuf = "2.18"
+
+[build-dependencies]
+protoc-rust = "2.18"
