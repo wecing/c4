@@ -4,7 +4,7 @@ import java.nio.file.{Files, Paths}
 
 object SearchPath {
   val standardSystemDirs = Seq(
-    "/usr/lib/gcc/x86_64-linux-gnu/9/include",
+    // "/usr/lib/gcc/x86_64-linux-gnu/9/include",
     "/usr/local/include",
     "/usr/include/x86_64-linux-gnu",
     "/usr/include"
