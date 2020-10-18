@@ -70,6 +70,9 @@ final case class PtrExpr(e: L[Expr], field: L[TokId]) extends Expr
 final case class SizeofValExpr(e: L[Expr]) extends Expr
 final case class SizeofTypeExpr(tp: L[TypeName]) extends Expr
 
+final case class BuiltinOffsetofExpr(tp: L[TypeName], field: L[TokId])
+    extends Expr
+
 final case class UnaryExpr(e: L[Expr], op: L[UnaryOp]) extends Expr
 final case class BinaryExpr(e1: L[Expr], e2: L[Expr], op: L[BinaryOp])
     extends Expr

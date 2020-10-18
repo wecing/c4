@@ -158,6 +158,13 @@ message Expr {
     Loc else_loc = 6;
   }
 
+  message BuiltinOffsetof {
+    TypeName tp = 1;
+    Loc tp_loc = 2;
+    string field = 3;
+    Loc field_loc = 4;
+  }
+
   oneof e {
     string id = 1;
     Integer integer = 2;
@@ -179,6 +186,8 @@ message Expr {
     Unary unary = 17;
     Binary binary = 18;
     Ternary ternary = 19;
+
+    BuiltinOffsetof builtin_offsetof = 20;
   }
 }
 

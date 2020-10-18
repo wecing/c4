@@ -220,6 +220,15 @@ private final class ProtoConverter {
             p.Expr
               .SizeofType(tp = Some(_visit(tp)), tpLoc = Some(_visit(tpLoc)))
           )
+        case BuiltinOffsetofExpr(L(tpLoc, tp), L(fieldLoc, TokId(field))) =>
+          p.Expr.E.BuiltinOffsetof(
+            p.Expr.BuiltinOffsetof(
+              tp = Some(_visit(tp)),
+              tpLoc = Some(_visit(tpLoc)),
+              field = field,
+              fieldLoc = Some(_visit(fieldLoc))
+            )
+          )
         case UnaryExpr(L(eLoc, e), L(opLoc, op)) =>
           p.Expr.E.Unary(
             p.Expr.Unary(

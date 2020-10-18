@@ -99,6 +99,8 @@ case object Tok_unsigned extends Tok(Sym.UNSIGNED)
 case object Tok_void extends Tok(Sym.VOID)
 case object Tok_volatile extends Tok(Sym.VOLATILE)
 case object Tok_while extends Tok(Sym.WHILE)
+// builtin keywords
+case object Tok_builtin_offsetof extends Tok(Sym.BUILTIN_OFFSETOF)
 // symbols
 case object Tok_lsbrkt extends Tok(Sym.LSBRKT) // [
 case object Tok_rsbrkt extends Tok(Sym.RSBRKT) // ]
@@ -196,7 +198,8 @@ class SourcePhase7Reader(
               "unsigned" -> Tok_unsigned,
               "void" -> Tok_void,
               "volatile" -> Tok_volatile,
-              "while" -> Tok_while
+              "while" -> Tok_while,
+              "__builtin_offsetof" -> Tok_builtin_offsetof
             )
             val newTok = dict.getOrElse(id, TokId(id))
             acc :+ L(ppTok.loc, newTok, ppTok.fileName)

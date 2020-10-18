@@ -92,6 +92,9 @@ terminal Loc    AUTO, BREAK, CASE, CHAR, CONST, CONTINUE, DEFAULT, DO, DOUBLE,
                 RETURN, SHORT, SIGNED, SIZEOF, STATIC, STRUCT, SWITCH, TYPEDEF,
                 UNION, UNSIGNED, VOID, VOLATILE, WHILE;
 
+// extra keywords for builtins
+terminal Loc    BUILTIN_OFFSETOF;
+
 // op/sym       [       ]       (       )       {       }
 terminal Loc    LSBRKT, RSBRKT, LPAREN, RPAREN, LBRACE, RBRACE,
 //              .    ,      ;          ...       ->   ++   --   &      *
@@ -872,6 +875,8 @@ unary_expression // Located<Expr>
         {: RESULT = Located.of(op, e.loc(), new SizeofValExpr(e)); :}
       | SIZEOF:b LPAREN type_name:tp RPAREN:e
         {: RESULT = Located.of(b, e, new SizeofTypeExpr(tp)); :}
+      | BUILTIN_OFFSETOF:b LPAREN type_name:tp COMMA ID:id RPAREN:e
+        {: RESULT = Located.of(b, e, new BuiltinOffsetofExpr(tp, id)); :}
       ;
 
 postfix_expression // Located<Expr>

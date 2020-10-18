@@ -3001,6 +3001,36 @@ impl Compiler<'_> {
                 )
                 .unwrap_or_else(|e| e.panic())
             }
+            ast::Expr_oneof_e::builtin_offsetof(offsetof) => {
+                let tp = self.visit_type_name((
+                    offsetof.get_tp(),
+                    offsetof.get_tp_loc(),
+                ));
+                let offset = match Compiler::get_struct_layout(
+                    &tp.tp,
+                    Some(offsetof.get_field()),
+                )
+                .3
+                {
+                    Some((_, offset)) if offset.bit_field_mask == 0 => offset,
+                    Some(_) => panic!(
+                        "{}: Cannot get offset for bit-field '{}'",
+                        Compiler::format_loc(offsetof.get_field_loc()),
+                        offsetof.get_field()
+                    ),
+                    None => panic!(
+                        "{}: Field '{}' not found",
+                        Compiler::format_loc(offsetof.get_field_loc()),
+                        offsetof.get_field()
+                    ),
+                };
+                // 4.1.5: and offsetof... expends to an integral constant
+                // expression that has type size_t
+                (
+                    QType::from(Type::UnsignedLong),
+                    Some(ConstantOrIrValue::U64(offset.offset as u64)),
+                )
+            }
         }
     }
 
