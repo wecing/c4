@@ -25,8 +25,8 @@ object SearchPath {
 
       val path =
         Option(Paths.get(curFile).getParent())
-          .map(_.toString())
-          .getOrElse("") + "/" + file
+          .map(_.toString() + "/" + file)
+          .getOrElse(file)
       if (exists(path)) {
         return Some(path)
       }
