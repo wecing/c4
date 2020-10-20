@@ -6736,7 +6736,43 @@ impl Compiler<'_> {
                     } else {
                         // let's just assume union and bit fields are never
                         // used together
-                        su_type.fields.clone().unwrap()
+                        let tp = QType::from(Type::Union(Box::from(
+                            su_type.clone(),
+                        )));
+                        let tp_sz =
+                            Compiler::get_type_size_and_align_bytes(&tp.tp)
+                                .unwrap()
+                                .0;
+
+                        let (max_align_field, max_align_field_sz) = su_type
+                            .fields
+                            .as_ref()
+                            .unwrap()
+                            .iter()
+                            .map(|f| {
+                                let (sz, align) =
+                                    Compiler::get_type_size_and_align_bytes(
+                                        &f.tp.tp,
+                                    )
+                                    .unwrap();
+                                (f, sz, align)
+                            })
+                            .max_by_key(|t| t.2)
+                            .map(|(f, sz, _)| (f.clone(), sz))
+                            .unwrap();
+
+                        let mut fs = vec![max_align_field];
+                        if tp_sz > max_align_field_sz {
+                            fs.push(SuField {
+                                name: None,
+                                tp: QType::from(Type::Array(
+                                    Box::new(QType::from(Type::Char)),
+                                    Some(tp_sz - max_align_field_sz),
+                                )),
+                                bit_field_size: None,
+                            });
+                        }
+                        fs
                     };
                     self.c4ir_builder.update_struct_type(
                         &ir_type_name,
@@ -6949,8 +6985,8 @@ impl Compiler<'_> {
                     } else {
                         (qualified_type.clone(), String::from(""))
                     };
-                    // 3.5.2.1: A structure or union shall not contain a member with
-                    // incomplete or function type.
+                    // 3.5.2.1: A structure or union shall not contain a member
+                    // with incomplete or function type.
                     match Compiler::get_type_size_and_align_bytes(&tp.tp) {
                         None => panic!(
                             "{}: Struct or union contains incomplete type",
