@@ -547,6 +547,14 @@ trait IRBuilder {
         else_bb_id: &str,
     );
 
+    fn create_va_start(&mut self, ir_id: &str);
+
+    fn create_va_arg(&mut self, dst_ir_id: &str, ir_id: &str, tp: &QType);
+
+    fn create_va_end(&mut self, ir_id: &str);
+
+    fn create_va_copy(&mut self, dst_ir_id: &str, src_ir_id: &str);
+
     fn create_return_void(&mut self);
 
     fn create_return(&mut self, ir_id: &str);
@@ -701,6 +709,14 @@ impl IRBuilder for DummyIRBuilder {
     ) {
     }
 
+    fn create_va_start(&mut self, _ir_id: &str) {}
+
+    fn create_va_arg(&mut self, _dst_ir_id: &str, _ir_id: &str, _tp: &QType) {}
+
+    fn create_va_end(&mut self, _ir_id: &str) {}
+
+    fn create_va_copy(&mut self, _dst_ir_id: &str, _src_ir_id: &str) {}
+
     fn create_return_void(&mut self) {}
 
     fn create_return(&mut self, _ir_id: &str) {}
@@ -738,7 +754,7 @@ impl LLVMBuilderImpl {
                 context,
             );
             let builder = llvm_sys::core::LLVMCreateBuilderInContext(context);
-            LLVMBuilderImpl {
+            let mut r = LLVMBuilderImpl {
                 context,
                 module,
                 builder,
@@ -748,7 +764,75 @@ impl LLVMBuilderImpl {
                 basic_blocks: HashMap::new(),
                 symbol_table: HashMap::new(),
                 switch_stack: Vec::new(),
-            }
+            };
+            r.init();
+            r
+        }
+    }
+
+    fn init(&mut self) {
+        {
+            let fn_tp = {
+                let ptr_tp = TypedFuncParam {
+                    is_register: false,
+                    tp: QType::char_ptr_tp(),
+                    name: None,
+                };
+                Type::Function(
+                    Box::new(QType::from(Type::Void)),
+                    Some(FuncParams::Typed(vec![ptr_tp], false)),
+                )
+            };
+            let fn_tp_llvm = self.get_llvm_type(&fn_tp);
+
+            let fn_name_c = CString::new("llvm.va_start").unwrap();
+            let fn_llvm = unsafe {
+                llvm_sys::core::LLVMAddFunction(
+                    self.module,
+                    fn_name_c.as_ptr(),
+                    fn_tp_llvm,
+                )
+            };
+            self.symbol_table
+                .insert("llvm.va_start".to_string(), fn_llvm);
+
+            let fn_name_c = CString::new("llvm.va_end").unwrap();
+            let fn_llvm = unsafe {
+                llvm_sys::core::LLVMAddFunction(
+                    self.module,
+                    fn_name_c.as_ptr(),
+                    fn_tp_llvm,
+                )
+            };
+            self.symbol_table.insert("llvm.va_end".to_string(), fn_llvm);
+        }
+
+        {
+            let fn_name_c = CString::new("llvm.va_copy").unwrap();
+            let fn_tp = {
+                let ptr_tp = TypedFuncParam {
+                    is_register: false,
+                    tp: QType::char_ptr_tp(),
+                    name: None,
+                };
+                Type::Function(
+                    Box::new(QType::from(Type::Void)),
+                    Some(FuncParams::Typed(
+                        vec![ptr_tp.clone(), ptr_tp],
+                        false,
+                    )),
+                )
+            };
+            let fn_tp_llvm = self.get_llvm_type(&fn_tp);
+            let fn_llvm = unsafe {
+                llvm_sys::core::LLVMAddFunction(
+                    self.module,
+                    fn_name_c.as_ptr(),
+                    fn_tp_llvm,
+                )
+            };
+            self.symbol_table
+                .insert("llvm.va_copy".to_string(), fn_llvm);
         }
     }
 
@@ -1588,6 +1672,106 @@ impl IRBuilder for LLVMBuilderImpl {
                 else_bb,
             );
         }
+    }
+
+    fn create_va_start(&mut self, ir_id: &str) {
+        let fn_llvm = *self.symbol_table.get("llvm.va_start").unwrap();
+        let empty_str_c = CString::new("").unwrap();
+        let ap = *self.symbol_table.get(ir_id).unwrap();
+        let ap = unsafe {
+            llvm_sys::core::LLVMBuildCast(
+                self.builder,
+                llvm_sys::LLVMOpcode::LLVMBitCast,
+                ap,
+                self.get_llvm_type(&QType::char_ptr_tp().tp),
+                empty_str_c.as_ptr(),
+            )
+        };
+        let mut args = vec![ap];
+        unsafe {
+            llvm_sys::core::LLVMBuildCall(
+                self.builder,
+                fn_llvm,
+                args.as_mut_ptr(),
+                1,
+                empty_str_c.as_ptr(),
+            )
+        };
+    }
+
+    fn create_va_arg(&mut self, dst_ir_id: &str, ir_id: &str, tp: &QType) {
+        let dst_ir_id_c = CString::new(dst_ir_id.clone()).unwrap();
+        let ap = *self.symbol_table.get(ir_id).unwrap();
+        let tp_llvm = self.get_llvm_type(&tp.tp);
+        let dst = unsafe {
+            llvm_sys::core::LLVMBuildVAArg(
+                self.builder,
+                ap,
+                tp_llvm,
+                dst_ir_id_c.as_ptr(),
+            )
+        };
+        self.symbol_table.insert(dst_ir_id.to_string(), dst);
+    }
+
+    fn create_va_end(&mut self, ir_id: &str) {
+        let fn_llvm = *self.symbol_table.get("llvm.va_end").unwrap();
+        let empty_str_c = CString::new("").unwrap();
+        let ap = *self.symbol_table.get(ir_id).unwrap();
+        let ap = unsafe {
+            llvm_sys::core::LLVMBuildCast(
+                self.builder,
+                llvm_sys::LLVMOpcode::LLVMBitCast,
+                ap,
+                self.get_llvm_type(&QType::char_ptr_tp().tp),
+                empty_str_c.as_ptr(),
+            )
+        };
+        let mut args = vec![ap];
+        unsafe {
+            llvm_sys::core::LLVMBuildCall(
+                self.builder,
+                fn_llvm,
+                args.as_mut_ptr(),
+                1,
+                empty_str_c.as_ptr(),
+            )
+        };
+    }
+
+    fn create_va_copy(&mut self, dst_ir_id: &str, src_ir_id: &str) {
+        let fn_llvm = *self.symbol_table.get("llvm.va_copy").unwrap();
+        let empty_str_c = CString::new("").unwrap();
+        let dst_ap = *self.symbol_table.get(dst_ir_id).unwrap();
+        let src_ap = *self.symbol_table.get(src_ir_id).unwrap();
+        let dst_ap = unsafe {
+            llvm_sys::core::LLVMBuildCast(
+                self.builder,
+                llvm_sys::LLVMOpcode::LLVMBitCast,
+                dst_ap,
+                self.get_llvm_type(&QType::char_ptr_tp().tp),
+                empty_str_c.as_ptr(),
+            )
+        };
+        let src_ap = unsafe {
+            llvm_sys::core::LLVMBuildCast(
+                self.builder,
+                llvm_sys::LLVMOpcode::LLVMBitCast,
+                src_ap,
+                self.get_llvm_type(&QType::char_ptr_tp().tp),
+                empty_str_c.as_ptr(),
+            )
+        };
+        let mut args = vec![dst_ap, src_ap];
+        unsafe {
+            llvm_sys::core::LLVMBuildCall(
+                self.builder,
+                fn_llvm,
+                args.as_mut_ptr(),
+                2,
+                empty_str_c.as_ptr(),
+            )
+        };
     }
 
     fn create_return_void(&mut self) {
@@ -3030,6 +3214,107 @@ impl Compiler<'_> {
                     QType::from(Type::UnsignedLong),
                     Some(ConstantOrIrValue::U64(offset.offset as u64)),
                 )
+            }
+            ast::Expr_oneof_e::builtin_va_start(va_start) => {
+                if !emit_ir {
+                    panic!(
+                        "{}: Not a const expression",
+                        Compiler::format_loc(e.1)
+                    );
+                }
+                let ap = (
+                    &self.translation_unit.exprs[va_start.ap_idx as usize],
+                    va_start.get_ap_loc(),
+                );
+                let (tp_ap, ap) = self.visit_expr(ap, fold_constant, emit_ir);
+                let ap = self.convert_to_ir_value(&tp_ap, ap.unwrap());
+                let ap_ir_id = match ap {
+                    ConstantOrIrValue::IrValue(ir_id, _) => ir_id,
+                    _ => unreachable!(),
+                };
+                self.c4ir_builder.create_va_start(&ap_ir_id);
+                self.llvm_builder.create_va_start(&ap_ir_id);
+                (QType::from(Type::Void), Some(ConstantOrIrValue::I32(0)))
+            }
+            ast::Expr_oneof_e::builtin_va_arg(va_arg) => {
+                if !emit_ir {
+                    panic!(
+                        "{}: Not a const expression",
+                        Compiler::format_loc(e.1)
+                    );
+                }
+                let ap = (
+                    &self.translation_unit.exprs[va_arg.ap_idx as usize],
+                    va_arg.get_ap_loc(),
+                );
+                let (tp_ap, ap) = self.visit_expr(ap, fold_constant, emit_ir);
+                let ap = self.convert_to_ir_value(&tp_ap, ap.unwrap());
+                let ap_ir_id = match ap {
+                    ConstantOrIrValue::IrValue(ir_id, _) => ir_id,
+                    _ => unreachable!(),
+                };
+                let tp_arg = self
+                    .visit_type_name((va_arg.get_tp(), va_arg.get_tp_loc()));
+                let dst_ir_id = self.get_next_ir_id();
+                self.c4ir_builder
+                    .create_va_arg(&dst_ir_id, &ap_ir_id, &tp_arg);
+                self.llvm_builder
+                    .create_va_arg(&dst_ir_id, &ap_ir_id, &tp_arg);
+                (tp_arg, Some(ConstantOrIrValue::IrValue(dst_ir_id, false)))
+            }
+            ast::Expr_oneof_e::builtin_va_end(va_end) => {
+                if !emit_ir {
+                    panic!(
+                        "{}: Not a const expression",
+                        Compiler::format_loc(e.1)
+                    );
+                }
+                let ap = (
+                    &self.translation_unit.exprs[va_end.ap_idx as usize],
+                    va_end.get_ap_loc(),
+                );
+                let (tp_ap, ap) = self.visit_expr(ap, fold_constant, emit_ir);
+                let ap = self.convert_to_ir_value(&tp_ap, ap.unwrap());
+                let ap_ir_id = match ap {
+                    ConstantOrIrValue::IrValue(ir_id, _) => ir_id,
+                    _ => unreachable!(),
+                };
+                self.c4ir_builder.create_va_end(&ap_ir_id);
+                self.llvm_builder.create_va_end(&ap_ir_id);
+                (QType::from(Type::Void), Some(ConstantOrIrValue::I32(0)))
+            }
+            ast::Expr_oneof_e::builtin_va_copy(va_copy) => {
+                if !emit_ir {
+                    panic!(
+                        "{}: Not a const expression",
+                        Compiler::format_loc(e.1)
+                    );
+                }
+                let dst = (
+                    &self.translation_unit.exprs[va_copy.dst_idx as usize],
+                    va_copy.get_dst_loc(),
+                );
+                let src = (
+                    &self.translation_unit.exprs[va_copy.src_idx as usize],
+                    va_copy.get_src_loc(),
+                );
+                let (tp_dst, dst) =
+                    self.visit_expr(dst, fold_constant, emit_ir);
+                let (tp_src, src) =
+                    self.visit_expr(src, fold_constant, emit_ir);
+                let dst = self.convert_to_ir_value(&tp_dst, dst.unwrap());
+                let src = self.convert_to_ir_value(&tp_src, src.unwrap());
+                let dst_ir_id = match dst {
+                    ConstantOrIrValue::IrValue(ir_id, _) => ir_id,
+                    _ => unreachable!(),
+                };
+                let src_ir_id = match src {
+                    ConstantOrIrValue::IrValue(ir_id, _) => ir_id,
+                    _ => unreachable!(),
+                };
+                self.c4ir_builder.create_va_copy(&dst_ir_id, &src_ir_id);
+                self.llvm_builder.create_va_copy(&dst_ir_id, &src_ir_id);
+                (QType::from(Type::Void), Some(ConstantOrIrValue::I32(0)))
             }
         }
     }

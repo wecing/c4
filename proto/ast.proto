@@ -165,6 +165,32 @@ message Expr {
     Loc field_loc = 4;
   }
 
+  message BuiltinVaStart {
+    int32 ap_idx = 1; // Expr
+    Loc ap_loc = 2;
+    string param = 3;
+    Loc param_loc = 4;
+  }
+
+  message BuiltinVaArg {
+    int32 ap_idx = 1; // Expr
+    Loc ap_loc = 2;
+    TypeName tp = 3;
+    Loc tp_loc = 4;
+  }
+
+  message BuiltinVaEnd {
+    int32 ap_idx = 1; // Expr
+    Loc ap_loc = 2;
+  }
+
+  message BuiltinVaCopy {
+    int32 dst_idx = 1; // Expr
+    Loc dst_loc = 2;
+    int32 src_idx = 3; // Expr
+    Loc src_loc = 4;
+  }
+
   oneof e {
     string id = 1;
     Integer integer = 2;
@@ -188,6 +214,10 @@ message Expr {
     Ternary ternary = 19;
 
     BuiltinOffsetof builtin_offsetof = 20;
+    BuiltinVaStart builtin_va_start = 21;
+    BuiltinVaArg builtin_va_arg = 22;
+    BuiltinVaEnd builtin_va_end = 23;
+    BuiltinVaCopy builtin_va_copy = 24;
   }
 }
 

@@ -101,6 +101,10 @@ case object Tok_volatile extends Tok(Sym.VOLATILE)
 case object Tok_while extends Tok(Sym.WHILE)
 // builtin keywords
 case object Tok_builtin_offsetof extends Tok(Sym.BUILTIN_OFFSETOF)
+case object Tok_builtin_va_start extends Tok(Sym.BUILTIN_VA_START)
+case object Tok_builtin_va_arg extends Tok(Sym.BUILTIN_VA_ARG)
+case object Tok_builtin_va_end extends Tok(Sym.BUILTIN_VA_END)
+case object Tok_builtin_va_copy extends Tok(Sym.BUILTIN_VA_COPY)
 // symbols
 case object Tok_lsbrkt extends Tok(Sym.LSBRKT) // [
 case object Tok_rsbrkt extends Tok(Sym.RSBRKT) // ]
@@ -199,7 +203,11 @@ class SourcePhase7Reader(
               "void" -> Tok_void,
               "volatile" -> Tok_volatile,
               "while" -> Tok_while,
-              "__builtin_offsetof" -> Tok_builtin_offsetof
+              "__builtin_offsetof" -> Tok_builtin_offsetof,
+              "__builtin_va_start" -> Tok_builtin_va_start,
+              "__builtin_va_arg" -> Tok_builtin_va_arg,
+              "__builtin_va_end" -> Tok_builtin_va_end,
+              "__builtin_va_copy" -> Tok_builtin_va_copy
             )
             val newTok = dict.getOrElse(id, TokId(id))
             acc :+ L(ppTok.loc, newTok, ppTok.fileName)

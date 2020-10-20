@@ -72,6 +72,10 @@ final case class SizeofTypeExpr(tp: L[TypeName]) extends Expr
 
 final case class BuiltinOffsetofExpr(tp: L[TypeName], field: L[TokId])
     extends Expr
+final case class BuiltinVaStartExpr(e: L[Expr], id: L[TokId]) extends Expr
+final case class BuiltinVaArgExpr(e: L[Expr], tp: L[TypeName]) extends Expr
+final case class BuiltinVaEndExpr(e: L[Expr]) extends Expr
+final case class BuiltinVaCopyExpr(dst: L[Expr], src: L[Expr]) extends Expr
 
 final case class UnaryExpr(e: L[Expr], op: L[UnaryOp]) extends Expr
 final case class BinaryExpr(e1: L[Expr], e2: L[Expr], op: L[BinaryOp])

@@ -229,6 +229,44 @@ private final class ProtoConverter {
               fieldLoc = Some(_visit(fieldLoc))
             )
           )
+        case BuiltinVaStartExpr(L(eLoc, e), L(paramLoc, TokId(param))) => {
+          p.Expr.E.BuiltinVaStart(
+            p.Expr.BuiltinVaStart(
+              apIdx = _visit(e),
+              apLoc = Some(_visit(eLoc)),
+              param = param,
+              paramLoc = Some(_visit(paramLoc))
+            )
+          )
+        }
+        case BuiltinVaArgExpr(L(eLoc, e), L(tpLoc, tp)) => {
+          p.Expr.E.BuiltinVaArg(
+            p.Expr.BuiltinVaArg(
+              apIdx = _visit(e),
+              apLoc = Some(_visit(eLoc)),
+              tp = Some(_visit(tp)),
+              tpLoc = Some(_visit(tpLoc))
+            )
+          )
+        }
+        case BuiltinVaEndExpr(L(eLoc, e)) => {
+          p.Expr.E.BuiltinVaEnd(
+            p.Expr.BuiltinVaEnd(
+              apIdx = _visit(e),
+              apLoc = Some(_visit(eLoc))
+            )
+          )
+        }
+        case BuiltinVaCopyExpr(L(dstLoc, dst), L(srcLoc, src)) => {
+          p.Expr.E.BuiltinVaCopy(
+            p.Expr.BuiltinVaCopy(
+              dstIdx = _visit(dst),
+              dstLoc = Some(_visit(dstLoc)),
+              srcIdx = _visit(src),
+              srcLoc = Some(_visit(srcLoc))
+            )
+          )
+        }
         case UnaryExpr(L(eLoc, e), L(opLoc, op)) =>
           p.Expr.E.Unary(
             p.Expr.Unary(
