@@ -907,6 +907,8 @@ object PPReader {
         throw new RuntimeException("programming error")
       case x: PPLineInclude =>
         throw new RuntimeException("programming error")
+      case x: PPLineIncludeTokens =>
+        throw new RuntimeException("programming error")
       case x: PPLineIf =>
         // nested #if
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
@@ -1062,7 +1064,40 @@ object PPReader {
       accum: Seq[L[PPTok]],
       toBeExpanded: Seq[L[PPTok]]
   ): Seq[L[PPTok]] = {
-    ctx.ppLineReader.read() match {
+    ctx.ppLineReader.read() map {
+      // convert #include pp-tokens to #include "..."
+      case ppCmd: PPLineIncludeTokens
+          if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) => {
+        pp(ctx, ppCmd.tokens) filter {
+          case L(_, PPTokWhiteSpc(_), _) => false
+          case _                         => true
+        } match {
+          case Seq(located @ L(_, PPTokStr(s), _)) => {
+            val str = located.copy(value = s)
+            PPLineInclude(
+              ppCmd.loc,
+              str.copy(value = TextUtils.fromStrReprQ(str)),
+              false
+            )
+          }
+          case _ => {
+            // 3.8.2: The method by which a sequence of preprocessing tokens
+            // between a < and a > preprocessing token pair or a pair of
+            // characters is combined into a single header name preprocessing
+            // token is implementation-defined.
+            throw IllegalSourceException(
+              SimpleMessage(
+                ctx.logicalFileName,
+                ppCmd.loc,
+                s"Unrecognized #include invocation"
+              )
+            )
+          }
+        }
+      }
+      case ppCmd: PPLineIncludeTokens => PPLineTokens(Seq())
+      case x                          => x
+    } match {
       case None =>
         ctx.ppLineReader.close()
         accum ++ pp(ctx, toBeExpanded)

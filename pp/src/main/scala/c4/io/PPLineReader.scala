@@ -28,6 +28,8 @@ final case class PPLineInclude(
     name: L[String],
     isCaret: Boolean
 ) extends PPLine
+final case class PPLineIncludeTokens(loc: (Int, Int), tokens: Seq[L[PPTok]])
+    extends PPLine
 final case class PPLineDefineObj(
     loc: (Int, Int),
     name: L[String],
@@ -476,7 +478,6 @@ class PPLineReader(val warnings: ArrayBuffer[Message], val fileName: String) {
         readEmptyLine()
         PPLineEndif(loc)
       case "include" =>
-        // TODO: c89 allows the arguments of #include to be macro-expanded
         def readIncludeHeader(endsOn: Char, accum: String): String = {
           file.read().get match {
             case ('\n', loc1) =>
@@ -498,13 +499,8 @@ class PPLineReader(val warnings: ArrayBuffer[Message], val fileName: String) {
             readEmptyLine()
             PPLineInclude(loc, name, isCaret = false)
           case (c, loc1) =>
-            throw IllegalSourceException(
-              SimpleMessage(
-                fileName,
-                loc1,
-                s"Unexpected character ${TextUtils.repr(c)} in #include"
-              )
-            )
+            file.ungetc(c, loc1)
+            PPLineIncludeTokens(loc, readPPTokensLine(true))
         }
       case "define" =>
         def expectId(): L[String] = {
