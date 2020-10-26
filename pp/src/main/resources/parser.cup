@@ -445,6 +445,19 @@ struct_or_union_specifier // Located<TypeSpecifier>
       | UNION:loc1  ID:id
         {: RESULT = Located$.MODULE$.of(loc1, id.loc(),
             new UnionSpecifier(some(id),     none())); :}
+      // TYPEDEF_NAME variations (less common cases)
+      | STRUCT:loc1 TYPEDEF_NAME:id LBRACE struct_declaration_list:body RBRACE:loc2
+        {: RESULT = Located$.MODULE$.of(loc1, loc2,
+            new StructSpecifier(some(id), some(body))); :}
+      | STRUCT:loc1 TYPEDEF_NAME:id
+        {: RESULT = Located$.MODULE$.of(loc1, id.loc(),
+            new StructSpecifier(some(id),     none())); :}
+      | UNION:loc1  TYPEDEF_NAME:id LBRACE struct_declaration_list:body RBRACE:loc2
+        {: RESULT = Located$.MODULE$.of(loc1, loc2,
+            new UnionSpecifier(some(id), some(body))); :}
+      | UNION:loc1  TYPEDEF_NAME:id
+        {: RESULT = Located$.MODULE$.of(loc1, id.loc(),
+            new UnionSpecifier(some(id),     none())); :}
       ;
 
 struct_declaration_list // Seq[L[StructDeclaration]]
@@ -514,6 +527,19 @@ enum_specifier // Located[TypeSpecifier]
             new EnumSpecifier(none(), some(body)));
         :}
       | ENUM:loc  ID:id
+        {:
+          RESULT = new Located(
+            LocRange.of(loc, id.loc()),
+            new EnumSpecifier(some(id), none()));
+        :}
+      // TYPEDEF_NAME variations (less common)
+      | ENUM:loc1 TYPEDEF_NAME:id LBRACE enumerator_list:body RBRACE:loc2
+        {:
+          RESULT = new Located(
+            LocRange.of(loc1, loc2),
+            new EnumSpecifier(some(id), some(body)));
+        :}
+      | ENUM:loc  TYPEDEF_NAME:id
         {:
           RESULT = new Located(
             LocRange.of(loc, id.loc()),
