@@ -6971,11 +6971,24 @@ impl Compiler<'_> {
             }
 
             // type definition
-            _ => {
-                let mut su_type = SuType {
-                    fields: None,
-                    uuid: self.get_next_uuid(),
+            old_sue_type => {
+                let uuid = match old_sue_type {
+                    // struct S;
+                    // struct S {...};
+                    Some((SueType::Struct(su_type), scope))
+                        if self.current_scope.same_as(scope) =>
+                    {
+                        su_type.uuid
+                    }
+                    Some((SueType::Union(su_type), scope))
+                        if self.current_scope.same_as(scope) =>
+                    {
+                        su_type.uuid
+                    }
+                    _ => self.get_next_uuid(),
                 };
+
+                let mut su_type = SuType { fields: None, uuid };
                 let tag_name = if name.0.is_empty() {
                     format!(".{}", su_type.uuid)
                 } else {
@@ -7225,7 +7238,51 @@ impl Compiler<'_> {
                     id.0
                 )
             }
-            Some((OrdinaryIdRef::TypedefRef(qtype), _)) => *qtype.clone(),
+            Some((OrdinaryIdRef::TypedefRef(qtype), _)) => {
+                let su_uuid = match &qtype.tp {
+                    Type::Struct(body) if body.fields.is_none() => body.uuid,
+                    Type::Union(body) if body.fields.is_none() => body.uuid,
+                    _ => return *qtype.clone(),
+                };
+
+                // this is for supporting cases like:
+                //   typedef struct S T;
+                //   struct S {...};
+                //   { T t; ... }
+                let su_type: Option<Box<SuType>> = {
+                    let mut scope: &Scope = &self.current_scope;
+                    loop {
+                        let su_type = scope
+                            .sue_tag_names_ns
+                            .values()
+                            .into_iter()
+                            .flat_map(|t| match t {
+                                SueType::Struct(b) => Some(b),
+                                SueType::Union(b) => Some(b),
+                                _ => None,
+                            })
+                            .find(|t| t.uuid == su_uuid)
+                            .map(|t| t.clone());
+                        if su_type.is_some() {
+                            break su_type;
+                        }
+                        match &*scope.outer_scope {
+                            None => break None,
+                            Some(outer) => scope = outer,
+                        }
+                    }
+                };
+
+                let mut r = *qtype.clone();
+                if su_type.is_some() {
+                    match &mut r.tp {
+                        Type::Struct(b) => *b = su_type.unwrap(),
+                        Type::Union(b) => *b = su_type.unwrap(),
+                        _ => (),
+                    }
+                }
+                r
+            }
             Some(_) =>
             // this error should also have been handled elsewhere
             {

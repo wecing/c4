@@ -1,2 +1,6 @@
 S: 4
 struct S: 8
+S2: 8
+v1: 8
+v2: 8
+struct S2: 8
