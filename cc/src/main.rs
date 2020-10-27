@@ -999,6 +999,24 @@ impl LLVMBuilderImpl {
                 let init_tp = self.get_llvm_type(&init_tp.unwrap().tp);
                 unsafe { llvm_sys::core::LLVMConstNull(init_tp) }
             }
+            Initializer::Expr(_, c @ C::HasAddress(_, _, false))
+                if init_tp.map(|t| t.is_pointer()) == Some(true) =>
+            {
+                let pre_cast = self.get_llvm_constant(c).0;
+                // get_llvm_constant() does not know tp, so for HasAddress it
+                // will always return i8* values, so a cast is needed here
+                let init_tp = self.get_llvm_type(&init_tp.unwrap().tp);
+                let name_c = CString::new("").unwrap();
+                unsafe {
+                    llvm_sys::core::LLVMBuildCast(
+                        self.builder,
+                        llvm_sys::LLVMOpcode::LLVMBitCast,
+                        pre_cast,
+                        init_tp,
+                        name_c.as_ptr(),
+                    )
+                }
+            }
             Initializer::Expr(_, c) => self.get_llvm_constant(c).0,
             Initializer::Struct(inits, _)
                 if inits.is_empty() && init_tp.is_some() =>

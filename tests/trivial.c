@@ -12,6 +12,7 @@ void f() {}
 
 int main() {
   int i;
+  struct S *sp = &s1;
 
   switch (0) {
   case 1:
