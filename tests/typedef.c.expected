@@ -4,3 +4,4 @@ S2: 8
 v1: 8
 v2: 8
 struct S2: 8
+v.up->h = 42

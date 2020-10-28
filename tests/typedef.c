@@ -32,5 +32,25 @@ int main() {
 
     printf("struct S2: %lu\n", sizeof(struct S2));
   }
+
+  if (1) {
+    typedef union U U;
+
+    typedef union {
+      U *up;
+    } Value;
+
+    union U {
+      int h;
+    };
+
+    Value v;
+    U u;
+
+    u.h = 42;
+    v.up = &u;
+
+    printf("v.up->h = %d\n", v.up->h);
+  }
   return 0;
 }

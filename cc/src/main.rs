@@ -982,6 +982,9 @@ impl LLVMBuilderImpl {
         }
     }
 
+    // TODO: init_tp should be a &QType, not Option. Otherwise nested structs
+    // and array of structs won't work when we use LLVM bitcode format IR. Today
+    // we workaround this issue by using LLVM .ll format IR.
     fn get_llvm_constant_init(
         &mut self,
         init: &Initializer,
@@ -3720,6 +3723,41 @@ impl Compiler<'_> {
             _ => c4_fail!(left_loc, "Pointer to struct or union expected"),
         };
         let (su_tp, su_type, is_struct) = su_type_is_struct;
+        // this supports cases like:
+        //   struct S;
+        //   struct P { struct S *sp; } p;
+        //   struct S { int n; };
+        //   p.sp->n;
+        let (su_tp, su_type) = if su_type.fields.is_some() {
+            (su_tp.clone(), su_type.clone())
+        } else {
+            let mut scope: &Scope = &self.current_scope;
+            let su_type_opt = loop {
+                let su_type = scope
+                    .sue_tag_names_ns
+                    .values()
+                    .into_iter()
+                    .flat_map(|t| match t {
+                        SueType::Struct(b) => Some(b),
+                        SueType::Union(b) => Some(b),
+                        _ => None,
+                    })
+                    .find(|t| t.uuid == su_type.uuid)
+                    .map(|t| t.clone());
+                if su_type.is_some() {
+                    break su_type;
+                }
+                match &*scope.outer_scope {
+                    None => break None,
+                    Some(outer) => scope = outer,
+                }
+            };
+            match su_type_opt {
+                Some(b) if is_struct => (Type::Struct(b.clone()), *b),
+                Some(b) => (Type::Union(b.clone()), *b),
+                _ => (su_tp.clone(), su_type.clone()),
+            }
+        };
 
         let fields = match &su_type.fields {
             None => c4_fail!(
@@ -3729,7 +3767,7 @@ impl Compiler<'_> {
             Some(fs) => (fs),
         };
         let (field_tp, offset) = if is_struct {
-            match Compiler::get_struct_layout(su_tp, Some(field.0)).3 {
+            match Compiler::get_struct_layout(&su_tp, Some(field.0)).3 {
                 Some(x) => x,
                 None => c4_fail!(field.1, "Field '{}' not found", field.0),
             }
