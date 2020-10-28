@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 struct S {
   int x, y;
 };
@@ -30,6 +32,8 @@ int main() {
   } while (0);
 
   for (i = 10; i >= 0; i--) {}
+
+  printf("\"hello\"[0] = '%c'\n", "hello"[0]);
 
   return 0;
 }

@@ -4121,6 +4121,21 @@ impl Compiler<'_> {
                         elem_tp,
                         Some(C::HasAddress(ir_id, offset_bytes, true)),
                     ),
+                    Some(C::StrAddress(ir_id, offset_bytes)) => {
+                        let is_char = match &elem_tp.tp {
+                            Type::Char => true,
+                            Type::Short => false,
+                            _ => unreachable!(),
+                        };
+                        let s = self.str_constants.get(&ir_id).unwrap();
+                        let idx = offset_bytes as usize;
+                        let c = if is_char {
+                            C::I8(s[idx] as i8)
+                        } else {
+                            C::I16(s[idx] as i16 | ((s[idx + 1] as i16) << 8))
+                        };
+                        (elem_tp, Some(c))
+                    }
                     _ if !emit_ir => (elem_tp, None),
 
                     Some(C::IrValue(ir_id, false)) => {
