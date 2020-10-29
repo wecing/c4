@@ -1232,7 +1232,10 @@ impl IRBuilder for LLVMBuilderImpl {
         let name_c = CString::new(name).unwrap();
         let tp_llvm = self.get_llvm_type(&tp.tp);
         let v = unsafe {
-            if is_global && self.symbol_table.contains_key(name) {
+            if is_global
+                && self.symbol_table.contains_key(name)
+                && init.is_none()
+            {
                 *self.symbol_table.get(name).unwrap()
             } else if is_global {
                 if tp.is_function() {
@@ -1242,11 +1245,21 @@ impl IRBuilder for LLVMBuilderImpl {
                         tp_llvm,
                     )
                 } else {
-                    llvm_sys::core::LLVMAddGlobal(
+                    let new_v = llvm_sys::core::LLVMAddGlobal(
                         self.module,
                         tp_llvm,
                         name_c.as_ptr(),
-                    )
+                    );
+                    self.symbol_table.get(name).map(|old_v| {
+                        llvm_sys::core::LLVMReplaceAllUsesWith(*old_v, new_v);
+                        llvm_sys::core::LLVMDeleteGlobal(*old_v);
+                        llvm_sys::core::LLVMSetValueName2(
+                            new_v,
+                            name_c.as_ptr(),
+                            name.len(),
+                        );
+                    });
+                    new_v
                 }
             } else {
                 llvm_sys::core::LLVMBuildAlloca(
@@ -2236,6 +2249,7 @@ impl Compiler<'_> {
                     if self.current_scope.is_file_scope()
                         && (scs == None || scs == Some(SCS::STATIC))
                         && !qtype.is_function()
+                        && !is_defined
                     {
                         let zero = if qtype.is_scalar_type() {
                             Initializer::Expr(
