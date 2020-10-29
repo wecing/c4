@@ -4845,16 +4845,16 @@ impl Compiler<'_> {
                     ),
                     // unsigned int
                     (C::U32(x), C::U32(y)) if is_shl => (
-                        QType::from(Type::Int),
+                        QType::from(Type::UnsignedInt),
                         Some(C::U32(x.checked_shl(y).unwrap_or(0))),
                     ),
                     (C::U32(x), C::U32(y)) => (
-                        QType::from(Type::Int),
+                        QType::from(Type::UnsignedInt),
                         Some(C::U32(x.checked_shr(y).unwrap_or(0))),
                     ),
                     // long
                     (C::I64(x), C::I64(y)) if is_shl => (
-                        QType::from(Type::Int),
+                        QType::from(Type::Long),
                         Some(C::I64(
                             x.checked_shl(y as u32).unwrap_or(if x >= 0 {
                                 0
@@ -4864,7 +4864,7 @@ impl Compiler<'_> {
                         )),
                     ),
                     (C::I64(x), C::I64(y)) => (
-                        QType::from(Type::Int),
+                        QType::from(Type::Long),
                         Some(C::I64(
                             x.checked_shr(y as u32).unwrap_or(if x >= 0 {
                                 0
@@ -4875,11 +4875,11 @@ impl Compiler<'_> {
                     ),
                     // unsigned long
                     (C::U64(x), C::U64(y)) if is_shl => (
-                        QType::from(Type::Int),
+                        QType::from(Type::UnsignedLong),
                         Some(C::U64(x.checked_shl(y as u32).unwrap_or(0))),
                     ),
                     (C::U64(x), C::U64(y)) => (
-                        QType::from(Type::Int),
+                        QType::from(Type::UnsignedLong),
                         Some(C::U64(x.checked_shr(y as u32).unwrap_or(0))),
                     ),
 
