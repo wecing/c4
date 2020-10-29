@@ -1,5 +1,7 @@
 #include <stdio.h>
 
+#define NULL ((void *) 0)
+
 struct S {
   int x, y;
 };
@@ -11,6 +13,11 @@ int *np = 0;
 char s[10] = "hi";
 
 void f() {}
+
+int complex_ternary_expr() {
+  void *p = NULL;
+  return (p == NULL) ? 0 : (p && p);
+}
 
 int main() {
   int i;

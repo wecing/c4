@@ -5956,6 +5956,7 @@ impl Compiler<'_> {
             let (then_tp, then_c) = self.convert_lvalue_and_func_designator(
                 then_tp, then_c, true, true, true, emit_ir,
             );
+            let final_then_bb = self.get_current_bb();
 
             self.c4ir_builder.set_current_basic_block(&else_bb);
             self.llvm_builder.set_current_basic_block(&else_bb);
@@ -5964,6 +5965,7 @@ impl Compiler<'_> {
             let (else_tp, else_c) = self.convert_lvalue_and_func_designator(
                 else_tp, else_c, true, true, true, emit_ir,
             );
+            let final_else_bb = self.get_current_bb();
 
             let rtp = self.get_ternary_expr_rtp(
                 &then_tp, &then_c, &else_tp, &else_c, e_else.1,
@@ -5995,8 +5997,8 @@ impl Compiler<'_> {
             self.llvm_builder
                 .create_cond_br(&cond_ir_id, &then_bb, &else_bb);
 
-            self.c4ir_builder.set_current_basic_block(&then_bb);
-            self.llvm_builder.set_current_basic_block(&then_bb);
+            self.c4ir_builder.set_current_basic_block(&final_then_bb);
+            self.llvm_builder.set_current_basic_block(&final_then_bb);
             let then_c = then_c.map(|c| self.convert_to_ir_value(&then_tp, c));
             if !rtp.is_void() {
                 let (_, then_c) = self.cast_expression(
@@ -6032,8 +6034,8 @@ impl Compiler<'_> {
             self.c4ir_builder.create_br(&merge_bb);
             self.llvm_builder.create_br(&merge_bb);
 
-            self.c4ir_builder.set_current_basic_block(&else_bb);
-            self.llvm_builder.set_current_basic_block(&else_bb);
+            self.c4ir_builder.set_current_basic_block(&final_else_bb);
+            self.llvm_builder.set_current_basic_block(&final_else_bb);
             let else_c = else_c.map(|c| self.convert_to_ir_value(&else_tp, c));
             if !rtp.is_void() {
                 let (_, else_c) = self.cast_expression(
