@@ -5101,9 +5101,31 @@ impl Compiler<'_> {
                     && op == Op::SUB
                 {
                     let long_tp = QType::from(Type::Long);
+                    // 3.3.6: both operands are pointers to qualified or
+                    // unqualified versions of compatible object types
+                    let (tp_left, tp_right) = {
+                        let mut tp_left = tp_left;
+                        let mut tp_right = tp_right;
+                        match &mut tp_left.tp {
+                            Type::Pointer(elem_tp) => {
+                                elem_tp.is_const = false;
+                                elem_tp.is_volatile = false;
+                            }
+                            _ => unreachable!(),
+                        };
+                        match &mut tp_right.tp {
+                            Type::Pointer(elem_tp) => {
+                                elem_tp.is_const = false;
+                                elem_tp.is_volatile = false;
+                            }
+                            _ => unreachable!(),
+                        };
+                        (tp_left, tp_right)
+                    };
                     let tp = Compiler::get_composite_type(
                         &tp_left, &tp_right, loc_left,
                     );
+
                     let tp_elem = match &tp.tp {
                         Type::Pointer(elem) => *elem.clone(),
                         _ => unreachable!(),
@@ -6209,6 +6231,35 @@ impl Compiler<'_> {
             && else_tp.is_pointer()
         {
             else_tp.clone()
+        } else if then_tp.is_pointer() && else_tp.is_pointer() {
+            // 3.3.15: Furthermore, if both operands are pointers to compatible
+            // types or differently qualified versions of a compatible type, the
+            // result has the composite type
+            let (then_tp, else_tp) = {
+                let mut then_tp = then_tp.clone();
+                let mut else_tp = else_tp.clone();
+                match &mut then_tp.tp {
+                    Type::Pointer(elem_tp) => {
+                        elem_tp.is_const = false;
+                        elem_tp.is_volatile = false;
+                    }
+                    _ => unreachable!(),
+                };
+                match &mut else_tp.tp {
+                    Type::Pointer(elem_tp) => {
+                        elem_tp.is_const = false;
+                        elem_tp.is_volatile = false;
+                    }
+                    _ => unreachable!(),
+                };
+                (then_tp, else_tp)
+            };
+            let rtp = Compiler::try_get_composite_type(&then_tp, &else_tp, loc);
+            if rtp.is_ok() {
+                rtp.unwrap()
+            } else {
+                c4_fail!(loc, "Incompatible expression type")
+            }
         } else {
             let rtp = Compiler::try_get_composite_type(then_tp, else_tp, loc);
             if rtp.is_ok() {
