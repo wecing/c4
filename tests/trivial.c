@@ -13,6 +13,9 @@ int *np = 0;
 char s[10] = "hi";
 
 void f() {}
+void *f2() {
+  return 0;
+}
 
 int complex_ternary_expr() {
   void *p = NULL;

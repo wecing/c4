@@ -6771,6 +6771,17 @@ impl Compiler<'_> {
             self.visit_expr((e, return_s.get_e_loc()), true, true)
         };
 
+        // before converting return value to ir value, check if it's null
+        // pointer; if yes then change its return type to make sure it could
+        // pass type checking
+        let (tp, r) = if ctx.return_type.is_pointer()
+            && r.as_ref().and_then(|r| r.as_constant_u64()) == Some(0)
+        {
+            (ctx.return_type.clone(), r)
+        } else {
+            (tp, r)
+        };
+
         let (tp, r) = self
             .convert_lvalue_and_func_designator(tp, r, true, true, true, true);
         let r = r.unwrap();
