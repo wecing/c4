@@ -358,6 +358,30 @@ impl Scope {
         }
     }
 
+    fn lookup_sue_type_by_uuid(&self, uuid: u32) -> Option<Type> {
+        let mut scope: &Scope = &self;
+        loop {
+            let su_type = scope.sue_tag_names_ns.values().into_iter().find_map(
+                |t| match t {
+                    SueType::Struct(b) if b.uuid == uuid => {
+                        Some(Type::Struct(b.clone()))
+                    }
+                    SueType::Union(b) if b.uuid == uuid => {
+                        Some(Type::Union(b.clone()))
+                    }
+                    _ => None,
+                },
+            );
+            if su_type.is_some() {
+                break su_type;
+            }
+            match &*scope.outer_scope {
+                None => break None,
+                Some(outer) => scope = outer,
+            }
+        }
+    }
+
     fn same_as(&self, other: &Scope) -> bool {
         // this works since Scope is neither Copy nor Clone
         ptr::eq(self, other)
@@ -3745,30 +3769,9 @@ impl Compiler<'_> {
         let (su_tp, su_type) = if su_type.fields.is_some() {
             (su_tp.clone(), su_type.clone())
         } else {
-            let mut scope: &Scope = &self.current_scope;
-            let su_type_opt = loop {
-                let su_type = scope
-                    .sue_tag_names_ns
-                    .values()
-                    .into_iter()
-                    .flat_map(|t| match t {
-                        SueType::Struct(b) => Some(b),
-                        SueType::Union(b) => Some(b),
-                        _ => None,
-                    })
-                    .find(|t| t.uuid == su_type.uuid)
-                    .map(|t| t.clone());
-                if su_type.is_some() {
-                    break su_type;
-                }
-                match &*scope.outer_scope {
-                    None => break None,
-                    Some(outer) => scope = outer,
-                }
-            };
-            match su_type_opt {
-                Some(b) if is_struct => (Type::Struct(b.clone()), *b),
-                Some(b) => (Type::Union(b.clone()), *b),
+            match self.current_scope.lookup_sue_type_by_uuid(su_type.uuid) {
+                Some(Type::Struct(b)) => (Type::Struct(b.clone()), *b),
+                Some(Type::Union(b)) => (Type::Union(b.clone()), *b),
                 _ => (su_tp.clone(), su_type.clone()),
             }
         };
@@ -5640,14 +5643,37 @@ impl Compiler<'_> {
 
         // if left hand side is not a bit field access expr: fallback to simple
         // assign expr
+        //
+        // similar to visit_member_access_expr(), if the left hand side member
+        // access expr has incomplete struct type, extra type lookup is needed
         let (tp_struct_expr, _) = self.visit_expr(struct_expr, false, false);
         let offset = match &tp_struct_expr.tp {
-            tp @ Type::Struct(_) if is_dot => {
-                Compiler::get_struct_layout(tp, Some(field.0)).3
+            Type::Struct(b) if is_dot && b.fields.is_some() => {
+                Compiler::get_struct_layout(&tp_struct_expr.tp, Some(field.0)).3
+            }
+            Type::Struct(b) if is_dot && b.fields.is_none() => {
+                match self.current_scope.lookup_sue_type_by_uuid(b.uuid) {
+                    Some(t) => Compiler::get_struct_layout(&t, Some(field.0)).3,
+                    None => panic!(
+                        "{}: Expression has incomplete struct type",
+                        Compiler::format_loc(left.1)
+                    ),
+                }
             }
             Type::Pointer(tp) if !is_dot => match &tp.tp {
-                tp @ Type::Struct(_) => {
-                    Compiler::get_struct_layout(tp, Some(field.0)).3
+                Type::Struct(b) if b.fields.is_some() => {
+                    Compiler::get_struct_layout(&tp.tp, Some(field.0)).3
+                }
+                Type::Struct(b) if b.fields.is_none() => {
+                    match self.current_scope.lookup_sue_type_by_uuid(b.uuid) {
+                        Some(t) => {
+                            Compiler::get_struct_layout(&t, Some(field.0)).3
+                        }
+                        None => panic!(
+                            "{}: Expression has incomplete struct type",
+                            Compiler::format_loc(left.1)
+                        ),
+                    }
                 }
                 _ => None,
             },
@@ -7398,29 +7424,12 @@ impl Compiler<'_> {
                 //   typedef struct S T;
                 //   struct S {...};
                 //   { T t; ... }
-                let su_type: Option<Box<SuType>> = {
-                    let mut scope: &Scope = &self.current_scope;
-                    loop {
-                        let su_type = scope
-                            .sue_tag_names_ns
-                            .values()
-                            .into_iter()
-                            .flat_map(|t| match t {
-                                SueType::Struct(b) => Some(b),
-                                SueType::Union(b) => Some(b),
-                                _ => None,
-                            })
-                            .find(|t| t.uuid == su_uuid)
-                            .map(|t| t.clone());
-                        if su_type.is_some() {
-                            break su_type;
-                        }
-                        match &*scope.outer_scope {
-                            None => break None,
-                            Some(outer) => scope = outer,
-                        }
-                    }
-                };
+                let su_type: Option<Box<SuType>> =
+                    match self.current_scope.lookup_sue_type_by_uuid(su_uuid) {
+                        Some(Type::Struct(b)) => Some(b),
+                        Some(Type::Union(b)) => Some(b),
+                        _ => None,
+                    };
 
                 let mut r = *qtype.clone();
                 if su_type.is_some() {
