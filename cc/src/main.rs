@@ -4579,6 +4579,7 @@ impl Compiler<'_> {
                     Some(c) => c.as_constant_u64() == Some(0),
                     _ => false,
                 };
+                let de_qualify = |tp: &QType| QType::from(tp.tp.clone());
                 fn cmp<T: PartialEq<T> + PartialOrd<T>>(
                     op: Op,
                     x: T,
@@ -4605,9 +4606,13 @@ impl Compiler<'_> {
                                 );
                             (tp.clone(), left, tp, right)
                         }
+                        // 3.3.8, 3.3.9: both operands are pointers to qualified
+                        // or unqualified versions of compatible types
                         (Type::Pointer(tp_el), Type::Pointer(tp_er))
                             if Compiler::try_get_composite_type(
-                                tp_el, tp_er, loc_left,
+                                &de_qualify(tp_el),
+                                &de_qualify(tp_er),
+                                loc_left,
                             )
                             .is_ok() =>
                         {
