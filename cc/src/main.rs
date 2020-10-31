@@ -8679,11 +8679,18 @@ impl Compiler<'_> {
         use ConstantOrIrValue as C;
         match (tp.tp.clone(), expr.clone()) {
             // do_arr_to_ptr
-            (Type::Array(t, _), Some(C::IrValue(ir_id, true)))
+            (Type::Array(t, sz), Some(C::IrValue(src_ir_id, true)))
                 if do_arr_to_ptr =>
             {
-                let tp = QType::from(Type::Pointer(t));
-                (tp, Some(C::IrValue(ir_id, false)))
+                let src_tp =
+                    QType::ptr_tp(QType::from(Type::Array(t.clone(), sz)));
+                let dst_tp = QType::from(Type::Pointer(t));
+                let dst_ir_id = self.get_next_ir_id();
+                self.c4ir_builder
+                    .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
+                self.llvm_builder
+                    .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
+                (dst_tp, Some(C::IrValue(dst_ir_id, false)))
             }
             (Type::Array(t, _), Some(C::HasAddress(ir_id, offset, true)))
                 if do_arr_to_ptr =>

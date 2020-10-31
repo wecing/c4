@@ -17,6 +17,10 @@ void *f2() {
   return 0;
 }
 void f3(int xs[10]) {}
+int f4() {
+  char buf[20];
+  return f2() == buf;
+}
 
 int complex_ternary_expr() {
   void *p = NULL;
