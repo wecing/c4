@@ -1,7 +1,7 @@
 #ifndef _MATH_H_
 #define _MATH_H_
 
-// TODO: HUGE_VAL not defined
+#define HUGE_VAL 1.0e10000
 
 extern double acos(double x);
 extern double asin(double x);
