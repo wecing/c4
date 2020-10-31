@@ -4969,6 +4969,17 @@ impl Compiler<'_> {
                         Type::Pointer(elem) => *elem.clone(),
                         _ => unreachable!(),
                     };
+                    let tp_elem = match &tp_elem.tp {
+                        Type::Struct(b) | Type::Union(b)
+                            if b.fields.is_none() =>
+                        {
+                            self.current_scope
+                                .lookup_sue_type_by_uuid(b.uuid)
+                                .map(QType::from)
+                                .unwrap_or(tp_elem)
+                        }
+                        _ => tp_elem,
+                    };
                     let sz_elem = match Compiler::get_type_size_and_align_bytes(
                         &tp_elem.tp,
                     ) {
