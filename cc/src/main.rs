@@ -7900,12 +7900,19 @@ impl Compiler<'_> {
                 ),
             }
         };
-        fn arr_to_ptr(tp: QType) -> QType {
+        // 3.7.1: A declaration of a parameter as ``array of type'' shall be
+        // adjusted to ``pointer to type'', and a declaration of a parameter as
+        // ``function returning type'' shall be adjusted to ``pointer to
+        // function returning type''.
+        fn func_arr_to_ptr(tp: QType) -> QType {
             QType {
                 is_const: tp.is_const,
                 is_volatile: tp.is_volatile,
                 tp: match tp.tp {
-                    Type::Array(elem_tp, None) => Type::Pointer(elem_tp),
+                    Type::Array(elem_tp, _) => Type::Pointer(elem_tp),
+                    tp @ Type::Function(_, _) => {
+                        Type::Pointer(Box::new(QType::from(tp)))
+                    }
                     tp => tp,
                 },
             }
@@ -7919,7 +7926,7 @@ impl Compiler<'_> {
                 let (tp, name) = self.unwrap_declarator(tp, d, false);
                 TypedFuncParam {
                     is_register,
-                    tp: arr_to_ptr(tp),
+                    tp: func_arr_to_ptr(tp),
                     name: Some(name),
                 }
             }
@@ -7930,7 +7937,7 @@ impl Compiler<'_> {
                 let tp = self.unwrap_abstract_declarator(tp, ad);
                 TypedFuncParam {
                     is_register,
-                    tp: arr_to_ptr(tp),
+                    tp: func_arr_to_ptr(tp),
                     name: None,
                 }
             }
@@ -7939,7 +7946,7 @@ impl Compiler<'_> {
                     get_is_register_qtype(type_only_simple.get_dss());
                 TypedFuncParam {
                     is_register,
-                    tp,
+                    tp: func_arr_to_ptr(tp),
                     name: None,
                 }
             }

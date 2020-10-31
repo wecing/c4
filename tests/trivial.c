@@ -16,6 +16,7 @@ void f() {}
 void *f2() {
   return 0;
 }
+void f3(int xs[10]) {}
 
 int complex_ternary_expr() {
   void *p = NULL;
@@ -25,6 +26,7 @@ int complex_ternary_expr() {
 int main() {
   int i;
   struct S *sp = &s1;
+  int xs[10];
 
   switch (0) {
   case 1:
@@ -44,6 +46,8 @@ int main() {
   for (i = 10; i >= 0; i--) {}
 
   printf("\"hello\"[0] = '%c'\n", "hello"[0]);
+
+  f3(xs);
 
   return 0;
 }
