@@ -10,6 +10,9 @@ typedef long int time_t;
 
 #define CLK_TCK ((clock_t) __sysconf(2))
 
+// CLOCKS_PER_SEC is part of C99
+#define CLOCKS_PER_SEC ((clock_t) 1000000)
+
 struct tm {
   int tm_sec;
   int tm_min;

@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-// for __USE_POSIX
+// for __USE_POSIX, _POSIX_C_SOURCE
 #include <features.h>
 
 // for __off_t and __off64_t
@@ -125,6 +125,11 @@ extern void perror(const char *s);
 #ifdef __USE_POSIX
 extern int fileno(FILE *stream);
 extern FILE *fdopen(int fd, const char *mode);
+#endif
+
+#if _POSIX_C_SOURCE >= 2
+extern FILE *popen(const char *command, const char *type);
+extern int pclose(FILE *stream);
 #endif
 
 #endif
