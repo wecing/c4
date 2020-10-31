@@ -22,6 +22,10 @@ int f4() {
   return f2() == buf;
 }
 void f5(char *s) {}
+void f6() {
+  static int n;
+  n = 6;
+}
 
 int complex_ternary_expr() {
   void *p = NULL;
@@ -54,6 +58,7 @@ int main() {
 
   f3(xs);
   f5(0);
+  f6();
 
   return 0;
 }

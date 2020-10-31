@@ -2279,8 +2279,14 @@ impl Compiler<'_> {
 
                 let mut init = if id.init_idx == 0 {
                     // 3.7.2: tentative definition
-                    if self.current_scope.is_file_scope()
-                        && (scs == None || scs == Some(SCS::STATIC))
+                    // 3.5.7: If an object that has static storage duration is
+                    // not initialized explicitly, it is initialized implicitly
+                    // as if every member that has arithmetic type were assigned
+                    // 0 and every member that has pointer type were assigned a
+                    // null pointer constant.
+                    if ((self.current_scope.is_file_scope()
+                        && (scs == None || scs == Some(SCS::STATIC)))
+                        || (!self.current_scope.is_file_scope() && is_global))
                         && !qtype.is_function()
                         && !is_defined
                     {
