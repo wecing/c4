@@ -1054,7 +1054,16 @@ impl LLVMBuilderImpl {
             Initializer::Struct(inits, zero_padding_bytes) => {
                 let mut vals: Vec<llvm_sys::prelude::LLVMValueRef> = inits
                     .into_iter()
-                    .map(|init| self.get_llvm_constant_init(init, None))
+                    .map(|init| {
+                        let init_tp: Option<&QType> =
+                            match init_tp.map(|t| &t.tp) {
+                                // ad-hoc fix for array; probably need the same
+                                // for struct/union.
+                                Some(Type::Array(t, _)) => Some(t.borrow()),
+                                _ => None,
+                            };
+                        self.get_llvm_constant_init(init, init_tp)
+                    })
                     .collect();
                 if *zero_padding_bytes > 0 {
                     let zero_padding_tp = self.get_llvm_type(&Type::Array(
