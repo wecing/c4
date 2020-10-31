@@ -3549,7 +3549,8 @@ impl Compiler<'_> {
             Type::Function(_, _) | Type::Array(_, _) => unreachable!(),
             _ => (),
         };
-        let args: Vec<(QType, Option<String>)> = func_call
+        // bool: is_null_constant
+        let args: Vec<(QType, Option<String>, bool)> = func_call
             .get_args()
             .into_iter()
             .map(|idx| &self.translation_unit.exprs[*idx as usize])
@@ -3562,13 +3563,15 @@ impl Compiler<'_> {
                 let (arg_tp, arg) = self.convert_lvalue_and_func_designator(
                     arg_tp, arg, true, true, true, emit_ir,
                 );
+                let is_null_constant =
+                    arg.as_ref().and_then(|c| c.as_constant_u64()) == Some(0);
                 let arg = arg
                     .map(|c| self.convert_to_ir_value(&arg_tp, c))
                     .map(|c| match c {
                         ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
                         _ => unreachable!(),
                     });
-                (arg_tp, arg)
+                (arg_tp, arg, is_null_constant)
             })
             .collect();
 
@@ -3577,9 +3580,9 @@ impl Compiler<'_> {
         // performed on each argument and arguments that have type float are
         // promoted to double. These are called the default argument promotions.
         let do_default_arg_promo = |cc: &mut Compiler,
-                                    arg: (QType, Option<String>)|
+                                    arg: (QType, Option<String>, bool)|
          -> Option<String> {
-            let (arg_tp, arg) = arg;
+            let (arg_tp, arg, _) = arg;
             arg.map(|arg| {
                 if arg_tp.is_integral_type() {
                     cc.do_integral_promotion_ir(arg, arg_tp).0
@@ -3606,9 +3609,9 @@ impl Compiler<'_> {
         // parameters.
         let cast_arg = |cc: &mut Compiler,
                         dst_tp: &QType,
-                        arg: (QType, Option<String>)|
+                        arg: (QType, Option<String>, bool)|
          -> Option<String> {
-            let (arg_tp, arg) = arg;
+            let (arg_tp, arg, is_null_constant) = arg;
             arg.map(|arg| {
                 let vp_ir_id = cc.get_next_ir_id();
                 cc.c4ir_builder.create_definition(
@@ -3626,12 +3629,25 @@ impl Compiler<'_> {
                     &None,
                 );
 
+                let arg = Some(ConstantOrIrValue::IrValue(arg, false));
+                let (arg_tp, arg) = if is_null_constant && dst_tp.is_pointer() {
+                    cc.cast_expression(
+                        arg_tp,
+                        arg,
+                        dst_tp.clone(),
+                        func_call.get_fn_loc(),
+                        emit_ir,
+                    )
+                } else {
+                    (arg_tp, arg)
+                };
+
                 cc.visit_simple_binary_op(
                     dst_tp,
                     Some(ConstantOrIrValue::IrValue(vp_ir_id.clone(), true)),
                     func_call.get_fn_loc(),
                     &arg_tp,
-                    Some(ConstantOrIrValue::IrValue(arg, false)),
+                    arg,
                     func_call.get_fn_loc(),
                     ast::Expr_Binary_Op::ASSIGN,
                     true,

@@ -21,6 +21,7 @@ int f4() {
   char buf[20];
   return f2() == buf;
 }
+void f5(char *s) {}
 
 int complex_ternary_expr() {
   void *p = NULL;
@@ -52,6 +53,7 @@ int main() {
   printf("\"hello\"[0] = '%c'\n", "hello"[0]);
 
   f3(xs);
+  f5(0);
 
   return 0;
 }
