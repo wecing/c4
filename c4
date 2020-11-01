@@ -48,8 +48,8 @@ cc = ([c4_path + '/cc/target/debug/c4cc'] +
       ['-emit-llvm']
       ) if not args.preprocessor_only else None
 
-# since we do alloca in loops, mem2reg is necessary to avoid stack overflow
-opt = ['opt', '-O2'] if cc and not ir_file else None
+# by default opt does nothing (not even mem2reg).
+opt = ['opt'] if cc and not ir_file else None
 
 asm_file_type = 'asm' if args.asm_only else 'obj'
 asm = ['llc', '--filetype=' + asm_file_type] if opt else None
