@@ -466,6 +466,9 @@ trait IRBuilder {
 
     fn get_current_basic_block(&self) -> String;
 
+    // allocs should be placed in entry blocks.
+    fn set_entry_basic_block(&mut self, bb: &str);
+
     fn create_definition(
         &mut self,
         is_global: bool,
@@ -625,6 +628,8 @@ impl IRBuilder for DummyIRBuilder {
         String::new()
     }
 
+    fn set_entry_basic_block(&mut self, _bb: &str) {}
+
     fn create_definition(
         &mut self,
         _is_global: bool,
@@ -760,6 +765,7 @@ struct LLVMBuilderImpl {
 
     current_function: llvm_sys::prelude::LLVMValueRef,
     current_basic_block: String,
+    entry_block: String,
     basic_blocks: HashMap<String, llvm_sys::prelude::LLVMBasicBlockRef>,
     // key: ir_id
     symbol_table: HashMap<String, llvm_sys::prelude::LLVMValueRef>,
@@ -785,6 +791,7 @@ impl LLVMBuilderImpl {
                 next_uuid: 1_000_000,
                 current_function: ptr::null_mut(),
                 current_basic_block: String::new(),
+                entry_block: String::new(),
                 basic_blocks: HashMap::new(),
                 symbol_table: HashMap::new(),
                 switch_stack: Vec::new(),
@@ -1233,6 +1240,10 @@ impl IRBuilder for LLVMBuilderImpl {
         self.current_basic_block.clone()
     }
 
+    fn set_entry_basic_block(&mut self, bb: &str) {
+        self.entry_block = bb.to_string();
+    }
+
     fn create_definition(
         &mut self,
         is_global: bool,
@@ -1295,11 +1306,16 @@ impl IRBuilder for LLVMBuilderImpl {
                     new_v
                 }
             } else {
-                llvm_sys::core::LLVMBuildAlloca(
+                let cur_bb = self.get_current_basic_block();
+                let entry_bb = self.entry_block.clone();
+                self.set_current_basic_block(&entry_bb);
+                let v = llvm_sys::core::LLVMBuildAlloca(
                     self.builder,
                     tp_llvm,
                     name_c.as_ptr(),
-                )
+                );
+                self.set_current_basic_block(&cur_bb);
+                v
             }
         };
         use llvm_sys::LLVMLinkage as LL;
@@ -2112,6 +2128,8 @@ impl Compiler<'_> {
         self.llvm_builder.create_basic_block(&entry_bb_id);
         self.c4ir_builder.set_current_basic_block(&entry_bb_id);
         self.llvm_builder.set_current_basic_block(&entry_bb_id);
+        self.c4ir_builder.set_entry_basic_block(&entry_bb_id);
+        self.llvm_builder.set_entry_basic_block(&entry_bb_id);
 
         // argument rewrite as mentioned above
         for param in typed_func_params {
@@ -2141,6 +2159,10 @@ impl Compiler<'_> {
                 _ => unreachable!(),
             }
         }
+
+        let body_bb_id = self.create_bb();
+        self.c4ir_builder.set_current_basic_block(&body_bb_id);
+        self.llvm_builder.set_current_basic_block(&body_bb_id);
 
         let rtp = match &ftp.tp {
             Type::Function(rtp, _) => *rtp.clone(),
@@ -2208,6 +2230,11 @@ impl Compiler<'_> {
                 )
             },
         );
+
+        self.c4ir_builder.set_current_basic_block(&entry_bb_id);
+        self.llvm_builder.set_current_basic_block(&entry_bb_id);
+        self.c4ir_builder.create_br(&body_bb_id);
+        self.llvm_builder.create_br(&body_bb_id);
 
         self.leave_scope();
     }
