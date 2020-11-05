@@ -3577,7 +3577,6 @@ impl Compiler<'_> {
             _ => unreachable!(),
         };
         match &rtp.tp {
-            Type::Struct(_) | Type::Union(_) => unimplemented!(),
             // disallowed on construction
             Type::Function(_, _) | Type::Array(_, _) => unreachable!(),
             _ => (),
@@ -3772,6 +3771,26 @@ impl Compiler<'_> {
                     &ConstantOrIrValue::I8(0),
                     &QType::from(Type::Char),
                 );
+            } else if rtp.is_struct_type() || rtp.is_union_type() {
+                let call_ret_ir_id = self.get_next_ir_id();
+                self.c4ir_builder.create_call(&call_ret_ir_id, &func, &args);
+                self.llvm_builder.create_call(&call_ret_ir_id, &func, &args);
+                self.c4ir_builder.create_definition(
+                    false,
+                    &ir_id,
+                    &rtp,
+                    Linkage::NONE,
+                    &None,
+                );
+                self.llvm_builder.create_definition(
+                    false,
+                    &ir_id,
+                    &rtp,
+                    Linkage::NONE,
+                    &None,
+                );
+                self.c4ir_builder.create_store(&ir_id, &call_ret_ir_id);
+                self.llvm_builder.create_store(&ir_id, &call_ret_ir_id);
             } else {
                 self.c4ir_builder.create_call(&ir_id, &func, &args);
                 self.llvm_builder.create_call(&ir_id, &func, &args);
@@ -6890,7 +6909,11 @@ impl Compiler<'_> {
             ConstantOrIrValue::IrValue(x, false) => x.clone(),
             _ => unreachable!(),
         };
-        if !tp.is_arithmetic_type() && !tp.is_pointer() {
+        if !tp.is_arithmetic_type()
+            && !tp.is_pointer()
+            && !tp.is_struct_type()
+            && !tp.is_union_type()
+        {
             unimplemented!()
         }
 

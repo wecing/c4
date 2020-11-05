@@ -9,7 +9,8 @@ import tempfile
 tests_passed = 0
 
 print('===== small tests =====')
-for test_file in filter(lambda x: x.endswith('.c'), os.listdir('tests')):
+for test_file in sorted(
+        filter(lambda x: x.endswith('.c'), os.listdir('tests'))):
     src = 'tests/' + test_file
     expected = src + '.expected'
 
