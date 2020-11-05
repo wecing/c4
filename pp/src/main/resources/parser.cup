@@ -243,9 +243,10 @@ function_definition // Located<FunctionDef>
 // when declaration_specifiers contains "typedef", all IDs
 // appeared in init_declarator_list are added to the typedef names set.
 declaration // Located<Declaration>
-    ::= declaration_specifiers:dss init_declarator_list:ids SEMICOLON:l
-        {: JavaUtils.checkTypedef(dss, ids, getC4Scanner());
-           RESULT = Located.of(head(dss).loc(), l,
+    ::= declaration_specifiers:dss init_declarator_list:ids
+        {: JavaUtils.checkTypedef(dss, ids, getC4Scanner()); :}
+                                                            SEMICOLON:l
+        {: RESULT = Located.of(head(dss).loc(), l,
             new Declaration(dss, some(ids))); :}
       | declaration_specifiers:dss                          SEMICOLON:l
         {: RESULT = Located.of(head(dss).loc(), l, new Declaration(dss, none())); :}
