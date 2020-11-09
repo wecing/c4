@@ -306,89 +306,93 @@ object PPReader {
       var status: Option[FuncArgSearch] = None
       var foundMacro: Boolean = false
 
+      // process a token when status is None
+      def processTokSimple(accum: Queue[T], tok: T): Queue[T] = {
+        tok match {
+          case Left((ignoreSet, name: L[String])) =>
+            if (ignoreSet.contains(name.value)) {
+              accum :+ tok
+            } else
+              ctx.macros.get(name.value) match {
+                case None =>
+                  accum :+ tok
+                case Some(Left(funcMacro: FuncMacro)) =>
+                  status = Some(
+                    FuncArgSearch(
+                      name,
+                      ignoreSet,
+                      None,
+                      Seq.empty,
+                      Seq.empty,
+                      -1
+                    )
+                  )
+                  // set foundMacro only when search is complete
+                  accum
+                case Some(Right(objMacro: ObjMacro)) =>
+                  foundMacro = true
+                  val located: L[Any] = tok match {
+                    case Left((_, x)) => x
+                    case Right(x)     => x
+                  }
+                  objMacro match {
+                    case LineMacro =>
+                      accum :+ Right(
+                        L(
+                          located.loc,
+                          PPTokNum(located.loc._1.toString),
+                          located.fileName
+                        )
+                      )
+                    case FileMacro =>
+                      accum :+ Right(
+                        L(
+                          located.loc,
+                          PPTokStr(ctx.logicalFileNameRepr),
+                          located.fileName
+                        )
+                      )
+                    case DateMacro =>
+                      val day: String = "%2d".format(
+                        Calendar
+                          .getInstance()
+                          .get(Calendar.DAY_OF_MONTH)
+                      )
+                      val date: String =
+                        new SimpleDateFormat("MMM %s yyyy".format(day))
+                          .format(new Date())
+                      accum :+ Right(
+                        L(
+                          located.loc,
+                          PPTokStr("\"" + date + "\""),
+                          located.fileName
+                        )
+                      )
+                    case _ =>
+                      accum ++ objMacro.bodyTokens.map {
+                        case PPTokId(id) =>
+                          Left(
+                            (
+                              ignoreSet + name.value,
+                              L(name.loc, id, name.fileName)
+                            )
+                          )
+                        case t: PPTok =>
+                          Right(L(name.loc, t, name.fileName))
+                      }
+                  }
+              }
+          case Right(_) =>
+            accum :+ tok
+        }
+      }
+
       val ret: Queue[T] =
         tokens.foldLeft(Queue.empty[T]) { (accum: Queue[T], tok: T) =>
           if (foundMacro) { accum :+ tok }
           else
             status match {
-              case None =>
-                tok match {
-                  case Left((ignoreSet, name: L[String])) =>
-                    if (ignoreSet.contains(name.value)) {
-                      accum :+ tok
-                    } else
-                      ctx.macros.get(name.value) match {
-                        case None =>
-                          accum :+ tok
-                        case Some(Left(funcMacro: FuncMacro)) =>
-                          status = Some(
-                            FuncArgSearch(
-                              name,
-                              ignoreSet,
-                              None,
-                              Seq.empty,
-                              Seq.empty,
-                              -1
-                            )
-                          )
-                          // set foundMacro only when search is complete
-                          accum
-                        case Some(Right(objMacro: ObjMacro)) =>
-                          foundMacro = true
-                          val located: L[Any] = tok match {
-                            case Left((_, x)) => x
-                            case Right(x)     => x
-                          }
-                          objMacro match {
-                            case LineMacro =>
-                              accum :+ Right(
-                                L(
-                                  located.loc,
-                                  PPTokNum(located.loc._1.toString),
-                                  located.fileName
-                                )
-                              )
-                            case FileMacro =>
-                              accum :+ Right(
-                                L(
-                                  located.loc,
-                                  PPTokStr(ctx.logicalFileNameRepr),
-                                  located.fileName
-                                )
-                              )
-                            case DateMacro =>
-                              val day: String = "%2d".format(
-                                Calendar
-                                  .getInstance()
-                                  .get(Calendar.DAY_OF_MONTH)
-                              )
-                              val date: String =
-                                new SimpleDateFormat("MMM %s yyyy".format(day))
-                                  .format(new Date())
-                              accum :+ Right(
-                                L(
-                                  located.loc,
-                                  PPTokStr("\"" + date + "\""),
-                                  located.fileName
-                                )
-                              )
-                            case _ =>
-                              accum ++ objMacro.bodyTokens.map {
-                                case PPTokId(id) =>
-                                  Left(
-                                    (
-                                      ignoreSet + name.value,
-                                      L(name.loc, id, name.fileName)
-                                    )
-                                  )
-                                case t: PPTok =>
-                                  Right(L(name.loc, t, name.fileName))
-                              }
-                          }
-                      }
-                  case Right(_) =>
-                    accum :+ tok
-                }
+              case None => processTokSimple(accum, tok)
               case Some(s) if s.curParenDepth >= 0 =>
                 tok match {
                   case t @ Right(L(_, PPTokSym("("), _)) =>
@@ -659,20 +663,18 @@ object PPReader {
                       )
                     )
                     accum
-                  case x =>
-                    throw IllegalSourceException(
-                      SimpleMessage(
-                        ctx.logicalFileName,
-                        x match {
-                          case Left((_, t)) => t.loc
-                          case Right(t)     => t.loc
-                        },
-                        s"Unexpected token ${x match {
-                          case Left((_, t)) => t.value
-                          case Right(t)     => t.value
-                        }}; '(' expected"
-                      )
+                  case x => {
+                    // func macro name not followed by LPAREN is acceptable; it
+                    // just does not trigger func macro invocation, e.g.:
+                    //    #define f(x) +1
+                    //    int f = 41;
+                    //    return f f("unused"); // 42
+                    status = None
+                    processTokSimple(
+                      accum :+ Left(s.funcNameIgnoreSet -> s.funcName),
+                      x
                     )
+                  }
                 }
             }
         } ++ (status match {
