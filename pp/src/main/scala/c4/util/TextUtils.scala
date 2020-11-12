@@ -2,6 +2,7 @@ package c4.util
 
 import c4.messaging.{IllegalSourceException, SimpleMessage}
 import c4.util.legacy.{Located => L}
+import scala.collection.mutable.ArrayBuilder
 
 object TextUtils {
   private val reprMap: Map[Char, String] = Map(
@@ -51,16 +52,123 @@ object TextUtils {
   }
 
   // given a string, return a legal C string constant representation
-  // TODO: support more esc seqs?
   def strReprQ(s: String): String = {
-    "" +
-      "\"" +
-      s.replace("\n", "\\n")
-        .replace("\"", "\\\"") +
-      "\""
+    (new StringBuilder)
+      .addOne('"')
+      .append(s.replace("\n", "\\n").replace("\"", "\\\""))
+      .addOne('"')
+      .result()
+  }
+
+  def strReprQ(buf: Array[Byte], isWide: Boolean): String = {
+    val builder = new StringBuilder
+    builder.addOne('\"')
+
+    var idx = 0
+    while (idx < buf.length) {
+      val c = if (isWide) {
+        (buf(idx) & (buf(idx + 1) << 8)).toChar
+      } else {
+        (buf(idx) & 0xff).toChar
+      }
+      if (c == '\n') {
+        builder.addOne('\\').addOne('n')
+      } else if (c == '"') {
+        builder.addOne('\\').addOne('"')
+      } else {
+        builder.addOne(c)
+      }
+
+      if (isWide) {
+        idx += 2
+      } else {
+        idx += 1
+      }
+    }
+    builder.addOne('\"')
+
+    builder.result()
   }
 
   // given a C string quoted with "", extract the string content
+  // (use UTF-8 for non-ascii characters, but does not utf-8 encode hex/oct
+  // escapes)
+  def fromStrReprQToBuf(reprQ: L[String], isWide: Boolean): Array[Byte] = {
+    val octPattern = raw"\\[0-7]+".r
+    val hexPattern = raw"\\x[0-9a-fA-F]+".r
+    val builder = new ArrayBuilder.ofByte
+
+    val escDict: Map[Char, Char] = Map(
+      '\'' -> '\'',
+      '"' -> '"',
+      '?' -> '\u003f',
+      '\\' -> '\\',
+      'a' -> '\u0007',
+      'b' -> '\u0008',
+      'f' -> '\f',
+      'n' -> '\n',
+      'r' -> '\r',
+      't' -> '\t',
+      'v' -> '\u000b'
+    )
+
+    var str = reprQ.value.tail.init
+    while (str.nonEmpty) {
+      str = octPattern
+        .findPrefixOf(str)
+        .map(s => {
+          val n =
+            s.tail.map(c => c - '0').foldLeft(0) { (sum, n) => sum * 8 + n }
+          builder.addOne(n.toByte)
+          if (isWide) {
+            // little-endian
+            builder.addOne((n >> 8).toByte)
+          }
+          str.drop(s.length())
+        })
+        .orElse {
+          hexPattern
+            .findPrefixOf(str)
+            .map(s => {
+              val n = s
+                .drop(2)
+                .map { c =>
+                  if ('0' <= c && c <= '9') { c - '0' }
+                  else { c.toLower - 'a' + 10 }
+                }
+                .foldLeft(0) { (sum, n) => sum * 16 + n }
+              builder.addOne(n.toByte)
+              if (isWide) {
+                // little-endian
+                builder.addOne((n >> 8).toByte)
+              }
+              str.drop(s.length())
+            })
+        }
+        .getOrElse {
+          if (str.length() >= 2 && str(0) == '\\') {
+            escDict.get(str(1)).map(c => builder.addOne(c.toByte)).getOrElse {
+              throw IllegalSourceException(
+                SimpleMessage(
+                  reprQ.fileName.getOrElse("<unknown>"),
+                  reprQ.loc,
+                  "Illegal string literal"
+                )
+              )
+            }
+            str.drop(2)
+          } else {
+            val c = str.head
+            builder.addAll(c.toString().getBytes())
+            str.tail
+          }
+        }
+    }
+    builder.result()
+  }
+
+  // given a C string quoted with "", extract the string content to UTF-16 str
+  // (does NOT disambiguate non-ascii chars and hex/oct escapes)
   def fromStrReprQ(reprQ: L[String]): String = {
     sealed abstract class EscCase
     case object Unknown extends EscCase

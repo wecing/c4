@@ -4,6 +4,8 @@ import c4.ast.{proto => p}
 import c4.io._
 import c4.util.{Loc, LocPoint, LocRange, Located => L}
 
+import com.google.protobuf.ByteString
+
 import scala.collection.mutable
 
 object ProtoConverter {
@@ -164,8 +166,9 @@ private final class ProtoConverter {
           p.Expr.E.Double(ld.doubleValue)
         case CharLit(TokChar(c))         => p.Expr.E.Char(c.toInt & 0xff)
         case WideCharLit(TokWideChar(c)) => p.Expr.E.WideChar(c.toInt)
-        case StrLit(TokStr(s))           => p.Expr.E.String(s)
-        case WideStrLit(TokWideStr(s))   => p.Expr.E.WideString(s)
+        case StrLit(TokStr(s))           => p.Expr.E.String(ByteString.copyFrom(s))
+        case WideStrLit(TokWideStr(s)) =>
+          p.Expr.E.WideString(ByteString.copyFrom(s))
         case CastExpr(L(tpLoc, tp), L(eLoc, e)) =>
           p.Expr.E.Cast(
             p.Expr.Cast(

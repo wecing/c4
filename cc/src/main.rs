@@ -3101,7 +3101,7 @@ impl Compiler<'_> {
                 Some(ConstantOrIrValue::I16(*wc as i16)),
             ),
             ast::Expr_oneof_e::string(str) => {
-                let mut buf = str.clone().into_bytes();
+                let mut buf = str.clone();
                 buf.push(0);
                 let len = buf.len() as u32;
 
@@ -3119,11 +3119,7 @@ impl Compiler<'_> {
                 (tp, Some(ConstantOrIrValue::StrAddress(ir_id, 0)))
             }
             ast::Expr_oneof_e::wide_string(ws) => {
-                let mut buf: Vec<u8> = vec![];
-                ws.encode_utf16().for_each(|v| {
-                    buf.push(v as u8); // assuming little-endian
-                    buf.push((v >> 8) as u8);
-                });
+                let mut buf: Vec<u8> = ws.clone();
                 buf.push(0);
                 buf.push(0);
                 let len = buf.len() as u32;

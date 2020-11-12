@@ -62,10 +62,22 @@ final case class TokDouble(d: Double) extends Tok(Sym.DOUBLE_LIT)
 final case class TokLongDouble(ld: BigDecimal) extends Tok(Sym.LONG_DOUBLE_LIT)
 final case class TokChar(c: Char) extends Tok(Sym.CHAR_LIT)
 final case class TokWideChar(c: Char) extends Tok(Sym.WIDE_CHAR_LIT)
-final case class TokStr(s: String) extends Tok(Sym.STR_LIT) {
-  override def toString: String = s"TokStr(${TextUtils.strReprQ(s)})"
+final case class TokStr(s: Array[Byte]) extends Tok(Sym.STR_LIT) {
+  override def equals(other: Any): Boolean =
+    other match {
+      case TokStr(s2) => s sameElements s2
+      case _          => false
+    }
+  override def toString: String = s"TokStr(${TextUtils.strReprQ(s, false)})"
 }
-final case class TokWideStr(s: String) extends Tok(Sym.WIDE_STR_LIT)
+final case class TokWideStr(s: Array[Byte]) extends Tok(Sym.WIDE_STR_LIT) {
+  override def equals(other: Any): Boolean =
+    other match {
+      case TokWideStr(s2) => s sameElements s2
+      case _              => false
+    }
+  override def toString: String = s"TokStr(${TextUtils.strReprQ(s, true)})"
+}
 // keywords
 case object Tok_auto extends Tok(Sym.AUTO)
 case object Tok_break extends Tok(Sym.BREAK)
@@ -305,15 +317,16 @@ class SourcePhase7Reader(
             acc :+ L(ppTok.loc, newTok, ppTok.fileName)
           case PPTokStr(repr) =>
             val isWide = repr.head == 'L'
-            val str = TextUtils.fromStrReprQ(
-              L(ppTok.loc, if (isWide) repr.tail else repr, ppTok.fileName)
+            val str = TextUtils.fromStrReprQToBuf(
+              L(ppTok.loc, if (isWide) repr.tail else repr, ppTok.fileName),
+              isWide
             )
             acc.last.value match {
               case TokStr(prevStr) if !isWide =>
-                val newTok = TokStr(prevStr + str)
+                val newTok = TokStr(prevStr ++ str)
                 acc.init :+ L(acc.last.loc, newTok, acc.last.fileName)
               case TokWideStr(prevStr) if isWide =>
-                val newTok = TokWideStr(prevStr + str)
+                val newTok = TokWideStr(prevStr ++ str)
                 acc.init :+ L(acc.last.loc, newTok, acc.last.fileName)
               case _ =>
                 val newTok = if (isWide) TokWideStr(str) else TokStr(str)

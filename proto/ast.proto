@@ -199,8 +199,8 @@ message Expr {
     // ??? long_double = 5; // it's fine to treat 'long double' as 'double'.
     uint32 char = 6; // 1 byte
     uint32 wide_char = 7; // 2 bytes
-    string string = 8;
-    string wide_string = 9;
+    bytes string = 8; // no ending NUL
+    bytes wide_string = 9; // no ending NUL
     Cast cast = 10;
     ArrSub arr_sub = 11;
     FuncCall func_call = 12;
