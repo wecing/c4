@@ -2754,10 +2754,11 @@ impl Compiler<'_> {
                     if get_inits!().len() != 1 {
                         c4_fail!(loc, "Redundant initializer element")
                     }
-                    let init = get_inits!().get_mut(0).unwrap();
+                    let mut init = get_inits!().pop_front().unwrap();
 
-                    let init = self
-                        .sanitize_initializer(&fs[0].tp, init, loc, emit_ir)?;
+                    let init = self.sanitize_initializer(
+                        &fs[0].tp, &mut init, loc, emit_ir,
+                    )?;
                     let init = match init {
                         Initializer::Expr(_, _) => Initializer::Struct(
                             VecDeque::from(vec![init]),
