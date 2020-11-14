@@ -382,6 +382,16 @@ impl Scope {
         }
     }
 
+    fn lookup_sue_type_by_uuid_if_incomplete(&self, tp: QType) -> QType {
+        match &tp.tp {
+            Type::Struct(b) | Type::Union(b) if b.fields.is_none() => self
+                .lookup_sue_type_by_uuid(b.uuid)
+                .map(QType::from)
+                .unwrap_or(tp),
+            _ => tp,
+        }
+    }
+
     fn same_as(&self, other: &Scope) -> bool {
         // this works since Scope is neither Copy nor Clone
         ptr::eq(self, other)
@@ -3187,6 +3197,9 @@ impl Compiler<'_> {
                     sizeof_val.get_e_loc(),
                 );
                 let (tp, _) = self.visit_expr(arg, false, false);
+                let tp = self
+                    .current_scope
+                    .lookup_sue_type_by_uuid_if_incomplete(tp);
                 let (size, _) =
                     Compiler::get_type_size_and_align_bytes(&tp.tp).unwrap();
                 (
@@ -5042,17 +5055,9 @@ impl Compiler<'_> {
                         Type::Pointer(elem) => *elem.clone(),
                         _ => unreachable!(),
                     };
-                    let tp_elem = match &tp_elem.tp {
-                        Type::Struct(b) | Type::Union(b)
-                            if b.fields.is_none() =>
-                        {
-                            self.current_scope
-                                .lookup_sue_type_by_uuid(b.uuid)
-                                .map(QType::from)
-                                .unwrap_or(tp_elem)
-                        }
-                        _ => tp_elem,
-                    };
+                    let tp_elem = self
+                        .current_scope
+                        .lookup_sue_type_by_uuid_if_incomplete(tp_elem);
                     let sz_elem = match Compiler::get_type_size_and_align_bytes(
                         &tp_elem.tp,
                     ) {
