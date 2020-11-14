@@ -410,6 +410,7 @@ class PPLineReader(val warnings: ArrayBuffer[Message], val fileName: String) {
                 }
               }
               recur((' ', loc1))
+              ignoreWhiteSpaceChars()
             case p2 =>
               file.ungetc(p2)
               file.ungetc(p1)
