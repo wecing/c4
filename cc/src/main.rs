@@ -1071,12 +1071,18 @@ impl LLVMBuilderImpl {
             Initializer::Struct(inits, zero_padding_bytes) => {
                 let mut vals: Vec<llvm_sys::prelude::LLVMValueRef> = inits
                     .into_iter()
-                    .map(|init| {
+                    .enumerate()
+                    .map(|(init_idx, init)| {
                         let init_tp: Option<&QType> =
                             match init_tp.map(|t| &t.tp) {
-                                // ad-hoc fix for array; probably need the same
-                                // for struct/union.
+                                // ad-hoc fix for array/struct; probably need
+                                // the same for struct/union.
                                 Some(Type::Array(t, _)) => Some(t.borrow()),
+                                Some(Type::Struct(b)) => b
+                                    .fields
+                                    .as_ref()
+                                    .and_then(|v| v.get(init_idx))
+                                    .map(|f| &f.tp),
                                 _ => None,
                             };
                         self.get_llvm_constant_init(init, init_tp)
@@ -1337,7 +1343,6 @@ impl IRBuilder for LLVMBuilderImpl {
         linkage_llvm.map(|ln| unsafe { llvm_sys::core::LLVMSetLinkage(v, ln) });
 
         // TODO: this does not yet work for:
-        //   nested structs;
         //   partially initialized structs;
         //   partially initialized arrays.
         init.as_ref()
@@ -7747,8 +7752,15 @@ impl Compiler<'_> {
                     } else {
                         // bit field type and mask size were checked in
                         // get_su_field.
-                        for _ in 0..4 {
-                            new_fields.push(unnamed_char_field.clone());
+                        for idx in 0..4 {
+                            // provide synthesized names as a hint that this
+                            // field is not for padding
+                            let mut f = unnamed_char_field.clone();
+                            f.name = field
+                                .name
+                                .clone()
+                                .map(|n| format!("__{}_${}", n, idx));
+                            new_fields.push(f);
                         }
                         bit_field_quota = 32 - field.bit_field_size.unwrap();
                     }
