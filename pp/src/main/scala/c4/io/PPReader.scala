@@ -283,6 +283,13 @@ object PPReader {
         (k -> Right(new ObjMacro(Seq(L((0, 0), tok, None)))))
       }
     }
+
+    // multi-include optimization: see
+    // https://gcc.gnu.org/onlinedocs/cppinternals/Guard-Macros.html
+    //
+    // file name -> (guard name, is guard valid)
+    val includeGuards: mutable.Map[String, (Option[String], Boolean)] =
+      mutable.Map()
   }
 
   // pp = macro expansion + #line processing
@@ -912,6 +919,11 @@ object PPReader {
       case x: PPLineIncludeTokens =>
         throw new RuntimeException("programming error")
       case x: PPLineIf =>
+        // invalidate include guards
+        if (ctx.ifStatusStack.isEmpty) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
+
         // nested #if
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           val b: Boolean = ppEvalConstBoolExpr(ctx, x.tokens)
@@ -920,6 +932,11 @@ object PPReader {
           ctx.ifStatusStack.push((false, true, false))
         }
       case x: PPLineIfdef =>
+        // invalidate include guards
+        if (ctx.ifStatusStack.isEmpty) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
+
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           val b: Boolean = ctx.macros.contains(x.name.value)
           ctx.ifStatusStack.push((b, b, false))
@@ -927,6 +944,19 @@ object PPReader {
           ctx.ifStatusStack.push((false, true, false))
         }
       case x: PPLineIfndef =>
+        // update or invalidate include guards
+        if (ctx.ifStatusStack.isEmpty) {
+          ctx.includeGuards.get(ctx.ppLineReader.fileName) match {
+            case Some((None, true)) =>
+              ctx.includeGuards.put(
+                ctx.ppLineReader.fileName,
+                (Some(x.name.value), true)
+              )
+            case _ =>
+              ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+          }
+        }
+
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           val b: Boolean = !ctx.macros.contains(x.name.value)
           ctx.ifStatusStack.push((b, b, false))
@@ -934,6 +964,11 @@ object PPReader {
           ctx.ifStatusStack.push((false, true, false))
         }
       case x: PPLineElif =>
+        // invalidate include guards
+        if (ctx.ifStatusStack.length <= 1) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
+
         val b: Boolean = ppEvalConstBoolExpr(ctx, x.tokens)
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._3) {
           throw IllegalSourceException(
@@ -952,6 +987,11 @@ object PPReader {
           ctx.ifStatusStack.push((b, b, false))
         }
       case x: PPLineElse =>
+        // invalidate include guards
+        if (ctx.ifStatusStack.length <= 1) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
+
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._3) {
           throw IllegalSourceException(
             SimpleMessage(
@@ -965,6 +1005,8 @@ object PPReader {
           ctx.ifStatusStack.push((!foundTrue, !foundTrue, true))
         }
       case x: PPLineEndif =>
+        // no need to invalidate include guards
+
         if (ctx.ifStatusStack.isEmpty) {
           throw IllegalSourceException(
             SimpleMessage(
@@ -977,6 +1019,11 @@ object PPReader {
           ctx.ifStatusStack.pop()
         }
       case x: PPLineDefineObj =>
+        // invalidate include guards
+        if (ctx.ifStatusStack.isEmpty) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
+
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           val objMacro: ObjMacro = new ObjMacro(x.tokens)
           ctx.macros.get(x.name.value) match {
@@ -995,6 +1042,11 @@ object PPReader {
           }
         }
       case x: PPLineDefineFunc =>
+        // invalidate include guards
+        if (ctx.ifStatusStack.isEmpty) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
+
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           val funcMacro: FuncMacro =
             new FuncMacro(ctx, x.argNames, x.tokens)
@@ -1014,6 +1066,11 @@ object PPReader {
           }
         }
       case x: PPLineUndef =>
+        // invalidate include guards
+        if (ctx.ifStatusStack.isEmpty) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
+
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           if (ctx.macros.contains(x.name.value)) {
             ctx.macros.remove(x.name.value)
@@ -1030,6 +1087,11 @@ object PPReader {
           }
         }
       case x: PPLineLine =>
+        // invalidate include guards
+        if (ctx.ifStatusStack.isEmpty) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
+
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           // this uses the '#' as the line where #line appears; that is probably
           // incorrect, since the '#line' could be prefixed by comment blocks.
@@ -1047,6 +1109,8 @@ object PPReader {
           ctx.logicalLineNumOffset = x.line - 1 - x.loc._1
         }
       case x: PPLineError =>
+        // no need to invalidate include guards
+
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           throw IllegalSourceException(
             SimpleMessage(
@@ -1056,8 +1120,20 @@ object PPReader {
             )
           )
         }
-      case x: PPLinePragma => ()
-      case x: PPLineNull   => ()
+      case x: PPLinePragma => {
+        // invalidate include guards
+        if (ctx.ifStatusStack.isEmpty) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
+        // do nothing
+      }
+      case x: PPLineNull => {
+        // invalidate include guards
+        if (ctx.ifStatusStack.isEmpty) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
+        // do nothing
+      }
     }
   }
 
@@ -1104,18 +1180,27 @@ object PPReader {
         ctx.ppLineReader.close()
         accum ++ pp(ctx, toBeExpanded)
       case Some(PPLineTokens(tokens)) =>
+        // invalidate include guards
+        if (
+          ctx.ifStatusStack.isEmpty && tokens
+            .find(!_.value.isInstanceOf[PPTokWhiteSpc])
+            .isDefined
+        ) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
+
         if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           read(ctx, accum, toBeExpanded ++ tokens)
         } else {
           read(ctx, accum, toBeExpanded)
         }
       case Some(ppCmd: PPLineInclude) =>
-        if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
-          val oldPPLineReader = ctx.ppLineReader
-          val oldLogicalFileNameRepr = ctx.logicalFileNameRepr
-          val oldLogicalFileName = ctx.logicalFileName
-          val oldIfStatusStack = ctx.ifStatusStack
+        // invalidate include guards
+        if (ctx.ifStatusStack.isEmpty) {
+          ctx.includeGuards.put(ctx.ppLineReader.fileName, (None, false))
+        }
 
+        if (ctx.ifStatusStack.isEmpty || ctx.ifStatusStack.head._1) {
           val newFileName =
             SearchPath.find(ctx.fileName, ppCmd.name.value, ppCmd.isCaret)
           if (newFileName.isEmpty) {
@@ -1130,17 +1215,36 @@ object PPReader {
               )
             )
           }
-          ctx.ppLineReader = new PPLineReader(ctx.warnings, newFileName.get)
-          ctx.logicalFileNameRepr = TextUtils.strReprQ(ppCmd.name.value)
-          ctx.logicalFileName = ppCmd.name.value
-          ctx.ifStatusStack = mutable.Stack()
-          val newAccum: Seq[L[PPTok]] =
+
+          val oldPPLineReader = ctx.ppLineReader
+          val oldLogicalFileNameRepr = ctx.logicalFileNameRepr
+          val oldLogicalFileName = ctx.logicalFileName
+          val oldIfStatusStack = ctx.ifStatusStack
+
+          val guardFound = ctx.includeGuards.get(newFileName.get) match {
+            case Some((Some(g), true)) => ctx.macros.contains(g)
+            case Some(_)               => false
+            case None => {
+              ctx.includeGuards.put(newFileName.get, (None, true))
+              false
+            }
+          }
+
+          if (guardFound) {
             read(ctx, accum ++ pp(ctx, toBeExpanded), Seq.empty)
-          ctx.ppLineReader = oldPPLineReader
-          ctx.logicalFileNameRepr = oldLogicalFileNameRepr
-          ctx.logicalFileName = oldLogicalFileName
-          ctx.ifStatusStack = oldIfStatusStack
-          read(ctx, newAccum, Seq.empty)
+          } else {
+            ctx.ppLineReader = new PPLineReader(ctx.warnings, newFileName.get)
+            ctx.logicalFileNameRepr = TextUtils.strReprQ(ppCmd.name.value)
+            ctx.logicalFileName = ppCmd.name.value
+            ctx.ifStatusStack = mutable.Stack()
+            val newAccum: Seq[L[PPTok]] =
+              read(ctx, accum ++ pp(ctx, toBeExpanded), Seq.empty)
+            ctx.ppLineReader = oldPPLineReader
+            ctx.logicalFileNameRepr = oldLogicalFileNameRepr
+            ctx.logicalFileName = oldLogicalFileName
+            ctx.ifStatusStack = oldIfStatusStack
+            read(ctx, newAccum, Seq.empty)
+          }
         } else {
           read(ctx, accum, toBeExpanded)
         }
