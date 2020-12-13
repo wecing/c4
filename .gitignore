@@ -21,7 +21,9 @@ pp/**/metals.sbt
 pp/.vscode
 
 cc/ast.proto
+cc/ir.proto
 cc/src/ast.rs
+cc/src/ir.rs
 
 cc/target
 cc/.idea

@@ -8,4 +8,11 @@ fn main() {
         .include(".")
         .run()
         .expect("protoc");
+    println!("cargo:rerun-if-changed=ir.proto");
+    protoc_rust::Codegen::new()
+        .out_dir("src")
+        .inputs(&["ir.proto"])
+        .include(".")
+        .run()
+        .expect("protoc");
 }

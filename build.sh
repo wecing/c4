@@ -15,6 +15,7 @@ java -jar pp/src/main/resources/java-cup-11b.jar \
 
 cp proto/ast.proto pp/src/main/resources/ast.proto
 cp proto/ast.proto cc/ast.proto
+cp proto/ir.proto cc/ir.proto
 
 cd pp
 sbt assembly

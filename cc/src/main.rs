@@ -10,6 +10,7 @@ use std::mem;
 use std::ptr;
 
 mod ast;
+mod ir;
 
 // TODO: replace panic!(..., format_loc(...), ...) with Result<T, Err>
 
@@ -763,6 +764,334 @@ impl IRBuilder for DummyIRBuilder {
     fn print_to_file(&mut self, _file_name: &str) {}
 
     fn write_bitcode_to_file(&mut self, _file_name: &str) {}
+}
+
+struct C4IRBuilder {
+    module: ir::IrModule,
+
+    // global
+    struct_ids: HashMap<String, u32>,
+    root_symbol_table: HashMap<String, ir::Value>,
+
+    // per-func
+    bb_ids: HashMap<String, u32>,
+    local_symbol_table: HashMap<String, ir::Value>,
+}
+
+impl C4IRBuilder {
+    fn new() -> C4IRBuilder {
+        C4IRBuilder {
+            module: ir::IrModule::new(),
+            struct_ids: HashMap::new(),
+            root_symbol_table: HashMap::new(),
+            bb_ids: HashMap::new(),
+            local_symbol_table: HashMap::new(),
+        }
+    }
+
+    fn get_ir_type(&self, tp: &Type) -> ir::Type {
+        use ir::Type_Kind as K;
+
+        fn r(k: K) -> ir::Type {
+            let mut r = ir::Type::new();
+            r.kind = k;
+            r
+        }
+
+        match tp {
+            Type::Void => r(K::VOID),
+            Type::Char | Type::UnsignedChar => r(K::INT8),
+            Type::Short | Type::UnsignedShort => r(K::INT16),
+            Type::Int | Type::UnsignedInt => r(K::INT32),
+            Type::Long | Type::UnsignedLong => r(K::INT64),
+            Type::Float => r(K::FLOAT),
+            Type::Double => r(K::DOUBLE),
+            Type::Struct(su) | Type::Union(su) => {
+                let ir_type_name = format!(".{}", su.uuid);
+                let mut ir_type = ir::Type::new();
+                ir_type.kind = K::STRUCT;
+                ir_type.struct_id =
+                    *self.struct_ids.get(&ir_type_name).unwrap();
+                ir_type
+            }
+            Type::Pointer(tp) => {
+                let mut ir_type = ir::Type::new();
+                ir_type.kind = K::POINTER;
+                ir_type.set_pointee_type(self.get_ir_type(&tp.tp));
+                ir_type
+            }
+            Type::Array(tp, sz) => {
+                if sz.is_none() {
+                    panic!("get_ir_type() invoked with incomplete array type")
+                }
+                let mut ir_type = ir::Type::new();
+                ir_type.kind = K::ARRAY;
+                ir_type.set_array_elem_type(self.get_ir_type(&tp.tp));
+                ir_type.array_size = sz.unwrap();
+                ir_type
+            }
+            Type::Function(rtp, params_opt) => {
+                let mut ir_type = ir::Type::new();
+                ir_type.kind = K::FUNCTION;
+                ir_type.set_fn_return_type(self.get_ir_type(&rtp.tp));
+                match params_opt {
+                    None => ir_type.fn_is_vararg = true,
+                    Some(FuncParams::Typed(params, is_vararg)) => {
+                        let param_types: Vec<ir::Type> = params
+                            .iter()
+                            .map(|p| self.get_ir_type(&p.tp.tp))
+                            .collect();
+                        ir_type.set_fn_param_types(param_types.into());
+                        ir_type.fn_is_vararg = *is_vararg;
+                    }
+                    Some(FuncParams::Names(params)) => {
+                        let param_types: Vec<ir::Type> = params
+                            .iter()
+                            .map(|_| self.get_ir_type(&Type::Int))
+                            .collect();
+                        ir_type.set_fn_param_types(param_types.into());
+                        ir_type.fn_is_vararg = false;
+                    }
+                }
+                ir_type
+            }
+        }
+    }
+}
+
+impl IRBuilder for C4IRBuilder {
+    fn emit_opaque_struct_type(&mut self, name: &str) {
+        assert!(!self.struct_ids.contains_key(name));
+
+        self.struct_ids
+            .insert(name.to_string(), self.struct_ids.len() as u32 + 1);
+        self.module
+            .struct_defs
+            .insert(self.struct_ids.len() as u32, ir::StructDef::new());
+    }
+
+    fn update_struct_type(
+        &mut self,
+        name: &str,
+        fields: &Vec<SuField>,
+        is_union: bool,
+    ) {
+        let types: Vec<ir::Type> = fields
+            .iter()
+            .map(|su_field| {
+                if !is_union && su_field.bit_field_size.is_some() {
+                    unreachable!() // struct must be packed first
+                }
+                self.get_ir_type(&su_field.tp.tp)
+            })
+            .collect();
+        let padding_only: Vec<bool> = fields
+            .iter()
+            .map(|su_field| su_field.name.is_none())
+            .collect();
+
+        let struct_def = self
+            .module
+            .struct_defs
+            .get_mut(self.struct_ids.get(name).unwrap())
+            .unwrap();
+        struct_def.set_field_type(types.into());
+        struct_def.set_padding_only(padding_only.into());
+    }
+
+    fn create_function(
+        &mut self,
+        name: &str,
+        tp: &QType,
+        linkage: Linkage,
+        param_ir_ids: &Vec<String>,
+    ) {
+        todo!()
+    }
+
+    fn create_basic_block(&mut self, name: &str) {
+        todo!()
+    }
+
+    fn set_current_basic_block(&mut self, bb: &str) {
+        todo!()
+    }
+
+    fn get_current_basic_block(&self) -> String {
+        todo!()
+    }
+
+    fn set_entry_basic_block(&mut self, bb: &str) {
+        todo!()
+    }
+
+    fn create_definition(
+        &mut self,
+        is_global: bool,
+        name: &str,
+        tp: &QType,
+        linkage: Linkage,
+        init: &Option<Initializer>,
+    ) {
+        todo!()
+    }
+
+    fn create_constant_buffer(&mut self, ir_id: &str, buf: Vec<u8>) {
+        todo!()
+    }
+
+    fn create_constant(
+        &mut self,
+        ir_id: &str,
+        c: &ConstantOrIrValue,
+        tp: &QType,
+    ) {
+        todo!()
+    }
+
+    fn create_load(
+        &mut self,
+        dst_ir_id: &str,
+        src_ir_id: &str,
+        src_tp: &QType,
+    ) {
+        todo!()
+    }
+
+    fn create_store(&mut self, dst_ir_id: &str, src_ir_id: &str) {
+        todo!()
+    }
+
+    fn create_memcpy(
+        &mut self,
+        dst_ir_id: &str,
+        src_ir_id: &str,
+        size: u32,
+        align: u32,
+    ) {
+        todo!()
+    }
+
+    fn create_cast(
+        &mut self,
+        dst_ir_id: &str,
+        dst_tp: &QType,
+        src_ir_id: &str,
+        src_tp: &QType,
+    ) {
+        todo!()
+    }
+
+    fn create_zext_i1_to_i32(&mut self, dst_ir_id: &str, src_ir_id: &str) {
+        todo!()
+    }
+
+    fn create_neg(&mut self, dst_ir_id: &str, is_fp: bool, ir_id: &str) {
+        todo!()
+    }
+
+    fn create_not(&mut self, dst_ir_id: &str, ir_id: &str) {
+        todo!()
+    }
+
+    fn create_bin_op(
+        &mut self,
+        dst_ir_id: &str,
+        op: ast::Expr_Binary_Op,
+        is_signed: bool,
+        is_fp: bool,
+        left_ir_id: &str,
+        right_ir_id: &str,
+    ) {
+        todo!()
+    }
+
+    fn create_cmp_op(
+        &mut self,
+        dst_ir_id: &str,
+        op: ast::Expr_Binary_Op,
+        is_signed: bool,
+        is_fp: bool,
+        left_ir_id: &str,
+        right_ir_id: &str,
+    ) {
+        todo!()
+    }
+
+    fn create_ptr_add(
+        &mut self,
+        dst_ir_id: &str,    // returns i8*
+        ptr_ir_id: &str,    // must be i8*
+        offset_ir_id: &str, // must be i64
+    ) {
+        todo!()
+    }
+
+    fn create_call(
+        &mut self,
+        dst_ir_id: &str,
+        func_ir_id: &str, // must be func ptr
+        arg_ir_ids: &Vec<String>,
+    ) {
+        todo!()
+    }
+
+    fn enter_switch(&mut self, ir_id: &str, default_bb_id: &str) {
+        todo!()
+    }
+
+    fn leave_switch(&mut self) {
+        todo!()
+    }
+
+    fn add_switch_case(&mut self, c: &ConstantOrIrValue, bb_id: &str) {
+        todo!()
+    }
+
+    fn create_br(&mut self, bb_id: &str) {
+        todo!()
+    }
+
+    fn create_cond_br(
+        &mut self,
+        ir_id: &str,
+        then_bb_id: &str,
+        else_bb_id: &str,
+    ) {
+        todo!()
+    }
+
+    fn create_va_start(&mut self, ir_id: &str) {
+        todo!()
+    }
+
+    fn create_va_arg(&mut self, dst_ir_id: &str, ir_id: &str, tp: &QType) {
+        todo!()
+    }
+
+    fn create_va_end(&mut self, ir_id: &str) {
+        todo!()
+    }
+
+    fn create_va_copy(&mut self, dst_ir_id: &str, src_ir_id: &str) {
+        todo!()
+    }
+
+    fn create_return_void(&mut self) {
+        todo!()
+    }
+
+    fn create_return(&mut self, ir_id: &str) {
+        todo!()
+    }
+
+    fn print_to_file(&mut self, file_name: &str) {
+        todo!()
+    }
+
+    fn write_bitcode_to_file(&mut self, file_name: &str) {
+        todo!()
+    }
 }
 
 #[cfg(feature = "llvm-sys")]
@@ -1924,8 +2253,6 @@ type LLVMBuilder = LLVMBuilderImpl;
 
 #[cfg(not(feature = "llvm-sys"))]
 type LLVMBuilder = DummyIRBuilder;
-
-type C4IRBuilder = DummyIRBuilder; // TODO: implement our own IR
 
 struct Compiler<'a> {
     translation_unit: &'a ast::TranslationUnit,

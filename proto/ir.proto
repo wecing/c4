@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package c4.ir.proto;
+
+message IrModule {
+    map<uint32, StructDef> struct_defs = 1;
+    map<string, GlobalDef> global_defs = 2;
+    map<string, FunctionDef> function_defs = 3;
+}
+
+message StructDef {
+    // when empty: unfinished opaque type
+    repeated Type type = 1;
+    repeated bool padding_only = 2;
+}
+
+message GlobalDef {
+    Linkage linkage = 1;
+    Type type = 2;
+    Value value = 3;
+}
+
+message FunctionDef {
+    Linkage linkage = 1;
+    Type return_type = 2;
+    repeated Type arg_types = 3;
+    repeated uint32 args = 4;
+    uint32 entry_bb = 5; // ids and bbs use different namespace
+    map<uint32, BasicBlock> bbs = 6;
+}
+
+enum Linkage {
+    NONE = 0;
+    EXTERNAL = 1;
+    INTERNAL = 2;
+}
+
+message Type {
+    enum Kind {
+        VOID = 0;
+
+        INT8 = 1;
+        INT16 = 2;
+        INT32 = 3;
+        INT64 = 4;
+
+        FLOAT = 5;
+        DOUBLE = 6;
+
+        STRUCT = 7;
+        POINTER = 8;
+        ARRAY = 9;
+
+        FUNCTION = 10; // usually used with POINTER
+
+        BOOLEAN = 11;
+    }
+
+    Kind kind = 1;
+
+    // STRUCT
+    uint32 struct_id = 2;
+
+    // POINTER
+    Type pointee_type = 3;
+
+    // ARRAY
+    Type array_elem_type = 4;
+    uint32 array_size = 5;
+
+    // FUNCTION
+    Type fn_return_type = 6;
+    repeated Type fn_param_types = 7;
+    bool fn_is_vararg = 8;
+}
+
+message Value {
+    message Aggregate {
+        repeated Value values = 1;
+    }
+    message Address {
+        string symbol = 1;
+        int64 offset = 2;
+    }
+
+    oneof v {
+        int32 i8 = 1;
+        int32 i16 = 2;
+        int32 i32 = 3;
+        int64 i64 = 4;
+
+        uint32 u8 = 5;
+        uint32 u16 = 6;
+        uint32 u32 = 7;
+        uint64 u64 = 8;
+
+        float f32 = 9;
+        double f64 = 10;
+
+        Aggregate aggregate = 11;
+        Address address = 12;
+
+        uint32 ir_id = 13; // instruction or arg
+    }
+}
+
+message BasicBlock {
+    message Instruction {
+        uint32 id = 1;
+        // TODO
+    }
+    message Terminator {
+        // TODO
+    }
+    repeated Instruction instructions = 1;
+    Terminator terminator = 2;
+}
