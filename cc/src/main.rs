@@ -776,6 +776,11 @@ struct C4IRBuilder {
     // per-func
     bb_ids: HashMap<String, u32>,
     local_symbol_table: HashMap<String, ir::Value>,
+
+    current_function: String,
+    current_basic_block: String,
+    entry_basic_block: String,
+    next_ir_id: u32,
 }
 
 impl C4IRBuilder {
@@ -786,6 +791,10 @@ impl C4IRBuilder {
             root_symbol_table: HashMap::new(),
             bb_ids: HashMap::new(),
             local_symbol_table: HashMap::new(),
+            current_function: String::new(),
+            current_basic_block: String::new(),
+            entry_basic_block: String::new(),
+            next_ir_id: 0,
         }
     }
 
@@ -841,7 +850,7 @@ impl C4IRBuilder {
                             .iter()
                             .map(|p| self.get_ir_type(&p.tp.tp))
                             .collect();
-                        ir_type.set_fn_param_types(param_types.into());
+                        ir_type.set_fn_arg_types(param_types.into());
                         ir_type.fn_is_vararg = *is_vararg;
                     }
                     Some(FuncParams::Names(params)) => {
@@ -849,13 +858,21 @@ impl C4IRBuilder {
                             .iter()
                             .map(|_| self.get_ir_type(&Type::Int))
                             .collect();
-                        ir_type.set_fn_param_types(param_types.into());
+                        ir_type.set_fn_arg_types(param_types.into());
                         ir_type.fn_is_vararg = false;
                     }
                 }
                 ir_type
             }
         }
+    }
+
+    fn get_ir_constant_init(
+        &self,
+        init: &Initializer,
+        init_tp: Option<&QType>,
+    ) -> ir::Value {
+        todo!()
     }
 }
 
@@ -906,23 +923,37 @@ impl IRBuilder for C4IRBuilder {
         linkage: Linkage,
         param_ir_ids: &Vec<String>,
     ) {
+        self.bb_ids.clear();
+        self.local_symbol_table.clear();
+        self.current_function = name.to_string();
+        self.next_ir_id = 0;
+
         todo!()
     }
 
     fn create_basic_block(&mut self, name: &str) {
-        todo!()
+        assert!(!self.bb_ids.contains_key(name));
+
+        let bb_id = self.bb_ids.len() as u32 + 1;
+        self.bb_ids.insert(name.to_string(), bb_id);
+        let f = self
+            .module
+            .function_defs
+            .get_mut(&self.current_function)
+            .unwrap();
+        f.bbs.insert(bb_id, ir::BasicBlock::new());
     }
 
     fn set_current_basic_block(&mut self, bb: &str) {
-        todo!()
+        self.current_basic_block = bb.to_string();
     }
 
     fn get_current_basic_block(&self) -> String {
-        todo!()
+        self.current_basic_block.clone()
     }
 
     fn set_entry_basic_block(&mut self, bb: &str) {
-        todo!()
+        self.entry_basic_block = bb.to_string();
     }
 
     fn create_definition(
@@ -933,7 +964,146 @@ impl IRBuilder for C4IRBuilder {
         linkage: Linkage,
         init: &Option<Initializer>,
     ) {
-        todo!()
+        // C allows global external tentative defs of arrays of unknown size:
+        //   int x[];
+        // as long as it's redeclared later with a size:
+        //   int x[];
+        //   int x[10];
+        // on seeing the first def, clang implicitly gives it a size of 1. Since
+        // this seems to be an undefined behavior, we mimick clang's behavior
+        // here but without signaling a warning.
+        let tp = match &tp.tp {
+            Type::Array(elem_tp, None)
+                if is_global && linkage == Linkage::EXTERNAL =>
+            {
+                QType {
+                    is_const: tp.is_const,
+                    is_volatile: tp.is_volatile,
+                    tp: Type::Array(elem_tp.clone(), Some(1)),
+                }
+            }
+            _ => tp.clone(),
+        };
+
+        let linkage = match linkage {
+            Linkage::EXTERNAL => ir::Linkage::EXTERNAL,
+            Linkage::INTERNAL => ir::Linkage::INTERNAL,
+            Linkage::NONE => ir::Linkage::NONE,
+        };
+
+        if is_global
+            && self.root_symbol_table.contains_key(name)
+            && init.is_none()
+        {
+            if tp.is_function() {
+                self.module
+                    .function_defs
+                    .get_mut(name)
+                    .map(|d| d.linkage = linkage);
+            } else {
+                self.module
+                    .global_defs
+                    .get_mut(name)
+                    .map(|d| d.linkage = linkage);
+            }
+            return;
+        }
+
+        let ir_tp = self.get_ir_type(&tp.tp);
+        if is_global && tp.is_function() {
+            let mut func_def = ir::FunctionDef::new();
+            func_def.linkage = linkage;
+            func_def.set_return_type(ir_tp.get_fn_return_type().clone());
+            func_def.set_arg_types(ir_tp.get_fn_arg_types().clone().into());
+            // `args` will be initialized in create_function()
+            func_def.entry_bb = 1;
+            func_def.bbs.insert(1, ir::BasicBlock::new());
+            self.module.function_defs.insert(name.to_string(), func_def);
+
+            self.bb_ids.insert("".to_string(), 1);
+
+            let mut v_addr = ir::Value_Address::new();
+            v_addr.set_symbol(name.to_string());
+
+            let mut v_tp = ir::Type::new();
+            v_tp.kind = ir::Type_Kind::POINTER;
+            v_tp.set_pointee_type(ir_tp);
+
+            let mut v = ir::Value::new();
+            v.set_address(v_addr);
+            v.set_field_type(v_tp);
+
+            self.root_symbol_table.insert(name.to_string(), v);
+        } else if is_global {
+            let init_value = init
+                .as_ref()
+                .map(|init| self.get_ir_constant_init(init, Some(&tp)));
+            let mut global_def = ir::GlobalDef::new();
+            global_def.linkage = linkage;
+            global_def.set_field_type(ir_tp.clone());
+            init_value.map(|v| global_def.set_value(v));
+            self.module.global_defs.insert(name.to_string(), global_def);
+
+            let mut v_addr = ir::Value_Address::new();
+            v_addr.set_symbol(name.to_string());
+
+            let mut v_tp = ir::Type::new();
+            v_tp.kind = ir::Type_Kind::POINTER;
+            v_tp.set_pointee_type(ir_tp);
+
+            let mut v = ir::Value::new();
+            v.set_address(v_addr);
+            v.set_field_type(v_tp);
+
+            self.root_symbol_table.insert(name.to_string(), v);
+        } else {
+            let alloca_value = {
+                let mut instr_tp = ir::Type::new();
+                instr_tp.kind = ir::Type_Kind::POINTER;
+                instr_tp.set_pointee_type(ir_tp.clone());
+
+                let mut alloca_value = ir::Value::new();
+                alloca_value.set_ir_id(self.next_ir_id);
+                alloca_value.set_field_type(instr_tp);
+                self.next_ir_id += 1;
+
+                alloca_value
+            };
+            let alloca_instr = {
+                let mut instr = ir::BasicBlock_Instruction::new();
+                instr.id = alloca_value.get_ir_id();
+                instr.set_field_type(alloca_value.get_field_type().clone());
+                instr.kind = ir::BasicBlock_Instruction_Kind::ALLOCA;
+                instr
+            };
+            let store_instr = init.as_ref().map(|init| {
+                let init_value = self.get_ir_constant_init(init, Some(&tp));
+                let mut instr = ir::BasicBlock_Instruction::new();
+                instr.id = self.next_ir_id;
+                instr.set_field_type(self.get_ir_type(&Type::Void));
+                instr.kind = ir::BasicBlock_Instruction_Kind::STORE;
+                instr.set_store_dst(alloca_value.clone());
+                instr.set_store_src(init_value);
+                self.next_ir_id += 1;
+                instr
+            });
+
+            let entry_bb = *self.bb_ids.get(&self.entry_basic_block).unwrap();
+            let instrs = self
+                .module
+                .function_defs
+                .get_mut(&self.current_function)
+                .unwrap()
+                .bbs
+                .get_mut(&entry_bb)
+                .unwrap()
+                .mut_instructions();
+            instrs.push(alloca_instr);
+            store_instr.map(|s| instrs.push(s));
+
+            self.local_symbol_table
+                .insert(name.to_string(), alloca_value);
+        };
     }
 
     fn create_constant_buffer(&mut self, ir_id: &str, buf: Vec<u8>) {

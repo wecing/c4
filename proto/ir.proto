@@ -17,7 +17,7 @@ message StructDef {
 message GlobalDef {
     Linkage linkage = 1;
     Type type = 2;
-    Value value = 3;
+    Value value = 3; // optional
 }
 
 message FunctionDef {
@@ -70,7 +70,7 @@ message Type {
 
     // FUNCTION
     Type fn_return_type = 6;
-    repeated Type fn_param_types = 7;
+    repeated Type fn_arg_types = 7;
     bool fn_is_vararg = 8;
 }
 
@@ -102,11 +102,26 @@ message Value {
 
         uint32 ir_id = 13; // instruction or arg
     }
+
+    Type type = 14;
 }
 
 message BasicBlock {
     message Instruction {
         uint32 id = 1;
+        Type type = 2;
+
+        enum Kind {
+            ALLOCA = 0;
+            STORE = 1;
+        }
+
+        Kind kind = 3;
+
+        // STORE
+        Value store_dst = 4;
+        Value store_src = 5;
+
         // TODO
     }
     message Terminator {
