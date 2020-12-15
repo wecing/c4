@@ -867,6 +867,93 @@ impl C4IRBuilder {
         }
     }
 
+    fn get_ir_constant(&self, c: &ConstantOrIrValue) -> (ir::Value, QType) {
+        let mut v = ir::Value::new();
+        use ir::Type_Kind as K;
+        use ConstantOrIrValue as C;
+        use Type as T;
+        match c {
+            C::I8(x) => {
+                v.mut_field_type().kind = K::INT8;
+                v.set_i8(*x as i32);
+                (v, QType::from(T::Char))
+            }
+            C::U8(x) => {
+                v.mut_field_type().kind = K::INT8;
+                v.set_i8(*x as i32);
+                (v, QType::from(T::UnsignedChar))
+            }
+            C::I16(x) => {
+                v.mut_field_type().kind = K::INT16;
+                v.set_i16(*x as i32);
+                (v, QType::from(T::Short))
+            }
+            C::U16(x) => {
+                v.mut_field_type().kind = K::INT16;
+                v.set_i16(*x as i32);
+                (v, QType::from(T::UnsignedShort))
+            }
+            C::I32(x) => {
+                v.mut_field_type().kind = K::INT32;
+                v.set_i32(*x as i32);
+                (v, QType::from(T::Int))
+            }
+            C::U32(x) => {
+                v.mut_field_type().kind = K::INT32;
+                v.set_i32(*x as i32);
+                (v, QType::from(T::UnsignedInt))
+            }
+            C::I64(x) => {
+                v.mut_field_type().kind = K::INT64;
+                v.set_i64(*x as i64);
+                (v, QType::from(T::Long))
+            }
+            C::U64(x) => {
+                v.mut_field_type().kind = K::INT64;
+                v.set_i64(*x as i64);
+                (v, QType::from(T::UnsignedLong))
+            }
+            C::Float(x) => {
+                v.mut_field_type().kind = K::FLOAT;
+                v.set_f32(*x as f32);
+                (v, QType::from(T::Float))
+            }
+            C::Double(x) => {
+                v.mut_field_type().kind = K::DOUBLE;
+                v.set_f64(*x as f64);
+                (v, QType::from(T::Double))
+            }
+            C::StrAddress(ir_id, offset_bytes)
+            | C::HasAddress(ir_id, offset_bytes, false) => {
+                let mut old_v = self.root_symbol_table[ir_id].clone();
+                let mut v = if old_v.get_field_type().kind == K::POINTER {
+                    old_v.mut_field_type().clear_pointee_type();
+                    old_v.mut_field_type().mut_pointee_type().kind = K::INT8;
+                    old_v
+                } else {
+                    let mut v = ir::Value::new();
+                    v.set_cast_from(old_v);
+                    v.mut_field_type().kind = K::POINTER;
+                    v.mut_field_type().mut_pointee_type().kind = K::INT8;
+                    v
+                };
+                let mut addr_v = &mut v;
+                while !addr_v.has_address() {
+                    if !addr_v.has_cast_from() {
+                        panic!("Illegal address constant")
+                    }
+                    addr_v = addr_v.mut_cast_from();
+                }
+                let addr_v = addr_v.mut_address();
+                addr_v.offset += *offset_bytes;
+
+                (v, QType::char_ptr_tp())
+            }
+            C::HasAddress(_, _, true) => unreachable!(),
+            C::IrValue(_, _) => unreachable!(),
+        }
+    }
+
     fn get_ir_constant_init(
         &self,
         init: &Initializer,
@@ -1037,16 +1124,10 @@ impl IRBuilder for C4IRBuilder {
 
             self.bb_ids.insert(".prologue".to_string(), 1);
 
-            let mut v_addr = ir::Value_Address::new();
-            v_addr.set_symbol(name.to_string());
-
-            let mut v_tp = ir::Type::new();
-            v_tp.kind = ir::Type_Kind::POINTER;
-            v_tp.set_pointee_type(ir_tp);
-
             let mut v = ir::Value::new();
-            v.set_address(v_addr);
-            v.set_field_type(v_tp);
+            v.mut_address().set_symbol(name.to_string());
+            v.mut_field_type().kind = ir::Type_Kind::POINTER;
+            v.mut_field_type().set_pointee_type(ir_tp);
 
             self.root_symbol_table.insert(name.to_string(), v);
         } else if is_global {
@@ -1059,27 +1140,20 @@ impl IRBuilder for C4IRBuilder {
             init_value.map(|v| global_def.set_value(v));
             self.module.global_defs.insert(name.to_string(), global_def);
 
-            let mut v_addr = ir::Value_Address::new();
-            v_addr.set_symbol(name.to_string());
-
-            let mut v_tp = ir::Type::new();
-            v_tp.kind = ir::Type_Kind::POINTER;
-            v_tp.set_pointee_type(ir_tp);
-
             let mut v = ir::Value::new();
-            v.set_address(v_addr);
-            v.set_field_type(v_tp);
+            v.mut_address().set_symbol(name.to_string());
+            v.mut_field_type().kind = ir::Type_Kind::POINTER;
+            v.mut_field_type().set_pointee_type(ir_tp);
 
             self.root_symbol_table.insert(name.to_string(), v);
         } else {
             let alloca_value = {
-                let mut instr_tp = ir::Type::new();
-                instr_tp.kind = ir::Type_Kind::POINTER;
-                instr_tp.set_pointee_type(ir_tp.clone());
-
                 let mut alloca_value = ir::Value::new();
                 alloca_value.set_ir_id(self.next_ir_id);
-                alloca_value.set_field_type(instr_tp);
+                alloca_value.mut_field_type().kind = ir::Type_Kind::POINTER;
+                alloca_value
+                    .mut_field_type()
+                    .set_pointee_type(ir_tp.clone());
                 self.next_ir_id += 1;
 
                 alloca_value

@@ -94,11 +94,12 @@ message Value {
 
         Aggregate aggregate = 7;
         Address address = 8;
+        Value cast_from = 9;
 
-        uint32 ir_id = 9; // instruction or arg
+        uint32 ir_id = 10; // instruction or arg
     }
 
-    Type type = 10;
+    Type type = 11;
 }
 
 message BasicBlock {
