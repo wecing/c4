@@ -776,11 +776,11 @@ struct C4IRBuilder {
     // per-func
     bb_ids: HashMap<String, u32>,
     local_symbol_table: HashMap<String, ir::Value>,
-
     current_function: String,
+    next_ir_id: u32,
+
     current_basic_block: String,
     entry_basic_block: String,
-    next_ir_id: u32,
 }
 
 impl C4IRBuilder {
@@ -792,9 +792,9 @@ impl C4IRBuilder {
             bb_ids: HashMap::new(),
             local_symbol_table: HashMap::new(),
             current_function: String::new(),
+            next_ir_id: 1,
             current_basic_block: String::new(),
             entry_basic_block: String::new(),
-            next_ir_id: 0,
         }
     }
 
@@ -926,9 +926,24 @@ impl IRBuilder for C4IRBuilder {
         self.bb_ids.clear();
         self.local_symbol_table.clear();
         self.current_function = name.to_string();
-        self.next_ir_id = 0;
+        self.next_ir_id = 1;
 
-        todo!()
+        let linkage = if linkage == Linkage::INTERNAL {
+            Linkage::INTERNAL
+        } else {
+            Linkage::EXTERNAL
+        };
+        self.create_definition(true, name, tp, linkage, &None);
+
+        let func_def = self.module.function_defs.get_mut(name).unwrap();
+        for (idx, param_ir_id) in param_ir_ids.iter().enumerate() {
+            func_def.args.push(self.next_ir_id);
+            self.next_ir_id += 1;
+            let mut v = ir::Value::new();
+            v.set_ir_id(func_def.args[idx]);
+            v.set_field_type(func_def.arg_types[idx].clone());
+            self.local_symbol_table.insert(param_ir_id.to_string(), v);
+        }
     }
 
     fn create_basic_block(&mut self, name: &str) {
@@ -1020,7 +1035,7 @@ impl IRBuilder for C4IRBuilder {
             func_def.bbs.insert(1, ir::BasicBlock::new());
             self.module.function_defs.insert(name.to_string(), func_def);
 
-            self.bb_ids.insert("".to_string(), 1);
+            self.bb_ids.insert(".prologue".to_string(), 1);
 
             let mut v_addr = ir::Value_Address::new();
             v_addr.set_symbol(name.to_string());
