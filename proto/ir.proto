@@ -89,21 +89,16 @@ message Value {
         int32 i32 = 3;
         int64 i64 = 4;
 
-        uint32 u8 = 5;
-        uint32 u16 = 6;
-        uint32 u32 = 7;
-        uint64 u64 = 8;
+        float f32 = 5;
+        double f64 = 6;
 
-        float f32 = 9;
-        double f64 = 10;
+        Aggregate aggregate = 7;
+        Address address = 8;
 
-        Aggregate aggregate = 11;
-        Address address = 12;
-
-        uint32 ir_id = 13; // instruction or arg
+        uint32 ir_id = 9; // instruction or arg
     }
 
-    Type type = 14;
+    Type type = 10;
 }
 
 message BasicBlock {

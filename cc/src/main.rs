@@ -1122,7 +1122,19 @@ impl IRBuilder for C4IRBuilder {
     }
 
     fn create_constant_buffer(&mut self, ir_id: &str, buf: Vec<u8>) {
-        todo!()
+        let mut v = ir::Value::new();
+        v.mut_field_type().set_kind(ir::Type_Kind::ARRAY);
+        v.mut_field_type()
+            .mut_array_elem_type()
+            .set_kind(ir::Type_Kind::INT8);
+        v.mut_field_type().array_size = buf.len() as u32;
+        for buf_v in buf {
+            let mut elem_val = ir::Value::new();
+            elem_val.mut_field_type().set_kind(ir::Type_Kind::INT8);
+            elem_val.set_i8(buf_v as i32);
+            v.mut_aggregate().mut_values().push(elem_val);
+        }
+        self.root_symbol_table.insert(ir_id.to_string(), v);
     }
 
     fn create_constant(
