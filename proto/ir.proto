@@ -77,6 +77,7 @@ message Type {
 message Value {
     message Aggregate {
         repeated Value values = 1;
+        uint32 zero_padding_bytes = 2;
     }
     message Address {
         string symbol = 1;

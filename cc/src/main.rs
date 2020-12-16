@@ -959,7 +959,85 @@ impl C4IRBuilder {
         init: &Initializer,
         init_tp: Option<&QType>,
     ) -> ir::Value {
-        todo!()
+        use ConstantOrIrValue as C;
+        match init {
+            Initializer::Expr(_, C::IrValue(ir_id, false)) => {
+                self.root_symbol_table[ir_id].clone()
+            }
+            Initializer::Expr(_, c)
+                if init_tp.map(|t| t.is_pointer()) == Some(true)
+                    && c.as_constant_u64() == Some(0) =>
+            {
+                // i64 0 as init_tp
+                let mut v = ir::Value::new();
+                v.mut_cast_from().set_i64(0);
+                v.mut_cast_from().mut_field_type().kind = ir::Type_Kind::INT64;
+                v.set_field_type(self.get_ir_type(&init_tp.unwrap().tp));
+                v
+            }
+            Initializer::Expr(_, c @ C::HasAddress(_, _, false))
+                if init_tp.map(|t| t.is_pointer()) == Some(true) =>
+            {
+                let pre_cast = self.get_ir_constant(c).0;
+                let init_tp = self.get_ir_type(&init_tp.unwrap().tp);
+                // i8* pre_cast as init_tp
+                let mut v = ir::Value::new();
+                v.set_cast_from(pre_cast);
+                v.set_field_type(init_tp);
+                v
+            }
+            Initializer::Expr(_, c) => self.get_ir_constant(c).0,
+            Initializer::Struct(inits, _)
+                if inits.is_empty()
+                    && init_tp.map(|t| t.is_scalar_type()) == Some(true) =>
+            {
+                // i64 0 as init_tp
+                let mut v = ir::Value::new();
+                v.mut_cast_from().set_i64(0);
+                v.mut_cast_from().mut_field_type().kind = ir::Type_Kind::INT64;
+                v.set_field_type(self.get_ir_type(&init_tp.unwrap().tp));
+                v
+            }
+            Initializer::Struct(inits, _) if inits.is_empty() => {
+                // init_tp {zeroinitializer zero_padding_bytes}
+                let mut v = ir::Value::new();
+                v.mut_aggregate().zero_padding_bytes =
+                    Compiler::get_type_size_and_align_bytes(
+                        &init_tp.unwrap().tp,
+                    )
+                    .unwrap()
+                    .0;
+                v.set_field_type(self.get_ir_type(&init_tp.unwrap().tp));
+                v
+            }
+            Initializer::Struct(inits, zero_padding_bytes) => {
+                let vals: Vec<ir::Value> = inits
+                    .into_iter()
+                    .enumerate()
+                    .map(|(init_idx, init)| {
+                        let init_tp: Option<&QType> =
+                            match init_tp.map(|t| &t.tp) {
+                                // ad-hoc fix for array/struct; probably need
+                                // the same for union.
+                                Some(Type::Array(t, _)) => Some(t.borrow()),
+                                Some(Type::Struct(b)) => b
+                                    .fields
+                                    .as_ref()
+                                    .and_then(|v| v.get(init_idx))
+                                    .map(|f| &f.tp),
+                                _ => None,
+                            };
+                        self.get_ir_constant_init(init, init_tp)
+                    })
+                    .collect();
+                // init_tp {inits..., zeroinitializer zero_padding_bytes}
+                let mut v = ir::Value::new();
+                v.mut_aggregate().set_values(vals.into());
+                v.mut_aggregate().zero_padding_bytes = *zero_padding_bytes;
+                v.set_field_type(self.get_ir_type(&init_tp.unwrap().tp));
+                v
+            }
+        }
     }
 }
 
@@ -1676,7 +1754,7 @@ impl LLVMBuilderImpl {
                         let init_tp: Option<&QType> =
                             match init_tp.map(|t| &t.tp) {
                                 // ad-hoc fix for array/struct; probably need
-                                // the same for struct/union.
+                                // the same for union.
                                 Some(Type::Array(t, _)) => Some(t.borrow()),
                                 Some(Type::Struct(b)) => b
                                     .fields
