@@ -111,6 +111,7 @@ message BasicBlock {
         enum Kind {
             ALLOCA = 0;
             STORE = 1;
+            LOAD = 2;
         }
 
         Kind kind = 3;
@@ -118,6 +119,9 @@ message BasicBlock {
         // STORE
         Value store_dst = 4;
         Value store_src = 5;
+
+        // LOAD
+        Value load_src = 6;
 
         // TODO
     }

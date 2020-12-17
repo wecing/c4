@@ -1039,6 +1039,41 @@ impl C4IRBuilder {
             }
         }
     }
+
+    fn lookup_ir_id(&self, ir_id: &str) -> &ir::Value {
+        self.local_symbol_table
+            .get(ir_id)
+            .or_else(|| self.root_symbol_table.get(ir_id))
+            .unwrap()
+    }
+
+    fn add_instr(
+        &mut self,
+        ir_id: Option<&str>,
+        mut instr: ir::BasicBlock_Instruction,
+    ) {
+        instr.id = self.next_ir_id;
+        self.next_ir_id += 1;
+
+        if let Some(ir_id) = ir_id {
+            let mut v = ir::Value::new();
+            v.set_field_type(instr.get_field_type().clone());
+            v.set_ir_id(instr.id);
+            self.local_symbol_table.insert(ir_id.to_string(), v);
+        } else {
+            instr.mut_field_type().kind == ir::Type_Kind::VOID;
+        }
+
+        self.module
+            .function_defs
+            .get_mut(&self.current_function)
+            .unwrap()
+            .mut_bbs()
+            .get_mut(&self.bb_ids[&self.current_basic_block])
+            .unwrap()
+            .mut_instructions()
+            .push(instr);
+    }
 }
 
 impl IRBuilder for C4IRBuilder {
@@ -1305,13 +1340,31 @@ impl IRBuilder for C4IRBuilder {
         &mut self,
         dst_ir_id: &str,
         src_ir_id: &str,
-        src_tp: &QType,
+        _src_tp: &QType,
     ) {
-        todo!()
+        let src = self.lookup_ir_id(src_ir_id).clone();
+        assert!(src.get_field_type().kind == ir::Type_Kind::POINTER);
+
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr.set_field_type(src.get_field_type().get_pointee_type().clone());
+        instr.kind = ir::BasicBlock_Instruction_Kind::LOAD;
+        instr.set_load_src(src.clone());
+        self.add_instr(Some(&dst_ir_id), instr);
     }
 
     fn create_store(&mut self, dst_ir_id: &str, src_ir_id: &str) {
-        todo!()
+        let src = self.lookup_ir_id(src_ir_id);
+        let dst = self.lookup_ir_id(dst_ir_id);
+        assert!(dst.get_field_type().kind == ir::Type_Kind::POINTER);
+        assert!(
+            dst.get_field_type().get_pointee_type() == src.get_field_type()
+        );
+
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr.kind = ir::BasicBlock_Instruction_Kind::STORE;
+        instr.set_store_dst(dst.clone());
+        instr.set_store_src(src.clone());
+        self.add_instr(None, instr);
     }
 
     fn create_memcpy(
