@@ -1061,7 +1061,7 @@ impl C4IRBuilder {
             v.set_ir_id(instr.id);
             self.local_symbol_table.insert(ir_id.to_string(), v);
         } else {
-            instr.mut_field_type().kind == ir::Type_Kind::VOID;
+            instr.mut_field_type().kind = ir::Type_Kind::VOID;
         }
 
         self.module
