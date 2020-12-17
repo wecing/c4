@@ -1295,7 +1295,10 @@ impl IRBuilder for C4IRBuilder {
         c: &ConstantOrIrValue,
         tp: &QType,
     ) {
-        todo!()
+        let mut v = ir::Value::new();
+        v.set_cast_from(self.get_ir_constant(c).0);
+        v.set_field_type(self.get_ir_type(&tp.tp));
+        self.root_symbol_table.insert(ir_id.to_string(), v);
     }
 
     fn create_load(
