@@ -113,6 +113,7 @@ message BasicBlock {
             STORE = 1;
             LOAD = 2;
             MEMCPY = 3;
+            CAST = 4;
         }
 
         Kind kind = 3;
@@ -128,6 +129,9 @@ message BasicBlock {
         Value memcpy_dst = 7;
         Value memcpy_src = 8;
         uint32 memcpy_size = 9;
+
+        // CAST -- just a value with ID
+        Value cast_result = 10;
 
         // TODO
     }

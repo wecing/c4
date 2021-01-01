@@ -1391,13 +1391,22 @@ impl IRBuilder for C4IRBuilder {
         dst_ir_id: &str,
         dst_tp: &QType,
         src_ir_id: &str,
-        src_tp: &QType,
+        _src_tp: &QType,
     ) {
-        todo!()
+        let src = self.lookup_ir_id(src_ir_id);
+        let dst_tp = self.get_ir_type(&dst_tp.tp);
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr.set_field_type(dst_tp.clone());
+        instr.kind = ir::BasicBlock_Instruction_Kind::CAST;
+        instr.mut_cast_result().set_cast_from(src.clone());
+        instr.mut_cast_result().set_field_type(dst_tp);
+        self.add_instr(Some(dst_ir_id), instr);
     }
 
     fn create_zext_i1_to_i32(&mut self, dst_ir_id: &str, src_ir_id: &str) {
-        todo!()
+        let dst_tp = QType::from(Type::Int);
+        // create_cast() doesn't really use src_tp
+        self.create_cast(dst_ir_id, &dst_tp, src_ir_id, &dst_tp);
     }
 
     fn create_neg(&mut self, dst_ir_id: &str, is_fp: bool, ir_id: &str) {
