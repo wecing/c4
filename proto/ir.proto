@@ -112,6 +112,7 @@ message BasicBlock {
             ALLOCA = 0;
             STORE = 1;
             LOAD = 2;
+            MEMCPY = 3;
         }
 
         Kind kind = 3;
@@ -122,6 +123,11 @@ message BasicBlock {
 
         // LOAD
         Value load_src = 6;
+
+        // MEMCPY
+        Value memcpy_dst = 7;
+        Value memcpy_src = 8;
+        uint32 memcpy_size = 9;
 
         // TODO
     }

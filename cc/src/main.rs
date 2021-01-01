@@ -1372,9 +1372,18 @@ impl IRBuilder for C4IRBuilder {
         dst_ir_id: &str,
         src_ir_id: &str,
         size: u32,
-        align: u32,
+        _align: u32,
     ) {
-        todo!()
+        let src = self.lookup_ir_id(src_ir_id);
+        let dst = self.lookup_ir_id(dst_ir_id);
+        assert!(src.get_field_type().kind == ir::Type_Kind::POINTER);
+        assert!(dst.get_field_type().kind == ir::Type_Kind::POINTER);
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr.kind = ir::BasicBlock_Instruction_Kind::MEMCPY;
+        instr.set_memcpy_dst(dst.clone());
+        instr.set_memcpy_src(src.clone());
+        instr.memcpy_size = size;
+        self.add_instr(None, instr);
     }
 
     fn create_cast(
