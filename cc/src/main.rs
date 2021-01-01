@@ -1409,12 +1409,22 @@ impl IRBuilder for C4IRBuilder {
         self.create_cast(dst_ir_id, &dst_tp, src_ir_id, &dst_tp);
     }
 
-    fn create_neg(&mut self, dst_ir_id: &str, is_fp: bool, ir_id: &str) {
-        todo!()
+    fn create_neg(&mut self, dst_ir_id: &str, _is_fp: bool, ir_id: &str) {
+        let src = self.lookup_ir_id(ir_id);
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr.set_field_type(src.get_field_type().clone());
+        instr.kind = ir::BasicBlock_Instruction_Kind::NEG;
+        instr.set_neg_src(src.clone());
+        self.add_instr(Some(dst_ir_id), instr);
     }
 
     fn create_not(&mut self, dst_ir_id: &str, ir_id: &str) {
-        todo!()
+        let src = self.lookup_ir_id(ir_id);
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr.set_field_type(src.get_field_type().clone());
+        instr.kind = ir::BasicBlock_Instruction_Kind::NOT;
+        instr.set_not_src(src.clone());
+        self.add_instr(Some(dst_ir_id), instr);
     }
 
     fn create_bin_op(
@@ -1422,11 +1432,65 @@ impl IRBuilder for C4IRBuilder {
         dst_ir_id: &str,
         op: ast::Expr_Binary_Op,
         is_signed: bool,
-        is_fp: bool,
+        _is_fp: bool,
         left_ir_id: &str,
         right_ir_id: &str,
     ) {
-        todo!()
+        use ast::Expr_Binary_Op as Op;
+        use ir::BasicBlock_Instruction_Kind as K;
+        let (op, is_cmp_op) = {
+            fn get_cmp_op(op: Op, is_signed: bool) -> Option<K> {
+                let op = match op {
+                    Op::EQ => K::EQ,
+                    Op::NEQ => K::NEQ,
+                    Op::LESS if is_signed => K::LT,
+                    Op::GT if is_signed => K::GT,
+                    Op::LEQ if is_signed => K::LEQ,
+                    Op::GEQ if is_signed => K::GEQ,
+                    Op::LESS => K::ULT,
+                    Op::GT => K::UGT,
+                    Op::LEQ => K::ULEQ,
+                    Op::GEQ => K::UGEQ,
+                    _ => return None,
+                };
+                Some(op)
+            }
+            get_cmp_op(op, is_signed)
+                .map(|op| (op, true))
+                .unwrap_or_else(|| {
+                    let op = match op {
+                        Op::BIT_OR => K::BIT_OR,
+                        Op::XOR => K::XOR,
+                        Op::BIT_AND => K::BIT_AND,
+                        Op::L_SHIFT => K::SHL,
+                        Op::R_SHIFT if is_signed => K::ASHR,
+                        Op::R_SHIFT => K::LSHR,
+                        Op::ADD => K::ADD,
+                        Op::SUB => K::SUB,
+                        Op::MUL => K::MUL,
+                        Op::DIV if is_signed => K::DIV,
+                        Op::DIV => K::UDIV,
+                        Op::MOD if is_signed => K::MOD,
+                        Op::MOD => K::UMOD,
+                        _ => unreachable!(),
+                    };
+                    (op, false)
+                })
+        };
+        let left = self.lookup_ir_id(left_ir_id);
+        let right = self.lookup_ir_id(right_ir_id);
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr.set_field_type(if is_cmp_op {
+            left.get_field_type().clone()
+        } else {
+            let mut tp = ir::Type::new();
+            tp.kind = ir::Type_Kind::BOOLEAN;
+            tp
+        });
+        instr.kind = op;
+        instr.set_bin_op_left(left.clone());
+        instr.set_bin_op_right(right.clone());
+        self.add_instr(Some(dst_ir_id), instr);
     }
 
     fn create_cmp_op(
@@ -1438,7 +1502,14 @@ impl IRBuilder for C4IRBuilder {
         left_ir_id: &str,
         right_ir_id: &str,
     ) {
-        todo!()
+        self.create_bin_op(
+            dst_ir_id,
+            op,
+            is_signed,
+            is_fp,
+            left_ir_id,
+            right_ir_id,
+        );
     }
 
     fn create_ptr_add(
@@ -1447,7 +1518,14 @@ impl IRBuilder for C4IRBuilder {
         ptr_ir_id: &str,    // must be i8*
         offset_ir_id: &str, // must be i64
     ) {
-        todo!()
+        self.create_bin_op(
+            dst_ir_id,
+            ast::Expr_Binary_Op::ADD,
+            false,
+            false,
+            ptr_ir_id,
+            offset_ir_id,
+        );
     }
 
     fn create_call(

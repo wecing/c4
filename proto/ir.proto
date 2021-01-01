@@ -114,6 +114,32 @@ message BasicBlock {
             LOAD = 2;
             MEMCPY = 3;
             CAST = 4;
+            NEG = 5;
+            NOT = 6;
+            // binary ops
+            BIT_OR = 7;
+            XOR = 8;
+            BIT_AND = 9;
+            SHL = 10;
+            ASHR = 11; // arithmetic shift right (preserves sign)
+            LSHR = 12; // logical shift right (zero fill)
+            ADD = 13;
+            SUB = 14;
+            MUL = 15;
+            DIV = 16;
+            UDIV = 17; // unsigned div
+            MOD = 18;
+            UMOD = 19; // unsigned mod
+            EQ = 20;
+            NEQ = 21;
+            LT = 22;
+            GT = 23;
+            LEQ = 24;
+            GEQ = 25;
+            ULT = 26; // unsigned LT
+            UGT = 27; // unsigned GT
+            ULEQ = 28; // unsigned LEQ
+            UGEQ = 29; // unsigned GEQ
         }
 
         Kind kind = 3;
@@ -132,6 +158,16 @@ message BasicBlock {
 
         // CAST -- just a value with ID
         Value cast_result = 10;
+
+        // NEG
+        Value neg_src = 11;
+
+        // NOT
+        Value not_src = 12;
+
+        // binary ops
+        Value bin_op_left = 13;
+        Value bin_op_right = 14;
 
         // TODO
     }
