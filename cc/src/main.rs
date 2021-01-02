@@ -1534,7 +1534,18 @@ impl IRBuilder for C4IRBuilder {
         func_ir_id: &str, // must be func ptr
         arg_ir_ids: &Vec<String>,
     ) {
-        todo!()
+        let func = self.lookup_ir_id(func_ir_id);
+        let args: Vec<ir::Value> = arg_ir_ids
+            .iter()
+            .map(|id| self.lookup_ir_id(id).clone())
+            .collect();
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr
+            .set_field_type(func.get_field_type().get_fn_return_type().clone());
+        instr.kind = ir::BasicBlock_Instruction_Kind::FN_CALL;
+        instr.set_fn_call_fn(func.clone());
+        instr.set_fn_call_args(args.into());
+        self.add_instr(Some(dst_ir_id), instr);
     }
 
     fn enter_switch(&mut self, ir_id: &str, default_bb_id: &str) {

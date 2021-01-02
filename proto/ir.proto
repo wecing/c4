@@ -116,6 +116,7 @@ message BasicBlock {
             CAST = 4;
             NEG = 5;
             NOT = 6;
+
             // binary ops
             BIT_OR = 7;
             XOR = 8;
@@ -140,6 +141,8 @@ message BasicBlock {
             UGT = 27; // unsigned GT
             ULEQ = 28; // unsigned LEQ
             UGEQ = 29; // unsigned GEQ
+
+            FN_CALL = 30;
         }
 
         Kind kind = 3;
@@ -168,6 +171,10 @@ message BasicBlock {
         // binary ops
         Value bin_op_left = 13;
         Value bin_op_right = 14;
+
+        // FUN CALL
+        Value fn_call_fn = 15;
+        repeated Value fn_call_args = 16;
 
         // TODO
     }
