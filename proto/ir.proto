@@ -143,6 +143,11 @@ message BasicBlock {
             UGEQ = 29; // unsigned GEQ
 
             FN_CALL = 30;
+
+            VA_START = 31;
+            VA_ARG = 32;
+            VA_END = 33;
+            VA_COPY = 34;
         }
 
         Kind kind = 3;
@@ -176,7 +181,19 @@ message BasicBlock {
         Value fn_call_fn = 15;
         repeated Value fn_call_args = 16;
 
-        // TODO
+        // VA_START
+        Value va_start_vl = 17;
+
+        // VA_ARG
+        Value va_arg_vl = 18; // type is instr return type
+
+        // VA_END
+        Value va_end_vl = 19;
+
+        // VA_COPY
+        Value va_copy_dst = 20;
+        Value va_copy_src = 21;
+
     }
     message Terminator {
         // TODO

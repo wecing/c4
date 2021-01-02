@@ -1574,19 +1574,38 @@ impl IRBuilder for C4IRBuilder {
     }
 
     fn create_va_start(&mut self, ir_id: &str) {
-        todo!()
+        let vl = self.lookup_ir_id(ir_id);
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr.kind = ir::BasicBlock_Instruction_Kind::VA_START;
+        instr.set_va_start_vl(vl.clone());
+        self.add_instr(None, instr);
     }
 
     fn create_va_arg(&mut self, dst_ir_id: &str, ir_id: &str, tp: &QType) {
-        todo!()
+        let vl = self.lookup_ir_id(ir_id);
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr.set_field_type(self.get_ir_type(&tp.tp));
+        instr.kind = ir::BasicBlock_Instruction_Kind::VA_ARG;
+        instr.set_va_arg_vl(vl.clone());
+        self.add_instr(Some(dst_ir_id), instr);
     }
 
     fn create_va_end(&mut self, ir_id: &str) {
-        todo!()
+        let vl = self.lookup_ir_id(ir_id);
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr.kind = ir::BasicBlock_Instruction_Kind::VA_END;
+        instr.set_va_end_vl(vl.clone());
+        self.add_instr(None, instr);
     }
 
     fn create_va_copy(&mut self, dst_ir_id: &str, src_ir_id: &str) {
-        todo!()
+        let dst = self.lookup_ir_id(dst_ir_id);
+        let src = self.lookup_ir_id(src_ir_id);
+        let mut instr = ir::BasicBlock_Instruction::new();
+        instr.kind = ir::BasicBlock_Instruction_Kind::VA_COPY;
+        instr.set_va_copy_dst(dst.clone());
+        instr.set_va_copy_src(src.clone());
+        self.add_instr(None, instr);
     }
 
     fn create_return_void(&mut self) {
