@@ -775,6 +775,7 @@ struct C4IRBuilder {
 
     // per-func
     bb_ids: HashMap<String, u32>,
+    not_terminated_bbs: HashSet<u32>,
     local_symbol_table: HashMap<String, ir::Value>,
     current_function: String,
     next_ir_id: u32,
@@ -790,6 +791,7 @@ impl C4IRBuilder {
             struct_ids: HashMap::new(),
             root_symbol_table: HashMap::new(),
             bb_ids: HashMap::new(),
+            not_terminated_bbs: HashSet::new(),
             local_symbol_table: HashMap::new(),
             current_function: String::new(),
             next_ir_id: 1,
@@ -1123,6 +1125,8 @@ impl IRBuilder for C4IRBuilder {
         linkage: Linkage,
         param_ir_ids: &Vec<String>,
     ) {
+        assert!(self.not_terminated_bbs.is_empty());
+
         self.bb_ids.clear();
         self.local_symbol_table.clear();
         self.current_function = name.to_string();
@@ -1157,6 +1161,7 @@ impl IRBuilder for C4IRBuilder {
             .get_mut(&self.current_function)
             .unwrap();
         f.bbs.insert(bb_id, ir::BasicBlock::new());
+        self.not_terminated_bbs.insert(bb_id);
     }
 
     fn set_current_basic_block(&mut self, bb: &str) {
@@ -1561,7 +1566,24 @@ impl IRBuilder for C4IRBuilder {
     }
 
     fn create_br(&mut self, bb_id: &str) {
-        todo!()
+        use ir::BasicBlock_Terminator_Kind as K;
+        let current_bb_id = self.bb_ids[&self.current_basic_block];
+        if !self.not_terminated_bbs.remove(&current_bb_id) {
+            return;
+        }
+        let bb_id = self.bb_ids[bb_id];
+        let terminator = self
+            .module
+            .mut_function_defs()
+            .get_mut(&self.current_function)
+            .unwrap()
+            .mut_bbs()
+            .get_mut(&current_bb_id)
+            .unwrap()
+            .mut_terminator();
+
+        terminator.kind = K::BR;
+        terminator.br_target = bb_id;
     }
 
     fn create_cond_br(
@@ -1570,7 +1592,28 @@ impl IRBuilder for C4IRBuilder {
         then_bb_id: &str,
         else_bb_id: &str,
     ) {
-        todo!()
+        use ir::BasicBlock_Terminator_Kind as K;
+        let current_bb_id = self.bb_ids[&self.current_basic_block];
+        if !self.not_terminated_bbs.remove(&current_bb_id) {
+            return;
+        }
+        let cond = self.lookup_ir_id(ir_id).clone();
+        let then_bb_id = self.bb_ids[then_bb_id];
+        let else_bb_id = self.bb_ids[else_bb_id];
+        let terminator = self
+            .module
+            .mut_function_defs()
+            .get_mut(&self.current_function)
+            .unwrap()
+            .mut_bbs()
+            .get_mut(&current_bb_id)
+            .unwrap()
+            .mut_terminator();
+
+        terminator.kind = K::COND_BR;
+        terminator.set_cond_br_cond(cond);
+        terminator.cond_br_true = then_bb_id;
+        terminator.cond_br_false = else_bb_id;
     }
 
     fn create_va_start(&mut self, ir_id: &str) {
@@ -1609,11 +1652,43 @@ impl IRBuilder for C4IRBuilder {
     }
 
     fn create_return_void(&mut self) {
-        todo!()
+        use ir::BasicBlock_Terminator_Kind as K;
+        let current_bb_id = self.bb_ids[&self.current_basic_block];
+        if !self.not_terminated_bbs.remove(&current_bb_id) {
+            return;
+        }
+        let terminator = self
+            .module
+            .mut_function_defs()
+            .get_mut(&self.current_function)
+            .unwrap()
+            .mut_bbs()
+            .get_mut(&current_bb_id)
+            .unwrap()
+            .mut_terminator();
+
+        terminator.kind = K::RETURN_VOID;
     }
 
     fn create_return(&mut self, ir_id: &str) {
-        todo!()
+        use ir::BasicBlock_Terminator_Kind as K;
+        let current_bb_id = self.bb_ids[&self.current_basic_block];
+        if !self.not_terminated_bbs.remove(&current_bb_id) {
+            return;
+        }
+        let v = self.lookup_ir_id(ir_id).clone();
+        let terminator = self
+            .module
+            .mut_function_defs()
+            .get_mut(&self.current_function)
+            .unwrap()
+            .mut_bbs()
+            .get_mut(&current_bb_id)
+            .unwrap()
+            .mut_terminator();
+
+        terminator.kind = K::RETURN;
+        terminator.set_return_value(v);
     }
 
     fn print_to_file(&mut self, file_name: &str) {

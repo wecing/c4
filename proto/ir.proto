@@ -196,7 +196,26 @@ message BasicBlock {
 
     }
     message Terminator {
-        // TODO
+        enum Kind {
+            BR = 0;
+            COND_BR = 1;
+            RETURN_VOID = 2;
+            RETURN = 3;
+            SWITCH = 4;
+        }
+
+        Kind kind = 1;
+
+        // BR
+        uint32 br_target = 2;
+
+        // COND_BR
+        Value cond_br_cond = 3;
+        uint32 cond_br_true = 4;
+        uint32 cond_br_false = 5;
+
+        // RETURN
+        Value return_value = 6;
     }
     repeated Instruction instructions = 1;
     Terminator terminator = 2;
