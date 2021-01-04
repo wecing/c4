@@ -25,8 +25,10 @@ message FunctionDef {
     Type return_type = 2;
     repeated Type arg_types = 3;
     repeated uint32 args = 4;
+
+    // `entry_bb` and `bbs` could be unset for external functions
     uint32 entry_bb = 5; // ids and bbs use different namespace
-    map<uint32, BasicBlock> bbs = 6;
+    map<uint32, BasicBlock> bbs = 6; // 1-based ID
 }
 
 enum Linkage {
@@ -37,23 +39,25 @@ enum Linkage {
 
 message Type {
     enum Kind {
-        VOID = 0;
+        UNSPECIFIED = 0;
 
-        INT8 = 1;
-        INT16 = 2;
-        INT32 = 3;
-        INT64 = 4;
+        VOID = 1;
 
-        FLOAT = 5;
-        DOUBLE = 6;
+        INT8 = 2;
+        INT16 = 3;
+        INT32 = 4;
+        INT64 = 5;
 
-        STRUCT = 7;
-        POINTER = 8;
-        ARRAY = 9;
+        FLOAT = 6;
+        DOUBLE = 7;
 
-        FUNCTION = 10; // usually used with POINTER
+        STRUCT = 8;
+        POINTER = 9;
+        ARRAY = 10;
 
-        BOOLEAN = 11;
+        FUNCTION = 11; // usually used with POINTER
+
+        BOOLEAN = 12;
     }
 
     Kind kind = 1;
@@ -109,48 +113,52 @@ message BasicBlock {
         Type type = 2;
 
         enum Kind {
-            ALLOCA = 0;
-            STORE = 1;
-            LOAD = 2;
-            MEMCPY = 3;
-            CAST = 4;
-            NEG = 5;
-            NOT = 6;
+            UNSPECIFIED = 0;
+
+            ALLOCA = 1;
+            STORE = 2;
+            LOAD = 3;
+            MEMCPY = 4;
+            CAST = 5;
+            NEG = 6;
+            NOT = 7;
 
             // binary ops
-            BIT_OR = 7;
-            XOR = 8;
-            BIT_AND = 9;
-            SHL = 10;
-            ASHR = 11; // arithmetic shift right (preserves sign)
-            LSHR = 12; // logical shift right (zero fill)
-            ADD = 13;
-            SUB = 14;
-            MUL = 15;
-            DIV = 16;
-            UDIV = 17; // unsigned div
-            MOD = 18;
-            UMOD = 19; // unsigned mod
-            EQ = 20;
-            NEQ = 21;
-            LT = 22;
-            GT = 23;
-            LEQ = 24;
-            GEQ = 25;
-            ULT = 26; // unsigned LT
-            UGT = 27; // unsigned GT
-            ULEQ = 28; // unsigned LEQ
-            UGEQ = 29; // unsigned GEQ
+            BIT_OR = 8;
+            XOR = 9;
+            BIT_AND = 10;
+            SHL = 11;
+            ASHR = 12; // arithmetic shift right (preserves sign)
+            LSHR = 13; // logical shift right (zero fill)
+            ADD = 14;
+            SUB = 15;
+            MUL = 16;
+            DIV = 17;
+            UDIV = 18; // unsigned div
+            MOD = 19;
+            UMOD = 20; // unsigned mod
+            EQ = 21;
+            NEQ = 22;
+            LT = 23;
+            GT = 24;
+            LEQ = 25;
+            GEQ = 26;
+            ULT = 27; // unsigned LT
+            UGT = 28; // unsigned GT
+            ULEQ = 29; // unsigned LEQ
+            UGEQ = 30; // unsigned GEQ
 
-            FN_CALL = 30;
+            FN_CALL = 31;
 
-            VA_START = 31;
-            VA_ARG = 32;
-            VA_END = 33;
-            VA_COPY = 34;
+            VA_START = 32;
+            VA_ARG = 33;
+            VA_END = 34;
+            VA_COPY = 35;
         }
 
         Kind kind = 3;
+
+        // ALLOCA: allocates `type.pointee_type`
 
         // STORE
         Value store_dst = 4;
@@ -197,11 +205,13 @@ message BasicBlock {
     }
     message Terminator {
         enum Kind {
-            BR = 0;
-            COND_BR = 1;
-            RETURN_VOID = 2;
-            RETURN = 3;
-            SWITCH = 4;
+            UNSPECIFIED = 0;
+
+            BR = 1;
+            COND_BR = 2;
+            RETURN_VOID = 3;
+            RETURN = 4;
+            SWITCH = 5;
         }
 
         Kind kind = 1;

@@ -915,12 +915,25 @@ impl C4IRBuilder {
             .mut_instructions()
             .push(instr);
     }
+
+    fn sanitize_basic_blocks(&mut self) {
+        for func_def in self.module.mut_function_defs().values_mut() {
+            if func_def.bbs.len() == 1
+                && func_def.bbs[&func_def.entry_bb].get_terminator()
+                    == ir::BasicBlock_Terminator::default_instance()
+            {
+                assert!(func_def.entry_bb == 1);
+                func_def.entry_bb = 0;
+                func_def.clear_bbs();
+            }
+        }
+    }
 }
 
 impl IRBuilder for C4IRBuilder {
     fn emit_opaque_struct_type(&mut self, name: &str) {
         if self.struct_ids.contains_key(name) {
-            return
+            return;
         }
 
         self.struct_ids
@@ -966,7 +979,12 @@ impl IRBuilder for C4IRBuilder {
         linkage: Linkage,
         param_ir_ids: &Vec<String>,
     ) {
-        assert!(self.not_terminated_bbs.is_empty());
+        // .prologue always have id 1
+        assert!(
+            self.not_terminated_bbs.is_empty()
+                || (self.not_terminated_bbs.len() == 1
+                    && self.not_terminated_bbs.contains(&1))
+        );
         assert!(self.switch_stack.is_empty());
 
         self.bb_ids.clear();
@@ -1004,6 +1022,11 @@ impl IRBuilder for C4IRBuilder {
             .unwrap();
         f.bbs.insert(bb_id, ir::BasicBlock::new());
         self.not_terminated_bbs.insert(bb_id);
+
+        // .prologue -> entry bb
+        if f.bbs.len() == 2 {
+            self.create_br(name);
+        }
     }
 
     fn set_current_basic_block(&mut self, bb: &str) {
@@ -1083,6 +1106,8 @@ impl IRBuilder for C4IRBuilder {
             self.module.function_defs.insert(name.to_string(), func_def);
 
             self.bb_ids.insert(".prologue".to_string(), 1);
+            self.set_current_basic_block(".prologue");
+            self.not_terminated_bbs.insert(1);
 
             let mut v = ir::Value::new();
             v.mut_address().set_symbol(name.to_string());
@@ -1327,7 +1352,7 @@ impl IRBuilder for C4IRBuilder {
         let left = self.lookup_ir_id(left_ir_id);
         let right = self.lookup_ir_id(right_ir_id);
         let mut instr = ir::BasicBlock_Instruction::new();
-        instr.set_field_type(if is_cmp_op {
+        instr.set_field_type(if !is_cmp_op {
             left.get_field_type().clone()
         } else {
             let mut tp = ir::Type::new();
@@ -1576,15 +1601,21 @@ impl IRBuilder for C4IRBuilder {
     }
 
     fn print_to_file(&mut self, file_name: &str) {
+        self.sanitize_basic_blocks();
+
         let mut writer: Box<dyn io::Write> = if file_name == "-" {
             Box::new(std::io::stdout())
         } else {
             Box::new(File::create(file_name).unwrap())
         };
-        writer.write_all(format!("{:#?}", self.module).as_bytes()).unwrap()
+        writer
+            .write_all(format!("{:#?}", self.module).as_bytes())
+            .unwrap()
     }
 
     fn write_bitcode_to_file(&mut self, file_name: &str) {
+        self.sanitize_basic_blocks();
+
         let mut writer: Box<dyn io::Write> = if file_name == "-" {
             Box::new(std::io::stdout())
         } else {
