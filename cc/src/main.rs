@@ -603,172 +603,6 @@ trait IRBuilder {
     fn write_bitcode_to_file(&mut self, file_name: &str);
 }
 
-#[cfg(not(feature = "llvm-sys"))]
-struct DummyIRBuilder {}
-
-#[cfg(not(feature = "llvm-sys"))]
-impl DummyIRBuilder {
-    fn new() -> DummyIRBuilder {
-        DummyIRBuilder {}
-    }
-}
-
-#[cfg(not(feature = "llvm-sys"))]
-impl IRBuilder for DummyIRBuilder {
-    fn emit_opaque_struct_type(&mut self, _name: &str) {}
-
-    fn update_struct_type(
-        &mut self,
-        _name: &str,
-        _fields: &Vec<SuField>,
-        _is_union: bool,
-    ) {
-    }
-
-    fn create_function(
-        &mut self,
-        _name: &str,
-        _tp: &QType,
-        _linkage: Linkage,
-        _param_ir_ids: &Vec<String>,
-    ) {
-    }
-
-    fn create_basic_block(&mut self, _name: &str) {}
-
-    fn set_current_basic_block(&mut self, _bb: &str) {}
-
-    fn get_current_basic_block(&self) -> String {
-        String::new()
-    }
-
-    fn set_entry_basic_block(&mut self, _bb: &str) {}
-
-    fn create_definition(
-        &mut self,
-        _is_global: bool,
-        _name: &str,
-        _tp: &QType,
-        _linkage: Linkage,
-        _init: &Option<Initializer>,
-    ) {
-    }
-
-    fn create_constant_buffer(&mut self, _ir_id: &str, _buf: Vec<u8>) {}
-
-    fn create_constant(
-        &mut self,
-        _ir_id: &str,
-        _c: &ConstantOrIrValue,
-        _tp: &QType,
-    ) {
-    }
-
-    fn create_load(
-        &mut self,
-        _dst_ir_id: &str,
-        _src_ir_id: &str,
-        _src_tp: &QType,
-    ) {
-    }
-
-    fn create_store(&mut self, _dst_ir_id: &str, _src_ir_id: &str) {}
-
-    fn create_memcpy(
-        &mut self,
-        _dst_ir_id: &str,
-        _src_ir_id: &str,
-        _size: u32,
-        _align: u32,
-    ) {
-    }
-
-    fn create_cast(
-        &mut self,
-        _dst_ir_id: &str,
-        _dst_tp: &QType,
-        _src_ir_id: &str,
-        _src_tp: &QType,
-    ) {
-    }
-
-    fn create_zext_i1_to_i32(&mut self, _dst_ir_id: &str, _src_ir_id: &str) {}
-
-    fn create_neg(&mut self, _dst_ir_id: &str, _is_fp: bool, _ir_id: &str) {}
-
-    fn create_not(&mut self, _dst_ir_id: &str, _ir_id: &str) {}
-
-    fn create_bin_op(
-        &mut self,
-        _dst_ir_id: &str,
-        _op: ast::Expr_Binary_Op,
-        _is_signed: bool,
-        _is_fp: bool,
-        _left_ir_id: &str,
-        _right_ir_id: &str,
-    ) {
-    }
-
-    fn create_cmp_op(
-        &mut self,
-        _dst_ir_id: &str,
-        _op: ast::Expr_Binary_Op,
-        _is_signed: bool,
-        _is_fp: bool,
-        _left_ir_id: &str,
-        _right_ir_id: &str,
-    ) {
-    }
-
-    fn create_ptr_add(
-        &mut self,
-        _dst_ir_id: &str,
-        _ptr_ir_id: &str,
-        _offset_ir_id: &str,
-    ) {
-    }
-
-    fn create_call(
-        &mut self,
-        _dst_ir_id: &str,
-        _func_ir_id: &str,
-        _arg_ir_ids: &Vec<String>,
-    ) {
-    }
-
-    fn enter_switch(&mut self, _ir_id: &str, _default_bb_id: &str) {}
-
-    fn leave_switch(&mut self) {}
-
-    fn add_switch_case(&mut self, _c: &ConstantOrIrValue, _bb_id: &str) {}
-
-    fn create_br(&mut self, _bb_id: &str) {}
-
-    fn create_cond_br(
-        &mut self,
-        _ir_id: &str,
-        _then_bb_id: &str,
-        _else_bb_id: &str,
-    ) {
-    }
-
-    fn create_va_start(&mut self, _ir_id: &str) {}
-
-    fn create_va_arg(&mut self, _dst_ir_id: &str, _ir_id: &str, _tp: &QType) {}
-
-    fn create_va_end(&mut self, _ir_id: &str) {}
-
-    fn create_va_copy(&mut self, _dst_ir_id: &str, _src_ir_id: &str) {}
-
-    fn create_return_void(&mut self) {}
-
-    fn create_return(&mut self, _ir_id: &str) {}
-
-    fn print_to_file(&mut self, _file_name: &str) {}
-
-    fn write_bitcode_to_file(&mut self, _file_name: &str) {}
-}
-
 struct C4IRBuilder {
     module: ir::IrModule,
 
@@ -1760,7 +1594,7 @@ impl IRBuilder for C4IRBuilder {
 }
 
 #[cfg(feature = "llvm-sys")]
-struct LLVMBuilderImpl {
+struct LLVMBuilder {
     context: llvm_sys::prelude::LLVMContextRef,
     module: llvm_sys::prelude::LLVMModuleRef,
     builder: llvm_sys::prelude::LLVMBuilderRef,
@@ -1778,8 +1612,8 @@ struct LLVMBuilderImpl {
 }
 
 #[cfg(feature = "llvm-sys")]
-impl LLVMBuilderImpl {
-    fn new() -> LLVMBuilderImpl {
+impl LLVMBuilder {
+    fn new() -> LLVMBuilder {
         unsafe {
             let context = llvm_sys::core::LLVMContextCreate();
             let module_name = CString::new("c4").unwrap();
@@ -1788,7 +1622,7 @@ impl LLVMBuilderImpl {
                 context,
             );
             let builder = llvm_sys::core::LLVMCreateBuilderInContext(context);
-            let mut r = LLVMBuilderImpl {
+            let mut r = LLVMBuilder {
                 context,
                 module,
                 builder,
@@ -2151,7 +1985,7 @@ impl LLVMBuilderImpl {
 }
 
 #[cfg(feature = "llvm-sys")]
-impl IRBuilder for LLVMBuilderImpl {
+impl IRBuilder for LLVMBuilder {
     fn emit_opaque_struct_type(&mut self, name: &str) {
         unsafe {
             let n = CString::new(name).unwrap();
@@ -2913,11 +2747,19 @@ impl IRBuilder for LLVMBuilderImpl {
     }
 }
 
+fn get_c4ir_builder() -> Box<dyn IRBuilder> {
+    Box::new(C4IRBuilder::new())
+}
+
 #[cfg(feature = "llvm-sys")]
-type LLVMBuilder = LLVMBuilderImpl;
+fn get_llvm_builder() -> Box<dyn IRBuilder> {
+    Box::new(LLVMBuilder::new())
+}
 
 #[cfg(not(feature = "llvm-sys"))]
-type LLVMBuilder = DummyIRBuilder;
+fn get_llvm_builder() -> Box<dyn IRBuilder> {
+    panic!("LLVM not enabled!");
+}
 
 struct Compiler<'a> {
     translation_unit: &'a ast::TranslationUnit,
@@ -2929,22 +2771,20 @@ struct Compiler<'a> {
     // value: ir_id
     has_link_time_addr: HashSet<String>,
 
-    c4ir_builder: C4IRBuilder,
-    llvm_builder: LLVMBuilder,
+    ir_builder: &'a mut dyn IRBuilder,
 }
 
 type L<'a, T> = (T, &'a ast::Loc);
 
 impl Compiler<'_> {
-    fn visit(tu: ast::TranslationUnit, pretty_print_ir: bool) {
+    fn visit(tu: ast::TranslationUnit, ir_builder: &mut dyn IRBuilder) {
         let mut cc = Compiler {
             translation_unit: &tu,
             current_scope: Scope::new(),
             next_uuid: 1_000,
             str_constants: HashMap::new(),
             has_link_time_addr: HashSet::new(),
-            c4ir_builder: C4IRBuilder::new(),
-            llvm_builder: LLVMBuilder::new(),
+            ir_builder,
         };
         for ed in tu.eds.iter() {
             if ed.has_fd() {
@@ -2952,12 +2792,6 @@ impl Compiler<'_> {
             } else {
                 cc.visit_declaration(ed.get_dl())
             }
-        }
-
-        if pretty_print_ir {
-            cc.llvm_builder.print_to_file("-");
-        } else {
-            cc.llvm_builder.write_bitcode_to_file("-");
         }
     }
 
@@ -3109,9 +2943,7 @@ impl Compiler<'_> {
                 _ => unreachable!(),
             })
             .collect();
-        self.c4ir_builder
-            .create_function(&fname, &ftp, linkage, &param_ir_ids);
-        self.llvm_builder
+        self.ir_builder
             .create_function(&fname, &ftp, linkage, &param_ir_ids);
         self.has_link_time_addr.insert(fname.clone());
 
@@ -3131,12 +2963,9 @@ impl Compiler<'_> {
         //       }
 
         let entry_bb_id = format!("entry.{}", self.get_next_uuid());
-        self.c4ir_builder.create_basic_block(&entry_bb_id);
-        self.llvm_builder.create_basic_block(&entry_bb_id);
-        self.c4ir_builder.set_current_basic_block(&entry_bb_id);
-        self.llvm_builder.set_current_basic_block(&entry_bb_id);
-        self.c4ir_builder.set_entry_basic_block(&entry_bb_id);
-        self.llvm_builder.set_entry_basic_block(&entry_bb_id);
+        self.ir_builder.create_basic_block(&entry_bb_id);
+        self.ir_builder.set_current_basic_block(&entry_bb_id);
+        self.ir_builder.set_entry_basic_block(&entry_bb_id);
 
         // argument rewrite as mentioned above
         for param in typed_func_params {
@@ -3145,22 +2974,14 @@ impl Compiler<'_> {
             let r = self.current_scope.ordinary_ids_ns.get_mut(&name);
             match r {
                 Some(OrdinaryIdRef::ObjFnRef(ir_id, _, _, _)) => {
-                    self.c4ir_builder.create_definition(
+                    self.ir_builder.create_definition(
                         false,
                         &new_ir_id,
                         &param.tp,
                         Linkage::NONE,
                         &None,
                     );
-                    self.llvm_builder.create_definition(
-                        false,
-                        &new_ir_id,
-                        &param.tp,
-                        Linkage::NONE,
-                        &None,
-                    );
-                    self.c4ir_builder.create_store(&new_ir_id, &ir_id);
-                    self.llvm_builder.create_store(&new_ir_id, &ir_id);
+                    self.ir_builder.create_store(&new_ir_id, &ir_id);
                     *ir_id = new_ir_id;
                 }
                 _ => unreachable!(),
@@ -3168,8 +2989,7 @@ impl Compiler<'_> {
         }
 
         let body_bb_id = self.create_bb();
-        self.c4ir_builder.set_current_basic_block(&body_bb_id);
-        self.llvm_builder.set_current_basic_block(&body_bb_id);
+        self.ir_builder.set_current_basic_block(&body_bb_id);
 
         let rtp = match &ftp.tp {
             Type::Function(rtp, _) => *rtp.clone(),
@@ -3200,18 +3020,10 @@ impl Compiler<'_> {
         //   (void) 999;
         // }
         if rtp.is_void() {
-            self.c4ir_builder.create_return_void();
-            self.llvm_builder.create_return_void();
+            self.ir_builder.create_return_void();
         } else {
             let alloc_ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_definition(
-                false,
-                &alloc_ir_id,
-                &rtp,
-                Linkage::NONE,
-                &None,
-            );
-            self.llvm_builder.create_definition(
+            self.ir_builder.create_definition(
                 false,
                 &alloc_ir_id,
                 &rtp,
@@ -3220,12 +3032,8 @@ impl Compiler<'_> {
             );
             let ptr_tp = QType::ptr_tp(rtp);
             let r_ir_id = self.get_next_ir_id();
-            self.c4ir_builder
-                .create_load(&r_ir_id, &alloc_ir_id, &ptr_tp);
-            self.llvm_builder
-                .create_load(&r_ir_id, &alloc_ir_id, &ptr_tp);
-            self.c4ir_builder.create_return(&r_ir_id);
-            self.llvm_builder.create_return(&r_ir_id);
+            self.ir_builder.create_load(&r_ir_id, &alloc_ir_id, &ptr_tp);
+            self.ir_builder.create_return(&r_ir_id);
         }
 
         func_def_ctx.unresolved_labels.into_iter().last().map(
@@ -3238,10 +3046,8 @@ impl Compiler<'_> {
             },
         );
 
-        self.c4ir_builder.set_current_basic_block(&entry_bb_id);
-        self.llvm_builder.set_current_basic_block(&entry_bb_id);
-        self.c4ir_builder.create_br(&body_bb_id);
-        self.llvm_builder.create_br(&body_bb_id);
+        self.ir_builder.set_current_basic_block(&entry_bb_id);
+        self.ir_builder.create_br(&body_bb_id);
 
         self.leave_scope();
     }
@@ -3469,10 +3275,7 @@ impl Compiler<'_> {
                     )
                 }
 
-                self.c4ir_builder.create_definition(
-                    is_global, &ir_id, &qtype, linkage, &init,
-                );
-                self.llvm_builder.create_definition(
+                self.ir_builder.create_definition(
                     is_global, &ir_id, &qtype, linkage, &init,
                 );
             });
@@ -4116,9 +3919,7 @@ impl Compiler<'_> {
                 let ir_id = self.get_next_ir_id();
                 self.str_constants.insert(ir_id.clone(), buf.clone());
 
-                self.c4ir_builder
-                    .create_constant_buffer(&ir_id, buf.clone());
-                self.llvm_builder.create_constant_buffer(&ir_id, buf);
+                self.ir_builder.create_constant_buffer(&ir_id, buf.clone());
 
                 let tp = QType::from(Type::Array(
                     Box::new(QType::from(Type::Char)),
@@ -4135,9 +3936,7 @@ impl Compiler<'_> {
                 let ir_id = self.get_next_ir_id();
                 self.str_constants.insert(ir_id.clone(), buf.clone());
 
-                self.c4ir_builder
-                    .create_constant_buffer(&ir_id, buf.clone());
-                self.llvm_builder.create_constant_buffer(&ir_id, buf);
+                self.ir_builder.create_constant_buffer(&ir_id, buf.clone());
 
                 let tp = QType::from(Type::Array(
                     Box::new(QType::from(Type::Short)),
@@ -4340,8 +4139,7 @@ impl Compiler<'_> {
                     ConstantOrIrValue::IrValue(ir_id, _) => ir_id,
                     _ => unreachable!(),
                 };
-                self.c4ir_builder.create_va_start(&ap_ir_id);
-                self.llvm_builder.create_va_start(&ap_ir_id);
+                self.ir_builder.create_va_start(&ap_ir_id);
                 (QType::from(Type::Void), Some(ConstantOrIrValue::I32(0)))
             }
             ast::Expr_oneof_e::builtin_va_arg(va_arg) => {
@@ -4364,9 +4162,7 @@ impl Compiler<'_> {
                 let tp_arg = self
                     .visit_type_name((va_arg.get_tp(), va_arg.get_tp_loc()));
                 let dst_ir_id = self.get_next_ir_id();
-                self.c4ir_builder
-                    .create_va_arg(&dst_ir_id, &ap_ir_id, &tp_arg);
-                self.llvm_builder
+                self.ir_builder
                     .create_va_arg(&dst_ir_id, &ap_ir_id, &tp_arg);
                 (tp_arg, Some(ConstantOrIrValue::IrValue(dst_ir_id, false)))
             }
@@ -4387,8 +4183,7 @@ impl Compiler<'_> {
                     ConstantOrIrValue::IrValue(ir_id, _) => ir_id,
                     _ => unreachable!(),
                 };
-                self.c4ir_builder.create_va_end(&ap_ir_id);
-                self.llvm_builder.create_va_end(&ap_ir_id);
+                self.ir_builder.create_va_end(&ap_ir_id);
                 (QType::from(Type::Void), Some(ConstantOrIrValue::I32(0)))
             }
             ast::Expr_oneof_e::builtin_va_copy(va_copy) => {
@@ -4420,8 +4215,7 @@ impl Compiler<'_> {
                     ConstantOrIrValue::IrValue(ir_id, _) => ir_id,
                     _ => unreachable!(),
                 };
-                self.c4ir_builder.create_va_copy(&dst_ir_id, &src_ir_id);
-                self.llvm_builder.create_va_copy(&dst_ir_id, &src_ir_id);
+                self.ir_builder.create_va_copy(&dst_ir_id, &src_ir_id);
                 (QType::from(Type::Void), Some(ConstantOrIrValue::I32(0)))
             }
         }
@@ -4653,14 +4447,7 @@ impl Compiler<'_> {
             let (arg_tp, arg, is_null_constant) = arg;
             arg.map(|arg| {
                 let vp_ir_id = cc.get_next_ir_id();
-                cc.c4ir_builder.create_definition(
-                    false,
-                    &vp_ir_id,
-                    dst_tp,
-                    Linkage::NONE,
-                    &None,
-                );
-                cc.llvm_builder.create_definition(
+                cc.ir_builder.create_definition(
                     false,
                     &vp_ir_id,
                     dst_tp,
@@ -4694,8 +4481,7 @@ impl Compiler<'_> {
                 );
 
                 let v_ir_id = cc.get_next_ir_id();
-                cc.c4ir_builder.create_load(&v_ir_id, &vp_ir_id, dst_tp);
-                cc.llvm_builder.create_load(&v_ir_id, &vp_ir_id, dst_tp);
+                cc.ir_builder.create_load(&v_ir_id, &vp_ir_id, dst_tp);
                 v_ir_id
             })
         };
@@ -4766,41 +4552,25 @@ impl Compiler<'_> {
                 args.into_iter().map(|arg| arg.unwrap()).collect();
             let ir_id = self.get_next_ir_id();
             if rtp.is_void() {
-                self.c4ir_builder.create_call("", &func, &args);
-                self.llvm_builder.create_call("", &func, &args);
-                self.c4ir_builder.create_constant(
-                    &ir_id,
-                    &ConstantOrIrValue::I8(0),
-                    &QType::from(Type::Char),
-                );
-                self.llvm_builder.create_constant(
+                self.ir_builder.create_call("", &func, &args);
+                self.ir_builder.create_constant(
                     &ir_id,
                     &ConstantOrIrValue::I8(0),
                     &QType::from(Type::Char),
                 );
             } else if rtp.is_struct_type() || rtp.is_union_type() {
                 let call_ret_ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_call(&call_ret_ir_id, &func, &args);
-                self.llvm_builder.create_call(&call_ret_ir_id, &func, &args);
-                self.c4ir_builder.create_definition(
+                self.ir_builder.create_call(&call_ret_ir_id, &func, &args);
+                self.ir_builder.create_definition(
                     false,
                     &ir_id,
                     &rtp,
                     Linkage::NONE,
                     &None,
                 );
-                self.llvm_builder.create_definition(
-                    false,
-                    &ir_id,
-                    &rtp,
-                    Linkage::NONE,
-                    &None,
-                );
-                self.c4ir_builder.create_store(&ir_id, &call_ret_ir_id);
-                self.llvm_builder.create_store(&ir_id, &call_ret_ir_id);
+                self.ir_builder.create_store(&ir_id, &call_ret_ir_id);
             } else {
-                self.c4ir_builder.create_call(&ir_id, &func, &args);
-                self.llvm_builder.create_call(&ir_id, &func, &args);
+                self.ir_builder.create_call(&ir_id, &func, &args);
             }
             Ok((rtp, Some(ConstantOrIrValue::IrValue(ir_id, false))))
         }
@@ -4928,13 +4698,7 @@ impl Compiler<'_> {
             let field_ptr_ir_id = {
                 // (char *) ir_value
                 let head_ptr = self.get_next_ir_id();
-                self.c4ir_builder.create_cast(
-                    &head_ptr,
-                    &char_ptr_tp,
-                    &ir_value,
-                    &field_ptr_tp,
-                );
-                self.llvm_builder.create_cast(
+                self.ir_builder.create_cast(
                     &head_ptr,
                     &char_ptr_tp,
                     &ir_value,
@@ -4952,12 +4716,7 @@ impl Compiler<'_> {
 
                 // (char *) ir_value + offset
                 let field_char_ptr = self.get_next_ir_id();
-                self.c4ir_builder.create_ptr_add(
-                    &field_char_ptr,
-                    &head_ptr,
-                    &offset,
-                );
-                self.llvm_builder.create_ptr_add(
+                self.ir_builder.create_ptr_add(
                     &field_char_ptr,
                     &head_ptr,
                     &offset,
@@ -4965,13 +4724,7 @@ impl Compiler<'_> {
 
                 // (T *) ((char *) ir_value + offset)
                 let field_ptr = self.get_next_ir_id();
-                self.c4ir_builder.create_cast(
-                    &field_ptr,
-                    &field_ptr_tp,
-                    &field_char_ptr,
-                    &char_ptr_tp,
-                );
-                self.llvm_builder.create_cast(
+                self.ir_builder.create_cast(
                     &field_ptr,
                     &field_ptr_tp,
                     &field_char_ptr,
@@ -4991,12 +4744,7 @@ impl Compiler<'_> {
                     Type::Struct(_) | Type::Union(_) => field_ptr_ir_id,
                     _ => {
                         let derefed = self.get_next_ir_id();
-                        self.c4ir_builder.create_load(
-                            &derefed,
-                            &field_ptr_ir_id,
-                            &field_ptr_tp,
-                        );
-                        self.llvm_builder.create_load(
+                        self.ir_builder.create_load(
                             &derefed,
                             &field_ptr_ir_id,
                             &field_ptr_tp,
@@ -5036,15 +4784,7 @@ impl Compiler<'_> {
                     };
 
                     let masked_ir_id = self.get_next_ir_id();
-                    self.c4ir_builder.create_bin_op(
-                        &masked_ir_id,
-                        ast::Expr_Binary_Op::BIT_AND,
-                        is_signed,
-                        false,
-                        &ir_id,
-                        &mask_ir_id,
-                    );
-                    self.llvm_builder.create_bin_op(
+                    self.ir_builder.create_bin_op(
                         &masked_ir_id,
                         ast::Expr_Binary_Op::BIT_AND,
                         is_signed,
@@ -5054,15 +4794,7 @@ impl Compiler<'_> {
                     );
 
                     let shl_ir_id = self.get_next_ir_id();
-                    self.c4ir_builder.create_bin_op(
-                        &shl_ir_id,
-                        ast::Expr_Binary_Op::L_SHIFT,
-                        is_signed,
-                        false,
-                        &masked_ir_id,
-                        &shl_bits_ir_id,
-                    );
-                    self.llvm_builder.create_bin_op(
+                    self.ir_builder.create_bin_op(
                         &shl_ir_id,
                         ast::Expr_Binary_Op::L_SHIFT,
                         is_signed,
@@ -5072,15 +4804,7 @@ impl Compiler<'_> {
                     );
 
                     let r_ir_id = self.get_next_ir_id();
-                    self.c4ir_builder.create_bin_op(
-                        &r_ir_id,
-                        ast::Expr_Binary_Op::R_SHIFT,
-                        is_signed,
-                        false,
-                        &shl_ir_id,
-                        &shr_bits_ir_id,
-                    );
-                    self.llvm_builder.create_bin_op(
+                    self.ir_builder.create_bin_op(
                         &r_ir_id,
                         ast::Expr_Binary_Op::R_SHIFT,
                         is_signed,
@@ -5276,9 +5000,7 @@ impl Compiler<'_> {
                         };
                         if do_neg {
                             let new_ir_id = self.get_next_ir_id();
-                            self.c4ir_builder
-                                .create_neg(&new_ir_id, is_fp, &ir_id);
-                            self.llvm_builder
+                            self.ir_builder
                                 .create_neg(&new_ir_id, is_fp, &ir_id);
                             (tp, Some(C::IrValue(new_ir_id, false)))
                         } else {
@@ -5350,8 +5072,7 @@ impl Compiler<'_> {
 
                     Some(C::IrValue(ir_id, false)) => {
                         let new_ir_id = self.get_next_ir_id();
-                        self.c4ir_builder.create_not(&new_ir_id, &ir_id);
-                        self.llvm_builder.create_not(&new_ir_id, &ir_id);
+                        self.ir_builder.create_not(&new_ir_id, &ir_id);
                         (arg_tp, Some(C::IrValue(new_ir_id, false)))
                     }
 
@@ -5484,15 +5205,12 @@ impl Compiler<'_> {
                                 &tp_left.tp,
                             )
                             .unwrap();
-                        self.c4ir_builder
-                            .create_memcpy(&dst_ir_id, &src_ir_id, size, align);
-                        self.llvm_builder
+                        self.ir_builder
                             .create_memcpy(&dst_ir_id, &src_ir_id, size, align);
                         (QType::from(tp_left.tp), right)
                     }
                     _ => {
-                        self.c4ir_builder.create_store(&dst_ir_id, &src_ir_id);
-                        self.llvm_builder.create_store(&dst_ir_id, &src_ir_id);
+                        self.ir_builder.create_store(&dst_ir_id, &src_ir_id);
                         (QType::from(tp_left.tp), right)
                     }
                 }
@@ -5633,15 +5351,7 @@ impl Compiler<'_> {
                         tp,
                     ) => {
                         let ir_id = self.get_next_ir_id();
-                        self.c4ir_builder.create_bin_op(
-                            &ir_id,
-                            op,
-                            is_signed(&tp),
-                            is_fp(&tp),
-                            &x_ir_id,
-                            &y_ir_id,
-                        );
-                        self.llvm_builder.create_bin_op(
+                        self.ir_builder.create_bin_op(
                             &ir_id,
                             op,
                             is_signed(&tp),
@@ -5799,15 +5509,7 @@ impl Compiler<'_> {
                 match (left, right) {
                     (C::IrValue(left, false), C::IrValue(right, false)) => {
                         let i1_ir_id = self.get_next_ir_id();
-                        self.c4ir_builder.create_cmp_op(
-                            &i1_ir_id,
-                            op,
-                            is_signed(&tp_left),
-                            is_fp(&tp_left),
-                            &left,
-                            &right,
-                        );
-                        self.llvm_builder.create_cmp_op(
+                        self.ir_builder.create_cmp_op(
                             &i1_ir_id,
                             op,
                             is_signed(&tp_left),
@@ -5816,9 +5518,7 @@ impl Compiler<'_> {
                             &right,
                         );
                         let ir_id = self.get_next_ir_id();
-                        self.c4ir_builder
-                            .create_zext_i1_to_i32(&ir_id, &i1_ir_id);
-                        self.llvm_builder
+                        self.ir_builder
                             .create_zext_i1_to_i32(&ir_id, &i1_ir_id);
                         (QType::from(Type::Int), Some(C::IrValue(ir_id, false)))
                     }
@@ -5901,15 +5601,7 @@ impl Compiler<'_> {
                         C::IrValue(right_ir_id, false),
                     ) => {
                         let ir_id = self.get_next_ir_id();
-                        self.c4ir_builder.create_bin_op(
-                            &ir_id,
-                            op,
-                            is_signed(&tp_left),
-                            false,
-                            &left_ir_id,
-                            &right_ir_id,
-                        );
-                        self.llvm_builder.create_bin_op(
+                        self.ir_builder.create_bin_op(
                             &ir_id,
                             op,
                             is_signed(&tp_left),
@@ -6028,15 +5720,7 @@ impl Compiler<'_> {
                             C::IrValue(y_ir_id, false),
                         ) => {
                             let ir_id = self.get_next_ir_id();
-                            self.c4ir_builder.create_bin_op(
-                                &ir_id,
-                                op,
-                                is_signed(&tp),
-                                is_fp(&tp),
-                                &x_ir_id,
-                                &y_ir_id,
-                            );
-                            self.llvm_builder.create_bin_op(
+                            self.ir_builder.create_bin_op(
                                 &ir_id,
                                 op,
                                 is_signed(&tp),
@@ -6095,13 +5779,7 @@ impl Compiler<'_> {
                         (C::IrValue(left, false), C::IrValue(right, false)) => {
                             // ptr + n => (T*) ((void*) ptr + n * sizeof(T))
                             let ptr_ir_id = self.get_next_ir_id();
-                            self.c4ir_builder.create_cast(
-                                &ptr_ir_id,
-                                &QType::char_ptr_tp(),
-                                &left,
-                                &tp_left,
-                            );
-                            self.llvm_builder.create_cast(
+                            self.ir_builder.create_cast(
                                 &ptr_ir_id,
                                 &QType::char_ptr_tp(),
                                 &left,
@@ -6109,27 +5787,14 @@ impl Compiler<'_> {
                             );
 
                             let sz_ir_id = self.get_next_ir_id();
-                            self.c4ir_builder.create_constant(
-                                &sz_ir_id,
-                                &ConstantOrIrValue::I64(sz_elem),
-                                &QType::from(Type::Long),
-                            );
-                            self.llvm_builder.create_constant(
+                            self.ir_builder.create_constant(
                                 &sz_ir_id,
                                 &ConstantOrIrValue::I64(sz_elem),
                                 &QType::from(Type::Long),
                             );
 
                             let offset_ir_id = self.get_next_ir_id();
-                            self.c4ir_builder.create_bin_op(
-                                &offset_ir_id,
-                                Op::MUL,
-                                true,
-                                false,
-                                &right,
-                                &sz_ir_id,
-                            );
-                            self.llvm_builder.create_bin_op(
+                            self.ir_builder.create_bin_op(
                                 &offset_ir_id,
                                 Op::MUL,
                                 true,
@@ -6139,12 +5804,7 @@ impl Compiler<'_> {
                             );
 
                             let ir_id = self.get_next_ir_id();
-                            self.c4ir_builder.create_ptr_add(
-                                &ir_id,
-                                &ptr_ir_id,
-                                &offset_ir_id,
-                            );
-                            self.llvm_builder.create_ptr_add(
+                            self.ir_builder.create_ptr_add(
                                 &ir_id,
                                 &ptr_ir_id,
                                 &offset_ir_id,
@@ -6304,29 +5964,16 @@ impl Compiler<'_> {
                         ) => {
                             // p1 - p2 => ((long*)p1 - (long*)p2) / sizeof(T)
                             let p1 = self.get_next_ir_id();
-                            self.c4ir_builder
-                                .create_cast(&p1, &long_tp, &ir_id_x, &tp_left);
-                            self.llvm_builder
+                            self.ir_builder
                                 .create_cast(&p1, &long_tp, &ir_id_x, &tp_left);
 
                             let p2 = self.get_next_ir_id();
-                            self.c4ir_builder.create_cast(
-                                &p2, &long_tp, &ir_id_y, &tp_right,
-                            );
-                            self.llvm_builder.create_cast(
+                            self.ir_builder.create_cast(
                                 &p2, &long_tp, &ir_id_y, &tp_right,
                             );
 
                             let diff = self.get_next_ir_id();
-                            self.c4ir_builder.create_bin_op(
-                                &diff,
-                                Op::SUB,
-                                true,
-                                false,
-                                &p1,
-                                &p2,
-                            );
-                            self.llvm_builder.create_bin_op(
+                            self.ir_builder.create_bin_op(
                                 &diff,
                                 Op::SUB,
                                 true,
@@ -6336,27 +5983,14 @@ impl Compiler<'_> {
                             );
 
                             let sz = self.get_next_ir_id();
-                            self.c4ir_builder.create_constant(
-                                &sz,
-                                &C::I64(sz_elem as i64),
-                                &long_tp,
-                            );
-                            self.llvm_builder.create_constant(
+                            self.ir_builder.create_constant(
                                 &sz,
                                 &C::I64(sz_elem as i64),
                                 &long_tp,
                             );
 
                             let ir_id = self.get_next_ir_id();
-                            self.c4ir_builder.create_bin_op(
-                                &ir_id,
-                                Op::DIV,
-                                true,
-                                false,
-                                &diff,
-                                &sz,
-                            );
-                            self.llvm_builder.create_bin_op(
+                            self.ir_builder.create_bin_op(
                                 &ir_id,
                                 Op::DIV,
                                 true,
@@ -6463,15 +6097,7 @@ impl Compiler<'_> {
 
                         (C::IrValue(x, false), C::IrValue(y, false)) => {
                             let ir_id = self.get_next_ir_id();
-                            self.c4ir_builder.create_bin_op(
-                                &ir_id,
-                                op,
-                                is_signed(&tp),
-                                is_fp(&tp),
-                                &x,
-                                &y,
-                            );
-                            self.llvm_builder.create_bin_op(
+                            self.ir_builder.create_bin_op(
                                 &ir_id,
                                 op,
                                 is_signed(&tp),
@@ -6576,14 +6202,7 @@ impl Compiler<'_> {
                 C::IrValue(left_ir_id, false) => {
                     // i32* r = alloca i32
                     let result_ir_id = self.get_next_ir_id();
-                    self.c4ir_builder.create_definition(
-                        false,
-                        &result_ir_id,
-                        &QType::from(Type::Int),
-                        Linkage::NONE,
-                        &None,
-                    );
-                    self.llvm_builder.create_definition(
+                    self.ir_builder.create_definition(
                         false,
                         &result_ir_id,
                         &QType::from(Type::Int),
@@ -6606,27 +6225,20 @@ impl Compiler<'_> {
                         left_ir_id
                     } else {
                         let cond_ir_id = self.get_next_ir_id();
-                        self.c4ir_builder.create_not(&cond_ir_id, &left_ir_id);
-                        self.llvm_builder.create_not(&cond_ir_id, &left_ir_id);
+                        self.ir_builder.create_not(&cond_ir_id, &left_ir_id);
                         cond_ir_id
                     };
                     let short_bb = self.create_bb();
                     let long_bb = self.create_bb();
                     let merge_bb = self.create_bb();
-                    self.c4ir_builder.create_cond_br(
-                        &cond_ir_id,
-                        &short_bb,
-                        &long_bb,
-                    );
-                    self.llvm_builder.create_cond_br(
+                    self.ir_builder.create_cond_br(
                         &cond_ir_id,
                         &short_bb,
                         &long_bb,
                     );
 
                     // short-circuit path: || => 1, && => 0
-                    self.c4ir_builder.set_current_basic_block(&short_bb);
-                    self.llvm_builder.set_current_basic_block(&short_bb);
+                    self.ir_builder.set_current_basic_block(&short_bb);
                     let short_value = self.convert_to_ir_value(
                         &QType::from(Type::Int),
                         ConstantOrIrValue::I32(if is_or { 1 } else { 0 }),
@@ -6635,42 +6247,27 @@ impl Compiler<'_> {
                         ConstantOrIrValue::IrValue(ir_id, false) => ir_id,
                         _ => unreachable!(),
                     };
-                    self.c4ir_builder
+                    self.ir_builder
                         .create_store(&result_ir_id, &short_value_ir_id);
-                    self.llvm_builder
-                        .create_store(&result_ir_id, &short_value_ir_id);
-                    self.c4ir_builder.create_br(&merge_bb);
-                    self.llvm_builder.create_br(&merge_bb);
+                    self.ir_builder.create_br(&merge_bb);
 
                     // long path: bool right = eval(right) != 0
-                    self.c4ir_builder.set_current_basic_block(&long_bb);
-                    self.llvm_builder.set_current_basic_block(&long_bb);
+                    self.ir_builder.set_current_basic_block(&long_bb);
                     let right_ir_id = self
                         .visit_cond_expr(e_right)
                         .unwrap_or_else(|e| e.panic());
                     let right_i32_ir_id = self.get_next_ir_id();
-                    self.c4ir_builder
+                    self.ir_builder
                         .create_zext_i1_to_i32(&right_i32_ir_id, &right_ir_id);
-                    self.llvm_builder
-                        .create_zext_i1_to_i32(&right_i32_ir_id, &right_ir_id);
-                    self.c4ir_builder
+                    self.ir_builder
                         .create_store(&result_ir_id, &right_i32_ir_id);
-                    self.llvm_builder
-                        .create_store(&result_ir_id, &right_i32_ir_id);
-                    self.c4ir_builder.create_br(&merge_bb);
-                    self.llvm_builder.create_br(&merge_bb);
+                    self.ir_builder.create_br(&merge_bb);
 
-                    self.c4ir_builder.set_current_basic_block(&merge_bb);
-                    self.llvm_builder.set_current_basic_block(&merge_bb);
+                    self.ir_builder.set_current_basic_block(&merge_bb);
 
                     // i32 result = load i32* r
                     let result_rvalue_ir_id = self.get_next_ir_id();
-                    self.c4ir_builder.create_load(
-                        &result_rvalue_ir_id,
-                        &result_ir_id,
-                        &QType::from(Type::Int),
-                    );
-                    self.llvm_builder.create_load(
+                    self.ir_builder.create_load(
                         &result_rvalue_ir_id,
                         &result_ir_id,
                         &QType::from(Type::Int),
@@ -6853,13 +6450,7 @@ impl Compiler<'_> {
             let struct_i8_ptr_ir_id = self.get_next_ir_id();
             // src_tp is only a marker for ir builder that indicates it's a
             // ptr->ptr conversion
-            self.c4ir_builder.create_cast(
-                &struct_i8_ptr_ir_id,
-                &QType::char_ptr_tp(),
-                &struct_ptr_ir_id,
-                &QType::char_ptr_tp(),
-            );
-            self.llvm_builder.create_cast(
+            self.ir_builder.create_cast(
                 &struct_i8_ptr_ir_id,
                 &QType::char_ptr_tp(),
                 &struct_ptr_ir_id,
@@ -6875,25 +6466,14 @@ impl Compiler<'_> {
             };
 
             let field_i8_ptr_ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_ptr_add(
-                &field_i8_ptr_ir_id,
-                &struct_i8_ptr_ir_id,
-                &offset_ir_id,
-            );
-            self.llvm_builder.create_ptr_add(
+            self.ir_builder.create_ptr_add(
                 &field_i8_ptr_ir_id,
                 &struct_i8_ptr_ir_id,
                 &offset_ir_id,
             );
 
             let field_ptr_ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_cast(
-                &field_ptr_ir_id,
-                &QType::ptr_tp(tp_field.clone()),
-                &field_i8_ptr_ir_id,
-                &QType::char_ptr_tp(),
-            );
-            self.llvm_builder.create_cast(
+            self.ir_builder.create_cast(
                 &field_ptr_ir_id,
                 &QType::ptr_tp(tp_field.clone()),
                 &field_i8_ptr_ir_id,
@@ -6921,15 +6501,7 @@ impl Compiler<'_> {
             };
 
             let v_ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_bin_op(
-                &v_ir_id,
-                ast::Expr_Binary_Op::BIT_AND,
-                is_signed,
-                false,
-                &src_ir_id,
-                &mask_ir_id,
-            );
-            self.llvm_builder.create_bin_op(
+            self.ir_builder.create_bin_op(
                 &v_ir_id,
                 ast::Expr_Binary_Op::BIT_AND,
                 is_signed,
@@ -6943,12 +6515,7 @@ impl Compiler<'_> {
         // *ptr = (*ptr & ~mask) | $v << offset;
         {
             let orig_ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_load(
-                &orig_ir_id,
-                &field_ptr_ir_id,
-                &tp_field,
-            );
-            self.llvm_builder.create_load(
+            self.ir_builder.create_load(
                 &orig_ir_id,
                 &field_ptr_ir_id,
                 &tp_field,
@@ -6962,15 +6529,7 @@ impl Compiler<'_> {
 
             // $left = *ptr & ~mask
             let left_ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_bin_op(
-                &left_ir_id,
-                ast::Expr_Binary_Op::BIT_AND,
-                is_signed,
-                false,
-                &orig_ir_id,
-                &mask_ir_id,
-            );
-            self.llvm_builder.create_bin_op(
+            self.ir_builder.create_bin_op(
                 &left_ir_id,
                 ast::Expr_Binary_Op::BIT_AND,
                 is_signed,
@@ -6989,15 +6548,7 @@ impl Compiler<'_> {
 
             // $right = $v << offset
             let right_ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_bin_op(
-                &right_ir_id,
-                ast::Expr_Binary_Op::L_SHIFT,
-                is_signed,
-                false,
-                &v_ir_id,
-                &offset_ir_id,
-            );
-            self.llvm_builder.create_bin_op(
+            self.ir_builder.create_bin_op(
                 &right_ir_id,
                 ast::Expr_Binary_Op::L_SHIFT,
                 is_signed,
@@ -7008,15 +6559,7 @@ impl Compiler<'_> {
 
             // $t = $left | $right
             let ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_bin_op(
-                &ir_id,
-                ast::Expr_Binary_Op::BIT_OR,
-                is_signed,
-                false,
-                &left_ir_id,
-                &right_ir_id,
-            );
-            self.llvm_builder.create_bin_op(
+            self.ir_builder.create_bin_op(
                 &ir_id,
                 ast::Expr_Binary_Op::BIT_OR,
                 is_signed,
@@ -7026,8 +6569,7 @@ impl Compiler<'_> {
             );
 
             // *ptr = $t
-            self.c4ir_builder.create_store(&field_ptr_ir_id, &ir_id);
-            self.llvm_builder.create_store(&field_ptr_ir_id, &ir_id);
+            self.ir_builder.create_store(&field_ptr_ir_id, &ir_id);
         }
         // $r = $v << (rem_bits + offset) >> (rem_bits + offset)
         let r_ir_id = if is_signed {
@@ -7043,15 +6585,7 @@ impl Compiler<'_> {
             };
 
             let shl_ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_bin_op(
-                &shl_ir_id,
-                ast::Expr_Binary_Op::L_SHIFT,
-                true,
-                false,
-                &v_ir_id,
-                &shift_bits_ir_id,
-            );
-            self.llvm_builder.create_bin_op(
+            self.ir_builder.create_bin_op(
                 &shl_ir_id,
                 ast::Expr_Binary_Op::L_SHIFT,
                 true,
@@ -7061,15 +6595,7 @@ impl Compiler<'_> {
             );
 
             let shr_ir_id = self.get_next_ir_id();
-            self.c4ir_builder.create_bin_op(
-                &shr_ir_id,
-                ast::Expr_Binary_Op::R_SHIFT,
-                true,
-                false,
-                &shl_ir_id,
-                &shift_bits_ir_id,
-            );
-            self.llvm_builder.create_bin_op(
+            self.ir_builder.create_bin_op(
                 &shr_ir_id,
                 ast::Expr_Binary_Op::R_SHIFT,
                 true,
@@ -7098,28 +6624,26 @@ impl Compiler<'_> {
         if emit_ir {
             let cond_ir_id = self.visit_cond_expr(e_cond)?;
 
-            let entry_bb = self.get_current_bb();
+            let entry_bb = self.ir_builder.get_current_basic_block();
             let then_bb = self.create_bb();
             let else_bb = self.create_bb();
             let merge_bb = self.create_bb();
 
-            self.c4ir_builder.set_current_basic_block(&then_bb);
-            self.llvm_builder.set_current_basic_block(&then_bb);
+            self.ir_builder.set_current_basic_block(&then_bb);
             let (then_tp, then_c) =
                 self.visit_expr(e_then, fold_constant, emit_ir);
             let (then_tp, then_c) = self.convert_lvalue_and_func_designator(
                 then_tp, then_c, true, true, true, emit_ir,
             );
-            let final_then_bb = self.get_current_bb();
+            let final_then_bb = self.ir_builder.get_current_basic_block();
 
-            self.c4ir_builder.set_current_basic_block(&else_bb);
-            self.llvm_builder.set_current_basic_block(&else_bb);
+            self.ir_builder.set_current_basic_block(&else_bb);
             let (else_tp, else_c) =
                 self.visit_expr(e_else, fold_constant, emit_ir);
             let (else_tp, else_c) = self.convert_lvalue_and_func_designator(
                 else_tp, else_c, true, true, true, emit_ir,
             );
-            let final_else_bb = self.get_current_bb();
+            let final_else_bb = self.ir_builder.get_current_basic_block();
 
             let rtp = self.get_ternary_expr_rtp(
                 &then_tp, &then_c, &else_tp, &else_c, e_else.1,
@@ -7127,18 +6651,10 @@ impl Compiler<'_> {
 
             // emit the rest IR
 
-            self.c4ir_builder.set_current_basic_block(&entry_bb);
-            self.llvm_builder.set_current_basic_block(&entry_bb);
+            self.ir_builder.set_current_basic_block(&entry_bb);
             let r_ir_id = self.get_next_ir_id();
             if !rtp.is_void() {
-                self.c4ir_builder.create_definition(
-                    false,
-                    &r_ir_id,
-                    &rtp,
-                    Linkage::NONE,
-                    &None,
-                );
-                self.llvm_builder.create_definition(
+                self.ir_builder.create_definition(
                     false,
                     &r_ir_id,
                     &rtp,
@@ -7146,13 +6662,10 @@ impl Compiler<'_> {
                     &None,
                 );
             }
-            self.c4ir_builder
-                .create_cond_br(&cond_ir_id, &then_bb, &else_bb);
-            self.llvm_builder
+            self.ir_builder
                 .create_cond_br(&cond_ir_id, &then_bb, &else_bb);
 
-            self.c4ir_builder.set_current_basic_block(&final_then_bb);
-            self.llvm_builder.set_current_basic_block(&final_then_bb);
+            self.ir_builder.set_current_basic_block(&final_then_bb);
             let then_c = then_c.map(|c| self.convert_to_ir_value(&then_tp, c));
             if !rtp.is_void() {
                 let (_, then_c) = self.cast_expression(
@@ -7164,8 +6677,7 @@ impl Compiler<'_> {
                 );
                 match then_c.unwrap() {
                     C::IrValue(ir_id, false) if rtp.is_scalar_type() => {
-                        self.c4ir_builder.create_store(&r_ir_id, &ir_id);
-                        self.llvm_builder.create_store(&r_ir_id, &ir_id);
+                        self.ir_builder.create_store(&r_ir_id, &ir_id);
                     }
                     C::IrValue(ir_id, false) => {
                         let (size, align) =
@@ -7177,19 +6689,15 @@ impl Compiler<'_> {
                                     c4_fail!(e_then.1, "Complete type expected")
                                 }
                             };
-                        self.c4ir_builder
-                            .create_memcpy(&r_ir_id, &ir_id, size, align);
-                        self.llvm_builder
+                        self.ir_builder
                             .create_memcpy(&r_ir_id, &ir_id, size, align);
                     }
                     _ => unreachable!(),
                 }
             }
-            self.c4ir_builder.create_br(&merge_bb);
-            self.llvm_builder.create_br(&merge_bb);
+            self.ir_builder.create_br(&merge_bb);
 
-            self.c4ir_builder.set_current_basic_block(&final_else_bb);
-            self.llvm_builder.set_current_basic_block(&final_else_bb);
+            self.ir_builder.set_current_basic_block(&final_else_bb);
             let else_c = else_c.map(|c| self.convert_to_ir_value(&else_tp, c));
             if !rtp.is_void() {
                 let (_, else_c) = self.cast_expression(
@@ -7201,8 +6709,7 @@ impl Compiler<'_> {
                 );
                 match else_c.unwrap() {
                     C::IrValue(ir_id, false) if rtp.is_scalar_type() => {
-                        self.c4ir_builder.create_store(&r_ir_id, &ir_id);
-                        self.llvm_builder.create_store(&r_ir_id, &ir_id);
+                        self.ir_builder.create_store(&r_ir_id, &ir_id);
                     }
                     C::IrValue(ir_id, false) => {
                         let (size, align) =
@@ -7214,24 +6721,19 @@ impl Compiler<'_> {
                                     c4_fail!(e_else.1, "Complete type expected")
                                 }
                             };
-                        self.c4ir_builder
-                            .create_memcpy(&r_ir_id, &ir_id, size, align);
-                        self.llvm_builder
+                        self.ir_builder
                             .create_memcpy(&r_ir_id, &ir_id, size, align);
                     }
                     _ => unreachable!(),
                 }
             }
-            self.c4ir_builder.create_br(&merge_bb);
-            self.llvm_builder.create_br(&merge_bb);
+            self.ir_builder.create_br(&merge_bb);
 
-            self.c4ir_builder.set_current_basic_block(&merge_bb);
-            self.llvm_builder.set_current_basic_block(&merge_bb);
+            self.ir_builder.set_current_basic_block(&merge_bb);
             if !rtp.is_void() {
                 let ptr_rtp = QType::ptr_tp(rtp.clone());
                 let ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_load(&ir_id, &r_ir_id, &ptr_rtp);
-                self.llvm_builder.create_load(&ir_id, &r_ir_id, &ptr_rtp);
+                self.ir_builder.create_load(&ir_id, &r_ir_id, &ptr_rtp);
                 Ok((rtp, Some(C::IrValue(ir_id, false))))
             } else {
                 Ok((rtp, Some(C::I32(0)))) // dummy value
@@ -7441,16 +6943,14 @@ impl Compiler<'_> {
                     }
                     Some(bb) => bb.clone(),
                 };
-                self.c4ir_builder.create_br(&bb);
-                self.llvm_builder.create_br(&bb);
+                self.ir_builder.create_br(&bb);
                 Ok(())
             }
             ast::Statement_oneof_stmt::continue_s(_) => {
                 match ctx.continue_bb_stack.last() {
                     None => c4_fail!(stmt.1, "Illegal continue statement"),
                     Some(bb_id) => {
-                        self.c4ir_builder.create_br(bb_id);
-                        self.llvm_builder.create_br(bb_id);
+                        self.ir_builder.create_br(bb_id);
                         Ok(())
                     }
                 }
@@ -7459,8 +6959,7 @@ impl Compiler<'_> {
                 match ctx.break_bb_stack.last() {
                     None => c4_fail!(stmt.1, "Illegal break statement"),
                     Some(bb_id) => {
-                        self.c4ir_builder.create_br(bb_id);
-                        self.llvm_builder.create_br(bb_id);
+                        self.ir_builder.create_br(bb_id);
                         Ok(())
                     }
                 }
@@ -7524,10 +7023,8 @@ impl Compiler<'_> {
                     }
                 };
 
-                self.c4ir_builder.create_br(&bb_id);
-                self.llvm_builder.create_br(&bb_id);
-                self.c4ir_builder.set_current_basic_block(&bb_id);
-                self.llvm_builder.set_current_basic_block(&bb_id);
+                self.ir_builder.create_br(&bb_id);
+                self.ir_builder.set_current_basic_block(&bb_id);
                 let stmt =
                     &self.translation_unit.statements[id.stmt_idx as usize];
                 let stmt = (stmt, id.get_stmt_loc());
@@ -7581,12 +7078,9 @@ impl Compiler<'_> {
                     .map(|s| s.case_values.insert(e_value));
 
                 let bb_id = self.create_bb();
-                self.c4ir_builder.create_br(&bb_id);
-                self.llvm_builder.create_br(&bb_id);
-                self.c4ir_builder.set_current_basic_block(&bb_id);
-                self.llvm_builder.set_current_basic_block(&bb_id);
-                self.c4ir_builder.add_switch_case(&e, &bb_id);
-                self.llvm_builder.add_switch_case(&e, &bb_id);
+                self.ir_builder.create_br(&bb_id);
+                self.ir_builder.set_current_basic_block(&bb_id);
+                self.ir_builder.add_switch_case(&e, &bb_id);
 
                 let stmt =
                     &self.translation_unit.statements[case_s.stmt_idx as usize];
@@ -7608,10 +7102,8 @@ impl Compiler<'_> {
                 ctx.switch_stack
                     .last_mut()
                     .map(|s| s.default_case_visited = true);
-                self.c4ir_builder.create_br(&bb_id);
-                self.llvm_builder.create_br(&bb_id);
-                self.c4ir_builder.set_current_basic_block(&bb_id);
-                self.llvm_builder.set_current_basic_block(&bb_id);
+                self.ir_builder.create_br(&bb_id);
+                self.ir_builder.set_current_basic_block(&bb_id);
 
                 let stmt = &self.translation_unit.statements
                     [default_s.stmt_idx as usize];
@@ -7633,33 +7125,26 @@ impl Compiler<'_> {
         let then_bb = self.create_bb();
         let else_bb = self.create_bb();
         let merge_bb = self.create_bb();
-        self.c4ir_builder
-            .create_cond_br(&cmp_ir_id, &then_bb, &else_bb);
-        self.llvm_builder
+        self.ir_builder
             .create_cond_br(&cmp_ir_id, &then_bb, &else_bb);
 
-        self.c4ir_builder.set_current_basic_block(&then_bb);
-        self.llvm_builder.set_current_basic_block(&then_bb);
+        self.ir_builder.set_current_basic_block(&then_bb);
         let then_stmt =
             &self.translation_unit.statements[if_s.then_idx as usize];
         let then_stmt = (then_stmt, if_s.get_then_loc());
         self.visit_stmt(then_stmt, ctx)?;
-        self.c4ir_builder.create_br(&merge_bb);
-        self.llvm_builder.create_br(&merge_bb);
+        self.ir_builder.create_br(&merge_bb);
 
-        self.c4ir_builder.set_current_basic_block(&else_bb);
-        self.llvm_builder.set_current_basic_block(&else_bb);
+        self.ir_builder.set_current_basic_block(&else_bb);
         if if_s.else_idx != 0 {
             let else_stmt =
                 &self.translation_unit.statements[if_s.else_idx as usize];
             let else_stmt = (else_stmt, if_s.get_else_loc());
             self.visit_stmt(else_stmt, ctx)?;
         }
-        self.c4ir_builder.create_br(&merge_bb);
-        self.llvm_builder.create_br(&merge_bb);
+        self.ir_builder.create_br(&merge_bb);
 
-        self.c4ir_builder.set_current_basic_block(&merge_bb);
-        self.llvm_builder.set_current_basic_block(&merge_bb);
+        self.ir_builder.set_current_basic_block(&merge_bb);
         Ok(())
     }
 
@@ -7695,8 +7180,7 @@ impl Compiler<'_> {
 
         ctx.switch_stack.push(switch_def_ctx);
         ctx.break_bb_stack.push(break_bb.clone());
-        self.c4ir_builder.enter_switch(&ir_id, &default_bb);
-        self.llvm_builder.enter_switch(&ir_id, &default_bb);
+        self.ir_builder.enter_switch(&ir_id, &default_bb);
 
         let body =
             &self.translation_unit.statements[switch_s.body_idx as usize];
@@ -7704,22 +7188,17 @@ impl Compiler<'_> {
         self.visit_stmt(body, ctx)?;
 
         // last case may not have explicit break
-        self.c4ir_builder.create_br(&break_bb);
-        self.llvm_builder.create_br(&break_bb);
+        self.ir_builder.create_br(&break_bb);
 
         // default case may be absent
-        self.c4ir_builder.set_current_basic_block(&default_bb);
-        self.llvm_builder.set_current_basic_block(&default_bb);
-        self.c4ir_builder.create_br(&break_bb);
-        self.llvm_builder.create_br(&break_bb);
+        self.ir_builder.set_current_basic_block(&default_bb);
+        self.ir_builder.create_br(&break_bb);
 
-        self.c4ir_builder.set_current_basic_block(&break_bb);
-        self.llvm_builder.set_current_basic_block(&break_bb);
+        self.ir_builder.set_current_basic_block(&break_bb);
 
         ctx.switch_stack.pop();
         ctx.break_bb_stack.pop();
-        self.c4ir_builder.leave_switch();
-        self.llvm_builder.leave_switch();
+        self.ir_builder.leave_switch();
 
         Ok(())
     }
@@ -7732,31 +7211,24 @@ impl Compiler<'_> {
         let cond_bb = self.create_bb();
         let body_bb = self.create_bb();
         let break_bb = self.create_bb();
-        self.c4ir_builder.create_br(&cond_bb);
-        self.llvm_builder.create_br(&cond_bb);
+        self.ir_builder.create_br(&cond_bb);
 
-        self.c4ir_builder.set_current_basic_block(&cond_bb);
-        self.llvm_builder.set_current_basic_block(&cond_bb);
+        self.ir_builder.set_current_basic_block(&cond_bb);
         let cond = &self.translation_unit.exprs[while_s.e_idx as usize];
         let cond = (cond, while_s.get_e_loc());
         let cond_ir_id = self.visit_cond_expr(cond)?;
-        self.c4ir_builder
-            .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
-        self.llvm_builder
+        self.ir_builder
             .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
 
-        self.c4ir_builder.set_current_basic_block(&body_bb);
-        self.llvm_builder.set_current_basic_block(&body_bb);
+        self.ir_builder.set_current_basic_block(&body_bb);
         ctx.break_bb_stack.push(break_bb.clone());
         ctx.continue_bb_stack.push(cond_bb.clone());
         let body = &self.translation_unit.statements[while_s.body_idx as usize];
         let body = (body, while_s.get_body_loc());
         self.visit_stmt(body, ctx)?;
-        self.c4ir_builder.create_br(&cond_bb);
-        self.llvm_builder.create_br(&cond_bb);
+        self.ir_builder.create_br(&cond_bb);
 
-        self.c4ir_builder.set_current_basic_block(&break_bb);
-        self.llvm_builder.set_current_basic_block(&break_bb);
+        self.ir_builder.set_current_basic_block(&break_bb);
         ctx.break_bb_stack.pop();
         ctx.continue_bb_stack.pop();
         Ok(())
@@ -7770,34 +7242,27 @@ impl Compiler<'_> {
         let body_bb = self.create_bb();
         let cond_bb = self.create_bb();
         let break_bb = self.create_bb();
-        self.c4ir_builder.create_br(&body_bb);
-        self.llvm_builder.create_br(&body_bb);
+        self.ir_builder.create_br(&body_bb);
 
-        self.c4ir_builder.set_current_basic_block(&body_bb);
-        self.llvm_builder.set_current_basic_block(&body_bb);
+        self.ir_builder.set_current_basic_block(&body_bb);
         ctx.break_bb_stack.push(break_bb.clone());
         ctx.continue_bb_stack.push(cond_bb.clone());
         let body =
             &self.translation_unit.statements[do_while_s.body_idx as usize];
         let body = (body, do_while_s.get_body_loc());
         self.visit_stmt(body, ctx)?;
-        self.c4ir_builder.create_br(&cond_bb);
-        self.llvm_builder.create_br(&cond_bb);
+        self.ir_builder.create_br(&cond_bb);
 
-        self.c4ir_builder.set_current_basic_block(&cond_bb);
-        self.llvm_builder.set_current_basic_block(&cond_bb);
+        self.ir_builder.set_current_basic_block(&cond_bb);
         ctx.break_bb_stack.pop();
         ctx.continue_bb_stack.pop();
         let cond = &self.translation_unit.exprs[do_while_s.e_idx as usize];
         let cond = (cond, do_while_s.get_e_loc());
         let cond_ir_id = self.visit_cond_expr(cond)?;
-        self.c4ir_builder
-            .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
-        self.llvm_builder
+        self.ir_builder
             .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
 
-        self.c4ir_builder.set_current_basic_block(&break_bb);
-        self.llvm_builder.set_current_basic_block(&break_bb);
+        self.ir_builder.set_current_basic_block(&break_bb);
         Ok(())
     }
 
@@ -7816,26 +7281,20 @@ impl Compiler<'_> {
         let body_bb = self.create_bb();
         let incr_bb = self.create_bb();
         let break_bb = self.create_bb();
-        self.c4ir_builder.create_br(&cond_bb);
-        self.llvm_builder.create_br(&cond_bb);
+        self.ir_builder.create_br(&cond_bb);
 
-        self.c4ir_builder.set_current_basic_block(&cond_bb);
-        self.llvm_builder.set_current_basic_block(&cond_bb);
+        self.ir_builder.set_current_basic_block(&cond_bb);
         if for_s.e2_idx != 0 {
             let cond = &self.translation_unit.exprs[for_s.e2_idx as usize];
             let cond = (cond, for_s.get_e2_loc());
             let cond_ir_id = self.visit_cond_expr(cond)?;
-            self.c4ir_builder
-                .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
-            self.llvm_builder
+            self.ir_builder
                 .create_cond_br(&cond_ir_id, &body_bb, &break_bb);
         } else {
-            self.c4ir_builder.create_br(&body_bb);
-            self.llvm_builder.create_br(&body_bb);
+            self.ir_builder.create_br(&body_bb);
         }
 
-        self.c4ir_builder.set_current_basic_block(&body_bb);
-        self.llvm_builder.set_current_basic_block(&body_bb);
+        self.ir_builder.set_current_basic_block(&body_bb);
         ctx.break_bb_stack.push(break_bb.clone());
         ctx.continue_bb_stack.push(incr_bb.clone());
         let body = &self.translation_unit.statements[for_s.body_idx as usize];
@@ -7843,21 +7302,17 @@ impl Compiler<'_> {
         self.visit_stmt(body, ctx)?;
         ctx.break_bb_stack.pop();
         ctx.continue_bb_stack.pop();
-        self.c4ir_builder.create_br(&incr_bb);
-        self.llvm_builder.create_br(&incr_bb);
+        self.ir_builder.create_br(&incr_bb);
 
-        self.c4ir_builder.set_current_basic_block(&incr_bb);
-        self.llvm_builder.set_current_basic_block(&incr_bb);
+        self.ir_builder.set_current_basic_block(&incr_bb);
         if for_s.e3_idx != 0 {
             let incr = &self.translation_unit.exprs[for_s.e3_idx as usize];
             let incr = (incr, for_s.get_e3_loc());
             self.visit_expr(incr, true, true);
         }
-        self.c4ir_builder.create_br(&cond_bb);
-        self.llvm_builder.create_br(&cond_bb);
+        self.ir_builder.create_br(&cond_bb);
 
-        self.c4ir_builder.set_current_basic_block(&break_bb);
-        self.llvm_builder.set_current_basic_block(&break_bb);
+        self.ir_builder.set_current_basic_block(&break_bb);
         Ok(())
     }
 
@@ -7871,8 +7326,7 @@ impl Compiler<'_> {
 
         let (tp, r) = if return_s.e_idx == 0 {
             if ctx.return_type.is_void() {
-                self.c4ir_builder.create_return_void();
-                self.llvm_builder.create_return_void();
+                self.ir_builder.create_return_void();
                 return Ok(());
             } else if ctx.func_name == "main" {
                 // 3.6.6.4: If a return statement without an expression
@@ -7920,14 +7374,7 @@ impl Compiler<'_> {
         // the function in which it appears, it is converted as if it
         // were assigned to an object of that type.
         let new_ir_id = self.get_next_ir_id();
-        self.c4ir_builder.create_definition(
-            false,
-            &new_ir_id,
-            &ctx.return_type,
-            Linkage::NONE,
-            &None,
-        );
-        self.llvm_builder.create_definition(
+        self.ir_builder.create_definition(
             false,
             &new_ir_id,
             &ctx.return_type,
@@ -7949,12 +7396,9 @@ impl Compiler<'_> {
             true,
         );
         let ret_ir_id = self.get_next_ir_id();
-        self.c4ir_builder
+        self.ir_builder
             .create_load(&ret_ir_id, &new_ir_id, &ctx.return_type);
-        self.llvm_builder
-            .create_load(&ret_ir_id, &new_ir_id, &ctx.return_type);
-        self.c4ir_builder.create_return(&ret_ir_id);
-        self.llvm_builder.create_return(&ret_ir_id);
+        self.ir_builder.create_return(&ret_ir_id);
         Ok(())
     }
 
@@ -7989,9 +7433,7 @@ impl Compiler<'_> {
             c4_fail!(cond_loc, "Scalar type expected")
         } else {
             let zero = ConstantOrIrValue::U64(0);
-            self.c4ir_builder
-                .create_constant(&zero_ir_id, &zero, &cond_tp);
-            self.llvm_builder
+            self.ir_builder
                 .create_constant(&zero_ir_id, &zero, &cond_tp);
         }
         let is_signed = match &cond_tp.tp {
@@ -8004,15 +7446,7 @@ impl Compiler<'_> {
         let is_fp = cond_tp.is_arithmetic_type() && !cond_tp.is_integral_type();
 
         let cmp_ir_id = self.get_next_ir_id();
-        self.c4ir_builder.create_cmp_op(
-            &cmp_ir_id,
-            ast::Expr_Binary_Op::NEQ,
-            is_signed,
-            is_fp,
-            &cond_ir_id,
-            &zero_ir_id,
-        );
-        self.llvm_builder.create_cmp_op(
+        self.ir_builder.create_cmp_op(
             &cmp_ir_id,
             ast::Expr_Binary_Op::NEQ,
             is_signed,
@@ -8276,8 +7710,7 @@ impl Compiler<'_> {
                     .sue_tag_names_ns
                     .insert(tag_name.clone(), sue_type);
 
-                self.c4ir_builder.emit_opaque_struct_type(&ir_type_name);
-                self.llvm_builder.emit_opaque_struct_type(&ir_type_name);
+                self.ir_builder.emit_opaque_struct_type(&ir_type_name);
 
                 if !bodies.is_empty() {
                     let f = |&b| self.get_su_field(b);
@@ -8343,12 +7776,7 @@ impl Compiler<'_> {
                         }
                         fs
                     };
-                    self.c4ir_builder.update_struct_type(
-                        &ir_type_name,
-                        &packed_fields,
-                        !is_struct,
-                    );
-                    self.llvm_builder.update_struct_type(
+                    self.ir_builder.update_struct_type(
                         &ir_type_name,
                         &packed_fields,
                         !is_struct,
@@ -9321,9 +8749,7 @@ impl Compiler<'_> {
                 Type::Pointer(_),
             ) => {
                 let dst_ir_id = self.get_next_ir_id();
-                self.c4ir_builder
-                    .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
-                self.llvm_builder
+                self.ir_builder
                     .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
                 (dst_tp, Some(ConstantOrIrValue::IrValue(dst_ir_id, false)))
             }
@@ -9345,17 +8771,12 @@ impl Compiler<'_> {
                         }
                         c => {
                             let ir_id = self.get_next_ir_id();
-                            self.c4ir_builder
-                                .create_constant(&ir_id, c, &src_tp);
-                            self.llvm_builder
-                                .create_constant(&ir_id, c, &src_tp);
+                            self.ir_builder.create_constant(&ir_id, c, &src_tp);
                             ir_id
                         }
                     };
                     let dst_ir_id = self.get_next_ir_id();
-                    self.c4ir_builder
-                        .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
-                    self.llvm_builder
+                    self.ir_builder
                         .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
                     (dst_tp, Some(ConstantOrIrValue::IrValue(dst_ir_id, false)))
                 }
@@ -9764,9 +9185,7 @@ impl Compiler<'_> {
                     QType::ptr_tp(QType::from(Type::Array(t.clone(), sz)));
                 let dst_tp = QType::from(Type::Pointer(t));
                 let dst_ir_id = self.get_next_ir_id();
-                self.c4ir_builder
-                    .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
-                self.llvm_builder
+                self.ir_builder
                     .create_cast(&dst_ir_id, &dst_tp, &src_ir_id, &src_tp);
                 (dst_tp, Some(C::IrValue(dst_ir_id, false)))
             }
@@ -9849,15 +9268,13 @@ impl Compiler<'_> {
                 // and load
                 let ptr_tp = QType::ptr_tp(tp.clone());
                 let ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_load(&ir_id, &ptr_ir_id, &ptr_tp);
-                self.llvm_builder.create_load(&ir_id, &ptr_ir_id, &ptr_tp);
+                self.ir_builder.create_load(&ir_id, &ptr_ir_id, &ptr_tp);
 
                 (QType::from(t), Some(C::IrValue(ir_id, false)))
             }
             (t, Some(C::IrValue(ir_id, true))) if do_deref_lvalue => {
                 let dst_ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_load(&dst_ir_id, &ir_id, &tp);
-                self.llvm_builder.create_load(&dst_ir_id, &ir_id, &tp);
+                self.ir_builder.create_load(&dst_ir_id, &ir_id, &tp);
                 (QType::from(t), Some(C::IrValue(dst_ir_id, false)))
             }
             _ => (tp, expr),
@@ -9874,13 +9291,7 @@ impl Compiler<'_> {
             C::IrValue(_, _) => c,
             C::StrAddress(ir_id, offset_bytes) => {
                 let old_ptr_ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_cast(
-                    &old_ptr_ir_id,
-                    &QType::char_ptr_tp(),
-                    &ir_id,
-                    tp,
-                );
-                self.llvm_builder.create_cast(
+                self.ir_builder.create_cast(
                     &old_ptr_ir_id,
                     &QType::char_ptr_tp(),
                     &ir_id,
@@ -9888,37 +9299,21 @@ impl Compiler<'_> {
                 );
 
                 let offset_ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_constant(
-                    &offset_ir_id,
-                    &C::I64(offset_bytes),
-                    &QType::from(Type::Long),
-                );
-                self.llvm_builder.create_constant(
+                self.ir_builder.create_constant(
                     &offset_ir_id,
                     &C::I64(offset_bytes),
                     &QType::from(Type::Long),
                 );
 
                 let ptr_ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_ptr_add(
-                    &ptr_ir_id,
-                    &old_ptr_ir_id,
-                    &offset_ir_id,
-                );
-                self.llvm_builder.create_ptr_add(
+                self.ir_builder.create_ptr_add(
                     &ptr_ir_id,
                     &old_ptr_ir_id,
                     &offset_ir_id,
                 );
 
                 let ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_cast(
-                    &ir_id,
-                    tp,
-                    &ptr_ir_id,
-                    &QType::char_ptr_tp(),
-                );
-                self.llvm_builder.create_cast(
+                self.ir_builder.create_cast(
                     &ir_id,
                     tp,
                     &ptr_ir_id,
@@ -9946,8 +9341,7 @@ impl Compiler<'_> {
             }
             _ => {
                 let ir_id = self.get_next_ir_id();
-                self.c4ir_builder.create_constant(&ir_id, &c, tp);
-                self.llvm_builder.create_constant(&ir_id, &c, tp);
+                self.ir_builder.create_constant(&ir_id, &c, tp);
                 C::IrValue(ir_id, false)
             }
         }
@@ -10088,8 +9482,7 @@ impl Compiler<'_> {
             }
             (C::IrValue(_, _), _) => {
                 let new_ir_id_y = self.get_next_ir_id();
-                self.c4ir_builder.create_constant(&new_ir_id_y, &y, &tp_y);
-                self.llvm_builder.create_constant(&new_ir_id_y, &y, &tp_y);
+                self.ir_builder.create_constant(&new_ir_id_y, &y, &tp_y);
                 let (new_x, new_y, new_tp) = self.do_arithmetic_conversion(
                     tp_x,
                     Some(x),
@@ -10101,8 +9494,7 @@ impl Compiler<'_> {
             }
             (_, C::IrValue(_, _)) => {
                 let new_ir_id_x = self.get_next_ir_id();
-                self.c4ir_builder.create_constant(&new_ir_id_x, &x, &tp_x);
-                self.llvm_builder.create_constant(&new_ir_id_x, &x, &tp_x);
+                self.ir_builder.create_constant(&new_ir_id_x, &x, &tp_x);
                 let (new_x, new_y, new_tp) = self.do_arithmetic_conversion(
                     tp_x,
                     Some(C::IrValue(new_ir_id_x, false)),
@@ -10197,9 +9589,7 @@ impl Compiler<'_> {
          -> (String, QType) {
             let ir_id_new = cc.get_next_ir_id();
             let tp_new = QType::from(tp_new);
-            cc.c4ir_builder
-                .create_cast(&ir_id_new, &tp_new, &ir_id_old, tp_old);
-            cc.llvm_builder
+            cc.ir_builder
                 .create_cast(&ir_id_new, &tp_new, &ir_id_old, tp_old);
             (ir_id_new, tp_new)
         };
@@ -10382,9 +9772,7 @@ impl Compiler<'_> {
             | Type::UnsignedShort => {
                 let ir_id_new = self.get_next_ir_id();
                 let tp_new = QType::from(Type::Int);
-                self.c4ir_builder
-                    .create_cast(&ir_id_new, &tp_new, &ir_id, &tp);
-                self.llvm_builder
+                self.ir_builder
                     .create_cast(&ir_id_new, &tp_new, &ir_id, &tp);
                 (ir_id_new, tp_new)
             }
@@ -10426,30 +9814,22 @@ impl Compiler<'_> {
 
     fn create_bb(&mut self) -> String {
         let bb_id = format!("bb.{}", self.get_next_uuid());
-        self.c4ir_builder.create_basic_block(&bb_id);
-        self.llvm_builder.create_basic_block(&bb_id);
+        self.ir_builder.create_basic_block(&bb_id);
         bb_id
-    }
-
-    fn get_current_bb(&self) -> String {
-        let _ = self.c4ir_builder.get_current_basic_block();
-        self.llvm_builder.get_current_basic_block()
     }
 }
 
 fn main() {
-    let pretty_print_ir = env::args()
-        .into_iter()
-        .find(|x| x == "-emit-llvm")
-        .is_some();
+    let use_llvm = env::args().find(|x| x == "--llvm").is_some();
+    let use_text_format = env::args().find(|x| x == "--text").is_some();
     let input_path: Option<String> = env::args()
         .into_iter()
-        .filter(|x| x != "-emit-llvm")
+        .filter(|x| x != "--llvm" && x != "--text")
         .skip(1)
         .next();
 
     let parse =
-        |input| ::protobuf::parse_from_reader::<ast::TranslationUnit>(input);
+        |input| protobuf::parse_from_reader::<ast::TranslationUnit>(input);
 
     let protobuf_result = match input_path {
         None => parse(&mut io::stdin()),
@@ -10459,5 +9839,16 @@ fn main() {
         Ok(tu) => tu,
         Err(e) => panic!(e.to_string()),
     };
-    Compiler::visit(translation_unit, pretty_print_ir);
+    let mut ir_builder = if use_llvm {
+        get_llvm_builder()
+    } else {
+        get_c4ir_builder()
+    };
+    Compiler::visit(translation_unit, ir_builder.as_mut());
+
+    if use_text_format {
+        ir_builder.print_to_file("-")
+    } else {
+        ir_builder.write_bitcode_to_file("-")
+    }
 }

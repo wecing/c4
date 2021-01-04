@@ -43,9 +43,9 @@ if not args.preprocessor_only and args.asm_only and args.emit_llvm:
         ir_file = open(args.output, 'w')
     else:
         ir_file = open(base_filename + '.ll', 'w')
-cc = ([c4_path + '/cc/target/debug/c4cc'] +
+cc = ([c4_path + '/cc/target/debug/c4cc', '--llvm'] +
       # (['-emit-llvm'] if ir_file else [])
-      ['-emit-llvm']
+      ['--text']
       ) if not args.preprocessor_only else None
 
 # by default opt does nothing (not even mem2reg).
