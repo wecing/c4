@@ -919,7 +919,9 @@ impl C4IRBuilder {
 
 impl IRBuilder for C4IRBuilder {
     fn emit_opaque_struct_type(&mut self, name: &str) {
-        assert!(!self.struct_ids.contains_key(name));
+        if self.struct_ids.contains_key(name) {
+            return
+        }
 
         self.struct_ids
             .insert(name.to_string(), self.struct_ids.len() as u32 + 1);
@@ -1579,8 +1581,7 @@ impl IRBuilder for C4IRBuilder {
         } else {
             Box::new(File::create(file_name).unwrap())
         };
-        let s = protobuf::text_format::print_to_string(&self.module);
-        writer.write_all(s.as_bytes()).unwrap();
+        writer.write_all(format!("{:#?}", self.module).as_bytes()).unwrap()
     }
 
     fn write_bitcode_to_file(&mut self, file_name: &str) {
