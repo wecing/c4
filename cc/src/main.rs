@@ -603,14 +603,17 @@ trait IRBuilder {
     fn write_bitcode_to_file(&mut self, file_name: &str);
 }
 
+#[cfg(not(feature = "llvm-sys"))]
 struct DummyIRBuilder {}
 
+#[cfg(not(feature = "llvm-sys"))]
 impl DummyIRBuilder {
     fn new() -> DummyIRBuilder {
         DummyIRBuilder {}
     }
 }
 
+#[cfg(not(feature = "llvm-sys"))]
 impl IRBuilder for DummyIRBuilder {
     fn emit_opaque_struct_type(&mut self, _name: &str) {}
 
@@ -1737,11 +1740,22 @@ impl IRBuilder for C4IRBuilder {
     }
 
     fn print_to_file(&mut self, file_name: &str) {
-        todo!()
+        let mut writer: Box<dyn io::Write> = if file_name == "-" {
+            Box::new(std::io::stdout())
+        } else {
+            Box::new(File::create(file_name).unwrap())
+        };
+        let s = protobuf::text_format::print_to_string(&self.module);
+        writer.write_all(s.as_bytes()).unwrap();
     }
 
     fn write_bitcode_to_file(&mut self, file_name: &str) {
-        todo!()
+        let mut writer: Box<dyn io::Write> = if file_name == "-" {
+            Box::new(std::io::stdout())
+        } else {
+            Box::new(File::create(file_name).unwrap())
+        };
+        self.module.write_to_writer(writer.as_mut()).unwrap()
     }
 }
 
