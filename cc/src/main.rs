@@ -776,6 +776,7 @@ struct C4IRBuilder {
     // per-func
     bb_ids: HashMap<String, u32>,
     not_terminated_bbs: HashSet<u32>,
+    switch_stack: Vec<Option<u32>>, // value: bb id
     local_symbol_table: HashMap<String, ir::Value>,
     current_function: String,
     next_ir_id: u32,
@@ -792,6 +793,7 @@ impl C4IRBuilder {
             root_symbol_table: HashMap::new(),
             bb_ids: HashMap::new(),
             not_terminated_bbs: HashSet::new(),
+            switch_stack: Vec::new(),
             local_symbol_table: HashMap::new(),
             current_function: String::new(),
             next_ir_id: 1,
@@ -1126,6 +1128,7 @@ impl IRBuilder for C4IRBuilder {
         param_ir_ids: &Vec<String>,
     ) {
         assert!(self.not_terminated_bbs.is_empty());
+        assert!(self.switch_stack.is_empty());
 
         self.bb_ids.clear();
         self.local_symbol_table.clear();
@@ -1554,15 +1557,57 @@ impl IRBuilder for C4IRBuilder {
     }
 
     fn enter_switch(&mut self, ir_id: &str, default_bb_id: &str) {
-        todo!()
+        use ir::BasicBlock_Terminator_Kind as K;
+        let current_bb_id = self.bb_ids[&self.current_basic_block];
+        if !self.not_terminated_bbs.remove(&current_bb_id) {
+            self.switch_stack.push(None);
+            return;
+        }
+        self.switch_stack.push(Some(current_bb_id));
+
+        let cond = self.lookup_ir_id(ir_id).clone();
+        let default_bb_id = self.bb_ids[default_bb_id];
+        let terminator = self
+            .module
+            .mut_function_defs()
+            .get_mut(&self.current_function)
+            .unwrap()
+            .mut_bbs()
+            .get_mut(&current_bb_id)
+            .unwrap()
+            .mut_terminator();
+
+        terminator.kind = K::SWITCH;
+        terminator.set_switch_cond(cond);
+        terminator.switch_default_target = default_bb_id;
     }
 
     fn leave_switch(&mut self) {
-        todo!()
+        self.switch_stack.pop();
     }
 
     fn add_switch_case(&mut self, c: &ConstantOrIrValue, bb_id: &str) {
-        todo!()
+        let switch_bb_id =
+            if let Some(switch_bb_id) = self.switch_stack.last().unwrap() {
+                *switch_bb_id
+            } else {
+                return;
+            };
+        let (value, _) = self.get_ir_constant(c);
+        let target_bb_id = self.bb_ids[bb_id];
+
+        let terminator = self
+            .module
+            .mut_function_defs()
+            .get_mut(&self.current_function)
+            .unwrap()
+            .mut_bbs()
+            .get_mut(&switch_bb_id)
+            .unwrap()
+            .mut_terminator();
+
+        terminator.mut_switch_case_value().push(value);
+        terminator.mut_switch_case_target().push(target_bb_id);
     }
 
     fn create_br(&mut self, bb_id: &str) {

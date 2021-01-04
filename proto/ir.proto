@@ -216,6 +216,12 @@ message BasicBlock {
 
         // RETURN
         Value return_value = 6;
+
+        // SWITCH
+        Value switch_cond = 7;
+        uint32 switch_default_target = 8;
+        repeated Value switch_case_value = 9;
+        repeated uint32 switch_case_target = 10;
     }
     repeated Instruction instructions = 1;
     Terminator terminator = 2;
