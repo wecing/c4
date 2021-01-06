@@ -28,5 +28,15 @@ cc/src/ir.rs
 cc/target
 cc/.idea
 
+opt/.ionide
+opt/.fake
+
+opt/opt/bin
+opt/opt/obj
+opt/opt-proto/bin
+opt/opt-proto/obj
+opt/opt-proto/*.cs
+opt/opt-proto/*.proto
+
 **/*.rs.bk
 stale_outputs_checked

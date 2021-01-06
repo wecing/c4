@@ -16,6 +16,7 @@ java -jar pp/src/main/resources/java-cup-11b.jar \
 cp proto/ast.proto pp/src/main/resources/ast.proto
 cp proto/ast.proto cc/ast.proto
 cp proto/ir.proto cc/ir.proto
+cp proto/ir.proto opt/opt-proto/ir.proto
 
 cd pp
 sbt assembly
@@ -23,4 +24,10 @@ cd ..
 
 cd cc
 cargo build
+cd ..
+
+cd opt/opt-proto
+dotnet build
+cd ..
+dotnet build
 cd ..

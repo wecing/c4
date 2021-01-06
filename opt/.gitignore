@@ -1,0 +1,11 @@
+.ionide
+.vs
+
+opt/bin
+opt/obj
+opt-proto/bin
+opt-proto/obj
+opt-proto/*.cs
+opt-proto/*.proto
+
+.fake
