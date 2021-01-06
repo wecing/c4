@@ -28,6 +28,7 @@ cc/src/ir.rs
 cc/target
 cc/.idea
 
+opt/.vs
 opt/.ionide
 opt/.fake
 
