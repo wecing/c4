@@ -197,7 +197,6 @@ message BasicBlock {
         // VA_COPY
         Value va_copy_dst = 19;
         Value va_copy_src = 20;
-
     }
     message Terminator {
         enum Kind {
