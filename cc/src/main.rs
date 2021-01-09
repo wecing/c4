@@ -1265,14 +1265,12 @@ impl IRBuilder for C4IRBuilder {
         src_ir_id: &str,
         _src_tp: &QType,
     ) {
-        let src = self.lookup_ir_id(src_ir_id);
-        let dst_tp = self.get_ir_type(&dst_tp.tp);
-        let mut instr = ir::BasicBlock_Instruction::new();
-        instr.set_field_type(dst_tp.clone());
-        instr.kind = ir::BasicBlock_Instruction_Kind::CAST;
-        instr.mut_cast_result().set_cast_from(src.clone());
-        instr.mut_cast_result().set_field_type(dst_tp);
-        self.add_instr(Some(dst_ir_id), instr);
+        let mut result = ir::Value::new();
+        result.set_cast_from(self.lookup_ir_id(src_ir_id).clone());
+        result.set_field_type(self.get_ir_type(&dst_tp.tp));
+        self.local_symbol_table
+            .insert(dst_ir_id.to_string(), result);
+        // no need to self.add_instr()
     }
 
     fn create_zext_i1_to_i32(&mut self, dst_ir_id: &str, src_ir_id: &str) {
