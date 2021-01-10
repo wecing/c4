@@ -1,7 +1,8 @@
 ﻿open System
+open C4.Ir
 
 [<EntryPoint>]
 let main argv =
-    let irModule = C4.Ir.Proto.IrModule.Parser.ParseFrom(Console.OpenStandardInput())
-    printfn "%A" irModule
-    0 // return an integer exit code
+    let ir = Proto.IrModule.Parser.ParseFrom(Console.OpenStandardInput())
+    IrPrinter.printIr ir
+    0

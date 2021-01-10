@@ -25,10 +25,11 @@ message FunctionDef {
     Type return_type = 2;
     repeated Type arg_types = 3;
     repeated uint32 args = 4;
+    bool is_vararg = 5;
 
     // `entry_bb` and `bbs` could be unset for external functions
-    uint32 entry_bb = 5; // ids and bbs use different namespace
-    map<uint32, BasicBlock> bbs = 6; // 1-based ID
+    uint32 entry_bb = 6; // ids and bbs use different namespace
+    map<uint32, BasicBlock> bbs = 7; // 1-based ID
 }
 
 enum Linkage {

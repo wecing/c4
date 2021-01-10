@@ -1101,6 +1101,7 @@ impl IRBuilder for C4IRBuilder {
             func_def.set_return_type(ir_tp.get_fn_return_type().clone());
             func_def.set_arg_types(ir_tp.get_fn_arg_types().clone().into());
             // `args` will be initialized in create_function()
+            func_def.is_vararg = ir_tp.get_fn_is_vararg();
             func_def.entry_bb = 1;
             func_def.bbs.insert(1, ir::BasicBlock::new());
             self.module.function_defs.insert(name.to_string(), func_def);
