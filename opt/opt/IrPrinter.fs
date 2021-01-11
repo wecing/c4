@@ -50,20 +50,73 @@ let rec private formatValue (value: Proto.Value) =
     | VC.IrId -> $"{tp} %%{value.IrId}"
     | _ -> failwith "illegal protobuf message"
 
+type private IK = Proto.BasicBlock.Types.Instruction.Types.Kind
+type private TermK = Proto.BasicBlock.Types.Terminator.Types.Kind
 let private printBb (id: uint32) (bb: Proto.BasicBlock) =
-    printfn $"%%{id}:"
-    printfn "  BODY TODO" // TODO
+    let ft = formatType
+    let fv = formatValue
     printfn ""
+    printfn $"_{id}:"
+    for i in bb.Instructions do
+        let assign = $"%%{i.Id} ="
+        let s =
+            match i.Kind with
+            | IK.Alloca -> $"{assign} alloca {ft i.Type.PointeeType}"
+            | IK.Store -> $"store {fv i.StoreSrc}, {fv i.StoreDst}"
+            | IK.Load ->
+                $"{assign} load {ft i.LoadSrc.Type.PointeeType}, {fv i.LoadSrc}"
+            | IK.Memcpy -> $"memcpy {fv i.MemcpySrc}, {fv i.MemcpyDst}"
+            | IK.Neg -> $"{assign} neg {fv i.NegSrc}"
+            | IK.Not -> $"{assign} not {fv i.NotSrc}"
+            | _ when IK.BitOr <= i.Kind && i.Kind <= IK.Ugeq ->
+                let l = fv i.BinOpLeft
+                let r = fv i.BinOpRight
+                let op =
+                    match i.Kind with
+                    | IK.BitOr -> "or"
+                    | IK.BitAnd -> "and"
+                    | k -> k.ToString().ToLower()
+                $"{assign} {op} {ft i.Type}, {l}, {r}"
+            | IK.FnCall ->
+                let fn = fv i.FnCallFn
+                let args = i.FnCallArgs |> Seq.map fv |> String.concat ", "
+                if i.Type.Kind = K.Void then
+                    $"call void, {fv i.FnCallFn} ({args})"
+                else
+                    $"{assign} call {ft i.Type}, {fv i.FnCallFn} ({args})"
+            | IK.VaStart -> $"va_start {fv i.VaStartVl}"
+            | IK.VaArg -> $"va_arg {ft i.Type}, {fv i.VaArgVl}"
+            | IK.VaEnd -> $"va_end {fv i.VaEndVl}"
+            | IK.VaCopy -> $"va_copy {fv i.VaCopySrc} {fv i.VaCopyDst}"
+            | _ -> failwith "illegal protobuf message"
+        printfn $"  {s}"
+    let t =
+        let term = bb.Terminator
+        match term.Kind with
+        | TermK.Br -> $"br _{term.BrTarget}"
+        | TermK.CondBr ->
+            let c = fv term.CondBrCond
+            $"br {c}, _{term.CondBrTrue}, _{term.CondBrFalse}"
+        | TermK.ReturnVoid -> "return void"
+        | TermK.Return -> $"return {fv term.ReturnValue}"
+        | TermK.Switch ->
+            let c = fv term.SwitchCond
+            let ts =
+                Seq.zip term.SwitchCaseValue term.SwitchCaseTarget
+                |> Seq.map (fun (v, t) -> $"{fv v}, _{t}")
+                |> String.concat ", "
+            $"switch {c}, _{term.SwitchDefaultTarget}, [{ts}]"
+        | _ -> failwith "illegal protobuf message"
+    printfn $"  {t}"
 
 let printIr (ir: Proto.IrModule) =
-    for entry in ir.StructDefs |> List.ofSeq |> List.sortBy (fun x -> x.Key) do
+    for entry in ir.StructDefs |> Seq.sortBy (fun x -> x.Key) do
         let formatField (tp, paddingOnly) =
             let suffix = if paddingOnly then " paddingonly" else ""
             formatType tp + suffix
         let body =
-            List.zip (List.ofSeq entry.Value.Type)
-                     (List.ofSeq entry.Value.PaddingOnly)
-            |> List.map formatField
+            Seq.zip entry.Value.Type entry.Value.PaddingOnly
+            |> Seq.map formatField
             |> String.concat ", "
             |> fun x -> if x = "" then "opaque" else $"{{ {x} }}"
         printfn $"%%{entry.Key} = type {body}"
@@ -85,9 +138,7 @@ let printIr (ir: Proto.IrModule) =
         printfn $"@{entry.Key} = {linkage}global {value}"
     printfn ""
 
-    let funcDefsByEntryBb =
-        ir.FunctionDefs |> List.ofSeq |> List.sortBy (fun x -> x.Value.EntryBb)
-    for entry in funcDefsByEntryBb do
+    for entry in ir.FunctionDefs |> Seq.sortBy (fun x -> x.Value.EntryBb) do
         let fnDef = entry.Value
         let signature =
             let def = if fnDef.EntryBb = 0u then "declare" else "define"
@@ -101,22 +152,20 @@ let printIr (ir: Proto.IrModule) =
             let formatArg = fun (tp, id) -> $"{formatType tp} %%{id}"
             let args =
                 if fnDef.Args.Count = 0 then
-                    List.ofSeq fnDef.ArgTypes
-                    |> List.map formatType
+                    Seq.map formatType fnDef.ArgTypes
                 else
-                    List.zip (List.ofSeq fnDef.ArgTypes)
-                             (List.ofSeq fnDef.Args)
-                    |> List.map formatArg
+                    Seq.zip fnDef.ArgTypes fnDef.Args
+                    |> Seq.map formatArg
             let argsRepr =
-                args @ if fnDef.IsVararg then ["..."] else []
+                List.ofSeq args @ if fnDef.IsVararg then ["..."] else []
                 |> String.concat ", "
             $"{def} {linkage}{retTp} @{entry.Key}({argsRepr})"
         let suffix = if fnDef.EntryBb = 0u then "" else " {"
         if fnDef.EntryBb <> 0u then printfn ""
         printfn $"{signature}{suffix}"
         if fnDef.EntryBb <> 0u then
+            printfn $"  br _{fnDef.EntryBb}"
             fnDef.Bbs
-            |> List.ofSeq
-            |> List.sortBy (fun x -> x.Key)
-            |> List.iter (fun x -> printBb x.Key x.Value)
+            |> Seq.sortBy (fun x -> x.Key)
+            |> Seq.iter (fun x -> printBb x.Key x.Value)
             printfn "}"

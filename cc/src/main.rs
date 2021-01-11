@@ -1411,8 +1411,12 @@ impl IRBuilder for C4IRBuilder {
             .map(|id| self.lookup_ir_id(id).clone())
             .collect();
         let mut instr = ir::BasicBlock_Instruction::new();
-        instr
-            .set_field_type(func.get_field_type().get_fn_return_type().clone());
+        instr.set_field_type(
+            func.get_field_type()
+                .get_pointee_type()
+                .get_fn_return_type()
+                .clone(),
+        );
         instr.kind = ir::BasicBlock_Instruction_Kind::FN_CALL;
         instr.set_fn_call_fn(func.clone());
         instr.set_fn_call_args(args.into());
