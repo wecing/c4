@@ -12,7 +12,7 @@ let rec private formatType (tp: Proto.Type) =
     | K.Int64 -> "i64"
     | K.Float -> "float"
     | K.Double -> "double"
-    | K.Struct -> $"%%{tp.StructId}"
+    | K.Struct -> $"&{tp.StructId}"
     | K.Pointer -> $"{formatType tp.PointeeType}*"
     | K.Array -> $"[{tp.ArraySize} x {formatType tp.ArrayElemType}]"
     | K.Function ->
@@ -78,7 +78,6 @@ let private printBb (id: uint32) (bb: Proto.BasicBlock) =
                     | k -> k.ToString().ToLower()
                 $"{assign} {op} {ft i.Type}, {l}, {r}"
             | IK.FnCall ->
-                let fn = fv i.FnCallFn
                 let args = i.FnCallArgs |> Seq.map fv |> String.concat ", "
                 if i.Type.Kind = K.Void then
                     $"call void, {fv i.FnCallFn} ({args})"
@@ -119,7 +118,7 @@ let printIr (ir: Proto.IrModule) =
             |> Seq.map formatField
             |> String.concat ", "
             |> fun x -> if x = "" then "opaque" else $"{{ {x} }}"
-        printfn $"%%{entry.Key} = type {body}"
+        printfn $"&{entry.Key} = type {body}"
     printfn ""
 
     for entry in ir.GlobalDefs do
