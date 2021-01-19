@@ -4,6 +4,8 @@
     <TargetFramework>net5.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="CFG.fs" />
+    <Compile Include="DOM.fs" />
     <Compile Include="IrPrinter.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
