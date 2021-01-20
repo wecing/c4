@@ -1,4 +1,4 @@
-module opt_test
+module DOMTest
 
 open NUnit.Framework
 
