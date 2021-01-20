@@ -38,6 +38,8 @@ opt/opt-proto/bin
 opt/opt-proto/obj
 opt/opt-proto/*.cs
 opt/opt-proto/*.proto
+opt/opt-test/bin
+opt/opt-test/obj
 
 **/*.rs.bk
 stale_outputs_checked

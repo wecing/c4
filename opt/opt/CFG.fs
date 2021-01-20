@@ -11,6 +11,23 @@ type CFG =
           Predecessors: Map<uint, seq<uint>>;
           mutable PostOrder: seq<uint> option }
 
+// private; visible for testing
+let ofPaths (entry: uint) (succs: seq<uint * seq<uint>>) : CFG =
+    let pred = new Dictionary<uint, HashSet<uint>>()
+    for (p, _) in succs do
+        pred.Add(p, new HashSet<uint>())
+    for (p, ss) in succs do
+        for s in ss do
+            pred.[s].Add(p) |> ignore
+
+    let predecessors =
+        pred |> Seq.map (fun e -> e.Key, e.Value |> Seq.sort) |> Map.ofSeq
+
+    { Entry = entry
+      Successors = Map.ofSeq succs
+      Predecessors = predecessors
+      PostOrder = None }
+
 type private TermK = Proto.BasicBlock.Types.Terminator.Types.Kind
 let compute (fn: Proto.FunctionDef) : CFG =
     let getSucc (KeyValue (k, v: Proto.BasicBlock)) =
@@ -24,22 +41,7 @@ let compute (fn: Proto.FunctionDef) : CFG =
             | TermK.Switch -> upcast v.Terminator.SwitchCaseTarget
             | _ -> failwith "illegal protobuf message"
         (k, Seq.sort ts)
-    let succ = Seq.map getSucc fn.Bbs
-
-    let pred = new Dictionary<uint, HashSet<uint>>()
-    for (p, _) in succ do
-        pred.Add(p, new HashSet<uint>())
-    for (p, ss) in succ do
-        for s in ss do
-            pred.[s].Add(p) |> ignore
-
-    let predecessors =
-        pred |> Seq.map (fun e -> e.Key, e.Value :> seq<uint>) |> Map.ofSeq
-
-    { Entry = fn.EntryBb
-      Successors = Map.ofSeq succ
-      Predecessors = predecessors
-      PostOrder = None }
+    fn.Bbs |> Seq.map getSucc |> ofPaths fn.EntryBb
 
 let entry (cfg: CFG) = cfg.Entry
 

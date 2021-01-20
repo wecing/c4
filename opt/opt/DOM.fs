@@ -61,7 +61,7 @@ let compute (cfg: CFG.CFG) : DOM =
                     runner <- doms.[runner].Value
 
     // now convert them back to nodes
-    let immeidateDominator =
+    let immediateDominator =
         doms
         |> Seq.ofArray
         |> Seq.indexed
@@ -74,5 +74,7 @@ let compute (cfg: CFG.CFG) : DOM =
         |> Seq.map (fun (k, v) -> numToNode k, Seq.map numToNode v |> Seq.sort)
         |> Map.ofSeq
 
-    { ImmediateDominator = immeidateDominator
+    { ImmediateDominator = immediateDominator
       DominanceFrontier = dominanceFrontier }
+
+let frontier (n: uint) (dom: DOM) = Map.find n dom.DominanceFrontier

@@ -7,6 +7,8 @@ Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "opt", "opt\opt.fsproj", "{6
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "opt-proto", "opt-proto\opt-proto.csproj", "{AB3E795D-A94C-4C78-9B39-6591C1260C34}"
 EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "opt-test", "opt-test\opt-test.fsproj", "{B47A47FB-A1F2-4932-BC9D-51E62DDAB065}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{AB3E795D-A94C-4C78-9B39-6591C1260C34}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{AB3E795D-A94C-4C78-9B39-6591C1260C34}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{AB3E795D-A94C-4C78-9B39-6591C1260C34}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B47A47FB-A1F2-4932-BC9D-51E62DDAB065}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B47A47FB-A1F2-4932-BC9D-51E62DDAB065}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B47A47FB-A1F2-4932-BC9D-51E62DDAB065}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B47A47FB-A1F2-4932-BC9D-51E62DDAB065}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
