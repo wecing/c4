@@ -47,6 +47,8 @@ let entry (cfg: CFG) = cfg.Entry
 
 let preds (n: uint) (cfg: CFG) = Map.find n cfg.Predecessors
 
+let succs (n: uint) (cfg: CFG) = Map.find n cfg.Successors
+
 let postOrder (cfg: CFG) : seq<uint> =
     if cfg.PostOrder.IsSome then cfg.PostOrder.Value else
     let visited = new HashSet<uint>()

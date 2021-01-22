@@ -5,6 +5,7 @@ open System.Collections.Generic
 type DOM =
     private
         { ImmediateDominator: Map<uint, uint>; // entry: points to itself
+          DominanceChildren: Map<uint, seq<uint>>; // children in dom tree
           DominanceFrontier: Map<uint, seq<uint>> }
 
 // Cooper, Harvey, Kennedy: "A Simple, Fast Dominance Algorithm"
@@ -74,7 +75,20 @@ let compute (cfg: CFG.CFG) : DOM =
         |> Seq.map (fun (k, v) -> numToNode k, Seq.map numToNode v |> Seq.sort)
         |> Map.ofSeq
 
+    let children: Map<uint, seq<uint>> =
+        let cs =
+            immediateDominator |> Map.map (fun _ _ -> new SortedSet<uint>())
+        for (c, p) in immediateDominator |> Map.toSeq do
+            if c <> CFG.entry cfg || p <> CFG.entry cfg then
+                cs.[p].Add(c) |> ignore
+        cs |> Map.map (fun _ s -> upcast s)
+
     { ImmediateDominator = immediateDominator
+      DominanceChildren = children
       DominanceFrontier = dominanceFrontier }
+
+let parent (n: uint) (dom: DOM) = Map.find n dom.ImmediateDominator
+
+let children (n: uint) (dom: DOM) = Map.find n dom.DominanceChildren
 
 let frontier (n: uint) (dom: DOM) = Map.find n dom.DominanceFrontier

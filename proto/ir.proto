@@ -109,6 +109,12 @@ message Value {
 }
 
 message BasicBlock {
+    message PhiNode {
+        uint32 id = 1;
+        Type type = 2;
+        repeated uint32 val_id = 3;
+        repeated uint32 bb_id = 4;
+    }
     message Instruction {
         uint32 id = 1;
         Type type = 2;
@@ -154,6 +160,8 @@ message BasicBlock {
             VA_ARG = 32;
             VA_END = 33;
             VA_COPY = 34;
+
+            VALUE = 35; // create value alias
         }
 
         Kind kind = 3;
@@ -198,6 +206,9 @@ message BasicBlock {
         // VA_COPY
         Value va_copy_dst = 19;
         Value va_copy_src = 20;
+
+        // VALUE
+        Value value = 21;
     }
     message Terminator {
         enum Kind {
@@ -229,6 +240,7 @@ message BasicBlock {
         repeated Value switch_case_value = 9;
         repeated uint32 switch_case_target = 10;
     }
-    repeated Instruction instructions = 1;
-    Terminator terminator = 2;
+    repeated PhiNode phi_nodes = 1;
+    repeated Instruction instructions = 2;
+    Terminator terminator = 3;
 }

@@ -57,6 +57,12 @@ let private printBb (id: uint32) (bb: Proto.BasicBlock) =
     let fv = formatValue
     printfn ""
     printfn $"_{id}:"
+    for i in bb.PhiNodes do
+        let s =
+            Seq.zip i.ValId i.BbId
+            |> Seq.map (fun (val_id, bb_id) -> $"%%{val_id} _{bb_id}")
+            |> String.concat ", "
+        printfn $"  %%{i.Id} = {ft i.Type} [{s}]"
     for i in bb.Instructions do
         let assign = $"%%{i.Id} ="
         let s =
@@ -87,6 +93,7 @@ let private printBb (id: uint32) (bb: Proto.BasicBlock) =
             | IK.VaArg -> $"va_arg {ft i.Type}, {fv i.VaArgVl}"
             | IK.VaEnd -> $"va_end {fv i.VaEndVl}"
             | IK.VaCopy -> $"va_copy {fv i.VaCopySrc} {fv i.VaCopyDst}"
+            | IK.Value -> $"{assign} {fv i.Value}"
             | _ -> failwith "illegal protobuf message"
         printfn $"  {s}"
     let t =
