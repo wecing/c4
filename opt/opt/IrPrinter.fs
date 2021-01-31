@@ -47,6 +47,7 @@ let rec private formatValue (value: Proto.Value) =
         $"({tp} @{value.Address.Symbol} + i64 {value.Address.Offset})"
     | VC.CastFrom ->
         $"{formatValue value.CastFrom} as {tp}"
+    | VC.Undef -> $"{tp} undef"
     | VC.IrId -> $"{tp} %%{value.IrId}"
     | _ -> failwith "illegal protobuf message"
 
@@ -59,10 +60,10 @@ let private printBb (id: uint32) (bb: Proto.BasicBlock) =
     printfn $"_{id}:"
     for i in bb.PhiNodes do
         let s =
-            Seq.zip i.ValId i.BbId
+            Seq.zip i.ValIds i.BbIds
             |> Seq.map (fun (val_id, bb_id) -> $"%%{val_id} _{bb_id}")
             |> String.concat ", "
-        printfn $"  %%{i.Id} = {ft i.Type} [{s}]"
+        printfn $"  %%{i.Id} = phi {ft i.Type} [{s}]"
     for i in bb.Instructions do
         let assign = $"%%{i.Id} ="
         let s =

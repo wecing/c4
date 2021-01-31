@@ -102,18 +102,20 @@ message Value {
         Address address = 8;
         Value cast_from = 9;
 
-        uint32 ir_id = 10; // instruction or arg
+        bool undef = 10;
+
+        uint32 ir_id = 11; // instruction or arg
     }
 
-    Type type = 11;
+    Type type = 12;
 }
 
 message BasicBlock {
     message PhiNode {
         uint32 id = 1;
         Type type = 2;
-        repeated uint32 val_id = 3;
-        repeated uint32 bb_id = 4;
+        repeated uint32 val_ids = 3;
+        repeated uint32 bb_ids = 4;
     }
     message Instruction {
         uint32 id = 1;

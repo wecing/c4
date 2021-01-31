@@ -6,6 +6,7 @@
   <ItemGroup>
     <Compile Include="CFG.fs" />
     <Compile Include="DOM.fs" />
+    <Compile Include="MemToReg.fs" />
     <Compile Include="IrPrinter.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
