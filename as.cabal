@@ -1,10 +1,10 @@
-cabal-version: 1.12
+cabal-version: 1.24
 
 -- This file has been generated from package.yaml by hpack version 0.33.0.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e9b603022b4fc93edf4f3b3a946d2ab89edd78c08a3f06501e7213e36430d641
+-- hash: e711588f7a1c0a00a2095dc1c4e6296c23d300fb88dbc86f8883f1238e106b02
 
 name:           as
 version:        0.1.0.0
@@ -13,17 +13,29 @@ author:         Chenguang Wang
 maintainer:     w3cing@gmail.com
 copyright:      Chenguang Wang
 license:        BSD3
-build-type:     Simple
+build-type:     Custom
+extra-source-files:
+    src/ir.proto
+
+custom-setup
+  setup-depends:
+      Cabal
+    , base
+    , proto-lens-setup
 
 library
   exposed-modules:
       Lib
+      Proto.Ir
   other-modules:
       Paths_as
   hs-source-dirs:
       src
+  build-tool-depends:
+      proto-lens-protoc:proto-lens-protoc
   build-depends:
       base >=4.7 && <5
+    , proto-lens-runtime
   default-language: Haskell2010
 
 executable as-exe
@@ -33,6 +45,8 @@ executable as-exe
   hs-source-dirs:
       app
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-tool-depends:
+      proto-lens-protoc:proto-lens-protoc
   build-depends:
       as
     , base >=4.7 && <5
@@ -46,6 +60,8 @@ test-suite as-test
   hs-source-dirs:
       test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-tool-depends:
+      proto-lens-protoc:proto-lens-protoc
   build-depends:
       as
     , base >=4.7 && <5

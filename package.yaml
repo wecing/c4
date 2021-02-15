@@ -4,6 +4,15 @@ license:             BSD3
 author:              "Chenguang Wang"
 maintainer:          "w3cing@gmail.com"
 copyright:           "Chenguang Wang"
+extra-source-files:  src/ir.proto
+
+custom-setup:
+  dependencies:
+  - base
+  - Cabal
+  - proto-lens-setup
+
+build-tools: proto-lens-protoc:proto-lens-protoc
 
 # Metadata used when publishing your package
 # synopsis:            Short description of your package
@@ -19,6 +28,10 @@ dependencies:
 
 library:
   source-dirs: src
+  exposed-modules:
+  - Lib
+  - Proto.Ir
+  dependencies: proto-lens-runtime
 
 executables:
   as-exe:

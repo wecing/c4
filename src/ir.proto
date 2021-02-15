@@ -1,0 +1,248 @@
+syntax = "proto3";
+
+package c4.ir.proto;
+
+message IrModule {
+    map<uint32, StructDef> struct_defs = 1;
+    map<string, GlobalDef> global_defs = 2;
+    map<string, FunctionDef> function_defs = 3;
+}
+
+message StructDef {
+    // when empty: unfinished opaque type
+    repeated Type type = 1;
+    repeated bool padding_only = 2;
+}
+
+message GlobalDef {
+    Linkage linkage = 1;
+    Type type = 2;
+    Value value = 3; // optional
+}
+
+message FunctionDef {
+    Linkage linkage = 1;
+    Type return_type = 2;
+    repeated Type arg_types = 3;
+    repeated uint32 args = 4;
+    bool is_vararg = 5;
+
+    // `entry_bb` and `bbs` could be unset for external functions
+    uint32 entry_bb = 6; // ids and bbs use different namespace
+    map<uint32, BasicBlock> bbs = 7; // 1-based ID
+}
+
+enum Linkage {
+    NONE = 0;
+    EXTERNAL = 1;
+    INTERNAL = 2;
+}
+
+message Type {
+    enum Kind {
+        UNSPECIFIED = 0;
+
+        VOID = 1;
+
+        INT8 = 2;
+        INT16 = 3;
+        INT32 = 4;
+        INT64 = 5;
+
+        FLOAT = 6;
+        DOUBLE = 7;
+
+        STRUCT = 8;
+        POINTER = 9;
+        ARRAY = 10;
+
+        FUNCTION = 11; // usually used with POINTER
+
+        BOOLEAN = 12;
+    }
+
+    Kind kind = 1;
+
+    // STRUCT
+    uint32 struct_id = 2;
+
+    // POINTER
+    Type pointee_type = 3;
+
+    // ARRAY
+    Type array_elem_type = 4;
+    uint32 array_size = 5;
+
+    // FUNCTION
+    Type fn_return_type = 6;
+    repeated Type fn_arg_types = 7;
+    bool fn_is_vararg = 8;
+}
+
+message Value {
+    message Aggregate {
+        repeated Value values = 1;
+        uint32 zero_padding_bytes = 2;
+    }
+    message Address {
+        string symbol = 1;
+        int64 offset = 2;
+    }
+
+    oneof v {
+        int32 i8 = 1;
+        int32 i16 = 2;
+        int32 i32 = 3;
+        int64 i64 = 4;
+
+        float f32 = 5;
+        double f64 = 6;
+
+        Aggregate aggregate = 7;
+        Address address = 8;
+        Value cast_from = 9;
+
+        bool undef = 10;
+
+        uint32 ir_id = 11; // instruction or arg
+    }
+
+    Type type = 12;
+}
+
+message BasicBlock {
+    message PhiNode {
+        uint32 id = 1;
+        Type type = 2;
+        repeated uint32 val_ids = 3;
+        repeated uint32 bb_ids = 4;
+    }
+    message Instruction {
+        uint32 id = 1;
+        Type type = 2;
+
+        enum Kind {
+            UNSPECIFIED = 0;
+
+            ALLOCA = 1;
+            STORE = 2;
+            LOAD = 3;
+            MEMCPY = 4;
+            NEG = 5;
+            NOT = 6;
+
+            // binary ops
+            BIT_OR = 7;
+            XOR = 8;
+            BIT_AND = 9;
+            SHL = 10;
+            ASHR = 11; // arithmetic shift right (preserves sign)
+            LSHR = 12; // logical shift right (zero fill)
+            ADD = 13;
+            SUB = 14;
+            MUL = 15;
+            DIV = 16;
+            UDIV = 17; // unsigned div
+            MOD = 18;
+            UMOD = 19; // unsigned mod
+            EQ = 20;
+            NEQ = 21;
+            LT = 22;
+            GT = 23;
+            LEQ = 24;
+            GEQ = 25;
+            ULT = 26; // unsigned LT
+            UGT = 27; // unsigned GT
+            ULEQ = 28; // unsigned LEQ
+            UGEQ = 29; // unsigned GEQ
+
+            FN_CALL = 30;
+
+            VA_START = 31;
+            VA_ARG = 32;
+            VA_END = 33;
+            VA_COPY = 34;
+
+            VALUE = 35; // create value alias
+        }
+
+        Kind kind = 3;
+
+        // ALLOCA: allocates `type.pointee_type`
+
+        // STORE
+        Value store_dst = 4;
+        Value store_src = 5;
+
+        // LOAD
+        Value load_src = 6;
+
+        // MEMCPY
+        Value memcpy_dst = 7;
+        Value memcpy_src = 8;
+        uint32 memcpy_size = 9;
+
+        // NEG
+        Value neg_src = 10;
+
+        // NOT
+        Value not_src = 11;
+
+        // binary ops
+        Value bin_op_left = 12;
+        Value bin_op_right = 13;
+
+        // FUN CALL
+        Value fn_call_fn = 14;
+        repeated Value fn_call_args = 15;
+
+        // VA_START
+        Value va_start_vl = 16;
+
+        // VA_ARG
+        Value va_arg_vl = 17; // type is instr return type
+
+        // VA_END
+        Value va_end_vl = 18;
+
+        // VA_COPY
+        Value va_copy_dst = 19;
+        Value va_copy_src = 20;
+
+        // VALUE
+        Value value = 21;
+    }
+    message Terminator {
+        enum Kind {
+            UNSPECIFIED = 0;
+
+            BR = 1;
+            COND_BR = 2;
+            RETURN_VOID = 3;
+            RETURN = 4;
+            SWITCH = 5;
+        }
+
+        Kind kind = 1;
+
+        // BR
+        uint32 br_target = 2;
+
+        // COND_BR
+        Value cond_br_cond = 3;
+        uint32 cond_br_true = 4;
+        uint32 cond_br_false = 5;
+
+        // RETURN
+        Value return_value = 6;
+
+        // SWITCH
+        Value switch_cond = 7;
+        uint32 switch_default_target = 8;
+        repeated Value switch_case_value = 9;
+        repeated uint32 switch_case_target = 10;
+    }
+    repeated PhiNode phi_nodes = 1;
+    repeated Instruction instructions = 2;
+    Terminator terminator = 3;
+}
