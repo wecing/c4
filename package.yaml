@@ -43,6 +43,9 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - as
+    - bytestring
+    - pretty-simple
+    - proto-lens
 
 tests:
   as-test:

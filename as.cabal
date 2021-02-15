@@ -4,7 +4,7 @@ cabal-version: 1.24
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e711588f7a1c0a00a2095dc1c4e6296c23d300fb88dbc86f8883f1238e106b02
+-- hash: d770f60274266e50f03a6c0df9e280efc2634d87c0192ce3eb884b94660c4740
 
 name:           as
 version:        0.1.0.0
@@ -50,6 +50,9 @@ executable as-exe
   build-depends:
       as
     , base >=4.7 && <5
+    , bytestring
+    , pretty-simple
+    , proto-lens
   default-language: Haskell2010
 
 test-suite as-test
