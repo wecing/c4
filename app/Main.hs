@@ -3,7 +3,7 @@ module Main where
 import qualified Data.ByteString as BS
 import Data.ProtoLens (parseMessage)
 import Data.ProtoLens.Encoding.Parser (Parser, runParser)
-import Lib
+import qualified InstrSelect
 import Proto.Ir as IR
 import Text.Pretty.Simple (pPrint)
 
@@ -13,4 +13,4 @@ main = do
   ir <- case runParser (parseMessage :: Parser IR.IrModule) bs of
     Left msg -> fail msg
     Right ir -> return ir
-  pPrint ir
+  pPrint $ InstrSelect.run ir

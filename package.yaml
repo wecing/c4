@@ -29,9 +29,15 @@ dependencies:
 library:
   source-dirs: src
   exposed-modules:
-  - Lib
+  - InstrSelect
   - Proto.Ir
-  dependencies: proto-lens-runtime
+  - Proto.Ir_Fields
+  dependencies:
+  - containers
+  - lens
+  - mtl
+  - proto-lens-runtime
+  - text-format-simple
 
 executables:
   as-exe:
