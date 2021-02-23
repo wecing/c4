@@ -2,11 +2,10 @@
 
 module InstrSelect (run) where
 
-import Control.Lens (Field2 (_2), uses, views, (^.), (%=))
-import Control.Lens.TH
-import Control.Monad.RWS.Lazy (RWS, asks, evalRWS, gets, modify)
+import Control.Lens (Field2 (_2), at, use, uses, view, (^.), (%=))
+import Control.Lens.TH (makeLenses)
+import Control.Monad.RWS.Lazy (RWS, evalRWS, tell)
 import Data.Int (Int64)
-import Data.Map ((!))
 import qualified Data.Map as Map
 import qualified Data.ProtoLens.Runtime.Data.Text as Text
 import qualified Data.Set as Set
@@ -99,31 +98,90 @@ type BasicBlockId = Word32
 
 type Instr = String
 
-newtype InstrSelectState = InstrSelectState
-  { _visitedBasicBlocks :: Set.Set BasicBlockId }
+data InstrSelectState = InstrSelectState
+  { _visitedBasicBlocks :: Set.Set BasicBlockId
+  , _currentFuncName :: FuncName }
 
 makeLenses ''InstrSelectState
 
 type FuncBody = [(BasicBlockId, [Instr])]
 
 run :: IR.IrModule -> Map.Map FuncName FuncBody
-run irModule = Map.map runFunc' $ irModule ^. IR.functionDefs
+run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
   where
-    runFunc' :: IR.FunctionDef -> FuncBody
-    runFunc' funcDef = snd $ evalRWS m r s
+    runFunc' :: FuncName -> IR.FunctionDef -> FuncBody
+    runFunc' funcName funcDef = snd $ evalRWS m r s
       where
         m = runBasicBlock $ funcDef ^. IR.entryBb
-        r = (irModule, funcDef)
-        s = InstrSelectState {_visitedBasicBlocks = Set.empty}
+        r = irModule
+        s = InstrSelectState
+              { _visitedBasicBlocks = Set.empty,
+                _currentFuncName = funcName
+              }
 
-runBasicBlock ::
-  BasicBlockId ->
-  RWS (IR.IrModule, IR.FunctionDef) FuncBody InstrSelectState ()
+runBasicBlock :: BasicBlockId -> RWS IR.IrModule FuncBody InstrSelectState ()
 runBasicBlock basicBlockId = do
   visited <- uses visitedBasicBlocks (Set.member basicBlockId)
   if visited
     then return ()
     else do
       visitedBasicBlocks %= Set.insert basicBlockId
-      basicBlock <- views (_2 . IR.bbs) (! basicBlockId)
-      return () -- TODO: recurse
+      basicBlock <- getBasicBlock basicBlockId
+      xs1 <- mconcat' $ map runPhi $ basicBlock ^. IR.phiNodes
+      xs2 <- mconcat' $ map runInstr $ basicBlock ^. IR.instructions
+      xs3 <- runTerminator $ basicBlock ^. IR.terminator
+      tell [(basicBlockId, xs1 ++ xs2 ++ xs3)]
+      foldl (>>) (return ()) $ map runBasicBlock $ getSuccessors basicBlock
+  where
+    mconcat' :: Monad m => [m [a]] -> m [a]
+    mconcat' ms = concat <$> foldr h (return []) ms
+    h :: Monad m => m [a] -> m [[a]] -> m [[a]]
+    h m1 m2 = do x1 <- m1; x2 <- m2; return (x1 : x2)
+
+runPhi :: Monoid a
+       => IR.BasicBlock'PhiNode
+       -> RWS IR.IrModule a InstrSelectState [Instr]
+runPhi _ = return [] -- TODO
+
+runInstr :: Monoid a
+         => IR.BasicBlock'Instruction
+         -> RWS IR.IrModule a InstrSelectState [Instr]
+runInstr _ = return [] -- TODO
+
+runTerminator :: Monoid a
+              => IR.BasicBlock'Terminator
+              -> RWS IR.IrModule a InstrSelectState [Instr]
+runTerminator _ = return [] -- TODO
+
+runValue :: Monoid a
+         => IR.Value
+         -> RWS IR.IrModule a InstrSelectState Operand
+runValue = undefined -- TODO
+
+getFuncDef :: Monoid a => RWS IR.IrModule a InstrSelectState IR.FunctionDef
+getFuncDef = do
+  funcName <- use currentFuncName
+  maybeFuncDef <- view (IR.functionDefs . at funcName)
+  let Just funcDef = maybeFuncDef
+  return funcDef
+
+getBasicBlock :: Monoid a
+              => BasicBlockId
+              -> RWS IR.IrModule a InstrSelectState IR.BasicBlock
+getBasicBlock basicBlockId = do
+  funcDef <- getFuncDef
+  let Just basicBlock = funcDef ^. IR.bbs . at basicBlockId
+  return basicBlock
+
+getSuccessors :: IR.BasicBlock -> [BasicBlockId]
+getSuccessors bb =
+  case t ^. IR.kind of
+    IR.BasicBlock'Terminator'BR -> [t ^. IR.brTarget]
+    IR.BasicBlock'Terminator'COND_BR ->
+      [t ^. IR.condBrTrue, t ^. IR.condBrFalse]
+    IR.BasicBlock'Terminator'RETURN_VOID -> []
+    IR.BasicBlock'Terminator'RETURN -> []
+    IR.BasicBlock'Terminator'SWITCH ->
+      t ^. IR.switchDefaultTarget : t ^. IR.switchCaseTarget
+  where
+    t = bb ^. IR.terminator

@@ -4,7 +4,7 @@ import qualified Data.ByteString as BS
 import Data.ProtoLens (parseMessage)
 import Data.ProtoLens.Encoding.Parser (Parser, runParser)
 import qualified InstrSelect
-import Proto.Ir as IR
+import qualified Proto.Ir as IR
 import Text.Pretty.Simple (pPrint)
 
 main :: IO ()
