@@ -1,7 +1,10 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module InstrSelect (run) where
 
-import Control.Lens (Field2 (_2), views, (^.))
-import Control.Monad.RWS.Lazy (RWS, asks, evalRWS, gets)
+import Control.Lens (Field2 (_2), uses, views, (^.), (%=))
+import Control.Lens.TH
+import Control.Monad.RWS.Lazy (RWS, asks, evalRWS, gets, modify)
 import Data.Int (Int64)
 import Data.Map ((!))
 import qualified Data.Map as Map
@@ -97,7 +100,9 @@ type BasicBlockId = Word32
 type Instr = String
 
 newtype InstrSelectState = InstrSelectState
-  {visitedBasicBlocks :: Set.Set BasicBlockId}
+  { _visitedBasicBlocks :: Set.Set BasicBlockId }
+
+makeLenses ''InstrSelectState
 
 type FuncBody = [(BasicBlockId, [Instr])]
 
@@ -109,26 +114,16 @@ run irModule = Map.map runFunc' $ irModule ^. IR.functionDefs
       where
         m = runBasicBlock $ funcDef ^. IR.entryBb
         r = (irModule, funcDef)
-        s = InstrSelectState {visitedBasicBlocks = Set.empty}
-
--- snd $ evalRWS runModule m ()
-
--- runModule :: RWS IR.IrModule [String] () ()
--- runModule = do
---   funcDefs <- view IR.functionDefs
---   -- funcDefs IR.functionDefs
---   -- IR.IrModule
---   -- irModule <- asks IR.IrM
---   -- functionDefs
---   return ()
+        s = InstrSelectState {_visitedBasicBlocks = Set.empty}
 
 runBasicBlock ::
   BasicBlockId ->
   RWS (IR.IrModule, IR.FunctionDef) FuncBody InstrSelectState ()
 runBasicBlock basicBlockId = do
-  visited <- gets $ Set.member basicBlockId . visitedBasicBlocks
+  visited <- uses visitedBasicBlocks (Set.member basicBlockId)
   if visited
     then return ()
     else do
+      visitedBasicBlocks %= Set.insert basicBlockId
       basicBlock <- views (_2 . IR.bbs) (! basicBlockId)
-      return ()
+      return () -- TODO: recurse
