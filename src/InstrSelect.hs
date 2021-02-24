@@ -127,16 +127,11 @@ runBasicBlock basicBlockId = do
     else do
       visitedBasicBlocks %= Set.insert basicBlockId
       basicBlock <- getBasicBlock basicBlockId
-      xs1 <- mconcat' $ map runPhi $ basicBlock ^. IR.phiNodes
-      xs2 <- mconcat' $ map runInstr $ basicBlock ^. IR.instructions
+      xs1 <- concat <$> mapM runPhi (basicBlock ^. IR.phiNodes)
+      xs2 <- concat <$> mapM runInstr (basicBlock ^. IR.instructions)
       xs3 <- runTerminator $ basicBlock ^. IR.terminator
       tell [(basicBlockId, xs1 ++ xs2 ++ xs3)]
-      foldl (>>) (return ()) $ map runBasicBlock $ getSuccessors basicBlock
-  where
-    mconcat' :: Monad m => [m [a]] -> m [a]
-    mconcat' ms = concat <$> foldr h (return []) ms
-    h :: Monad m => m [a] -> m [[a]] -> m [[a]]
-    h m1 m2 = do x1 <- m1; x2 <- m2; return (x1 : x2)
+      mapM_ runBasicBlock $ getSuccessors basicBlock
 
 runPhi :: Monoid a
        => IR.BasicBlock'PhiNode
