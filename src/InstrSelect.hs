@@ -14,7 +14,11 @@ import qualified Proto.Ir as IR
 import qualified Proto.Ir_Fields as IR
 import Text.Format (format)
 
-data IntSize = Byte | Word | Long | Quad deriving (Eq)
+-- data IntSize = Byte | Word | Long | Quad deriving (Eq)
+data RegSize
+  = Byte | Word | Long | Quad
+  | F64 | F32
+  | SizeAndAlign Int Int deriving (Eq)
 
 newtype RegIdx = RegIdx Int
 
@@ -37,58 +41,66 @@ data MachineReg
   | XMM6
   | XMM7
 
+-- data Operand
+--   = Imm IntSize Int64
+--   | Mem IntSize RegIdx
+--   | Reg IntSize RegIdx -- some machine reg for integers
+--   | FReg IntSize RegIdx -- some machine reg for floating point numbers
+--   | MReg IntSize MachineReg -- a specific machine reg
+
 data Operand
-  = Imm IntSize Int64
-  | Mem IntSize RegIdx
-  | Reg IntSize RegIdx -- some machine reg for integers
-  | FReg IntSize RegIdx -- some machine reg for floating point numbers
-  | MReg IntSize MachineReg -- a specific machine reg
+  = Imm Int64
+  | Reg RegIdx -- mem, general reg, or sse reg
+  | MReg RegSize MachineReg -- a specific machine reg
+  | Addr String Int64 -- link time constant
 
--- TODO: MEMany, GR, MREG
-data RegMatcher
-  = IMM IntSize
-  | MEM IntSize
-  | REG IntSize
+-- -- TODO: MEMany, GR, MREG
+-- data RegMatcher
+--   = IMM IntSize
+--   | MEM IntSize
+--   | REG IntSize
 
--- TODO: terminator, phi, value
-data InstrMatcher
-  = InstrMatcher IR.BasicBlock'Instruction'Kind [RegMatcher]
+-- -- TODO: terminator, phi, value
+-- data InstrMatcher
+--   = InstrMatcher IR.BasicBlock'Instruction'Kind [RegMatcher]
 
+
+type Instr = String
 data MatchResult = MatchResult
   { outReg :: Maybe Operand,
     usesRegs :: [Operand],
     setsRegs :: [Operand],
-    fmtInstr :: [Operand] -> [String]
+    fmtInstr :: [Operand] -> [Instr]
   }
 
-fmtOperand :: Operand -> String
-fmtOperand _ = "TODO" -- TODO
+-- fmtOperand :: Operand -> String
+-- fmtOperand _ = "TODO" -- TODO
 
-withSizeSuffix :: String -> IntSize -> String
-withSizeSuffix s Byte = s ++ "b"
-withSizeSuffix s Word = s ++ "w"
-withSizeSuffix s Long = s ++ "l"
-withSizeSuffix s Quad = s ++ "q"
+-- withSizeSuffix :: String -> IntSize -> String
+-- withSizeSuffix s Byte = s ++ "b"
+-- withSizeSuffix s Word = s ++ "w"
+-- withSizeSuffix s Long = s ++ "l"
+-- withSizeSuffix s Quad = s ++ "q"
 
-simpleBinOpFmt :: String -> IntSize -> [Operand] -> [String]
-simpleBinOpFmt op sz rs =
-  [format "{0} {1}, {2}" $ withSizeSuffix op sz : map fmtOperand rs]
+-- simpleBinOpFmt :: String -> IntSize -> [Operand] -> [String]
+-- simpleBinOpFmt op sz rs =
+--   [format "{0} {1}, {2}" $ withSizeSuffix op sz : map fmtOperand rs]
 
 -- TODO: imm, ptradd, etc
-matchAdd :: [Operand] -> MatchResult
-matchAdd [src, dst] =
-  case (src, dst) of
-    (Reg s1 _, Reg s2 _) | s1 == s2 -> simpleResult s1
-    (Reg s1 _, Mem s2 _) | s1 == s2 -> simpleResult s1
-    (Mem s1 _, Reg s2 _) | s1 == s2 -> simpleResult s1
-  where
-    simpleResult sz =
-      MatchResult
-        { outReg = Just dst,
-          usesRegs = [src, dst],
-          setsRegs = [dst],
-          fmtInstr = simpleBinOpFmt "add" sz
-        }
+-- matchAdd :: [Operand] -> MatchResult
+-- matchAdd [src, dst] =
+--   case (src, dst) of
+--     (Reg s1 _, Reg s2 _) | s1 == s2 -> simpleResult s1
+--     (Reg s1 _, Mem s2 _) | s1 == s2 -> simpleResult s1
+--     (Mem s1 _, Reg s2 _) | s1 == s2 -> simpleResult s1
+--   where
+--     simpleResult sz =
+--       MatchResult
+--         { outReg = Just dst,
+--           usesRegs = [src, dst],
+--           setsRegs = [dst],
+--           fmtInstr = simpleBinOpFmt "add" sz
+--         }
 
 -------------------------------------
 
@@ -96,11 +108,13 @@ type FuncName = Text.Text
 
 type BasicBlockId = Word32
 
-type Instr = String
-
 data InstrSelectState = InstrSelectState
   { _visitedBasicBlocks :: Set.Set BasicBlockId
-  , _currentFuncName :: FuncName }
+  , _currentFuncName :: FuncName
+  , _lastRegIdx :: Int
+  , _regSize :: Map.Map RegIdx (Either (Int, Int) RegSize)
+  , _operandsByIrId :: Map.Map Int Operand
+  }
 
 makeLenses ''InstrSelectState
 
@@ -115,8 +129,11 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
         m = runBasicBlock $ funcDef ^. IR.entryBb
         r = irModule
         s = InstrSelectState
-              { _visitedBasicBlocks = Set.empty,
-                _currentFuncName = funcName
+              { _visitedBasicBlocks = Set.empty
+              , _currentFuncName = funcName
+              , _lastRegIdx = 0
+              , _regSize = Map.empty
+              , _operandsByIrId = Map.empty
               }
 
 runBasicBlock :: BasicBlockId -> RWS IR.IrModule FuncBody InstrSelectState ()
@@ -151,7 +168,7 @@ runTerminator _ = return [] -- TODO
 runValue :: Monoid a
          => IR.Value
          -> RWS IR.IrModule a InstrSelectState Operand
-runValue = undefined -- TODO
+runValue v = undefined -- TODO
 
 getFuncDef :: Monoid a => RWS IR.IrModule a InstrSelectState IR.FunctionDef
 getFuncDef = do
