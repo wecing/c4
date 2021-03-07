@@ -216,6 +216,7 @@ let run (fn: Proto.FunctionDef) (cfg: CFG.CFG) (dom: DOM.DOM) =
                     instr.Type <- instr.StoreDst.Type.PointeeType
                     instr.Value <- Proto.Value()
                     instr.Value <- instr.StoreSrc
+                    instr.StoreSrc <- null
                     instr.StoreDst <- null
                 s.[v] := i :: !s.[v]
                 cv := i + 1
