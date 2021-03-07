@@ -124,15 +124,36 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
     runFunc' :: FuncName -> IR.FunctionDef -> FuncBody
     runFunc' funcName funcDef = snd $ evalRWS m r s
       where
-        m = runBasicBlock $ funcDef ^. IR.entryBb
+        m = runArgs' funcDef >> runBasicBlock (funcDef ^. IR.entryBb)
         r = irModule
         s = InstrSelectState
               { _visitedBasicBlocks = Set.empty
               , _currentFuncName = funcName
               , _lastRegIdx = 0
               , _regSize = Map.empty
-              , _regIdxByIrId = Map.empty -- TODO: func args
+              , _regIdxByIrId = Map.empty
               }
+    runArgs' :: Monoid a
+             => IR.FunctionDef
+             -> RWS IR.IrModule a InstrSelectState ()
+    runArgs' funcDef =
+      mapM_ runArg' $ zip (funcDef ^. IR.argTypes) (funcDef ^. IR.args)
+      where
+        runArg' :: Monoid a
+                => (IR.Type, Word32)
+                -> RWS IR.IrModule a InstrSelectState ()
+        runArg' (tp, irId) = do
+          let sz = case tp ^. IR.kind of
+                IR.Type'INT8 -> Byte
+                IR.Type'INT16 -> Word
+                IR.Type'INT32 -> Long
+                IR.Type'INT64 -> Quad
+                IR.Type'FLOAT -> F32
+                IR.Type'DOUBLE -> F64
+                IR.Type'POINTER -> Quad
+                -- TODO: struct/array
+          regIdx <- defineReg sz
+          regIdxByIrId %= Map.insert (fromIntegral irId) regIdx
 
 runBasicBlock :: BasicBlockId -> RWS IR.IrModule FuncBody InstrSelectState ()
 runBasicBlock basicBlockId = do
@@ -202,6 +223,7 @@ runValue irValue = do
             IR.Type'INT64 -> Quad
             IR.Type'FLOAT -> F32
             IR.Type'DOUBLE -> F64
+            IR.Type'POINTER -> Quad
             IR.Type'BOOLEAN -> Byte
       toRegIdx <- defineReg toSz
       let toReg = Reg toRegIdx
@@ -274,9 +296,9 @@ getSuccessors bb =
   where
     t = bb ^. IR.terminator
 
-defineReg :: Monoid w
+defineReg :: Monoid a
           => RegSize
-          -> RWS r w InstrSelectState RegIdx
+          -> RWS r a InstrSelectState RegIdx
 defineReg sz = do
   newIdx <- lastRegIdx <+= 1
   regSize %= Map.insert (RegIdx newIdx) sz
