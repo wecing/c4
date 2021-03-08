@@ -50,57 +50,7 @@ data Operand
   | Addr String Int64 -- link time constant
     deriving (Show)
 
--- -- TODO: MEMany, GR, MREG
--- data RegMatcher
---   = IMM IntSize
---   | MEM IntSize
---   | REG IntSize
-
--- -- TODO: terminator, phi, value
--- data InstrMatcher
---   = InstrMatcher IR.BasicBlock'Instruction'Kind [RegMatcher]
-
 data Instr = Instr String (Maybe RegSize) [Operand] deriving (Show)
-
--- out / uses / sets could probably just be RegIdx
---
--- data MatchResult = MatchResult
---   { outReg :: Maybe Operand,
---     usesRegs :: [Operand],
---     setsRegs :: [Operand],
---     fmtInstr :: [Operand] -> [Instr]
---   }
-
--- fmtOperand :: Operand -> String
--- fmtOperand _ = "TODO" -- TODO
-
--- withSizeSuffix :: String -> IntSize -> String
--- withSizeSuffix s Byte = s ++ "b"
--- withSizeSuffix s Word = s ++ "w"
--- withSizeSuffix s Long = s ++ "l"
--- withSizeSuffix s Quad = s ++ "q"
-
--- simpleBinOpFmt :: String -> IntSize -> [Operand] -> [String]
--- simpleBinOpFmt op sz rs =
---   [format "{0} {1}, {2}" $ withSizeSuffix op sz : map fmtOperand rs]
-
--- TODO: imm, ptradd, etc
--- matchAdd :: [Operand] -> MatchResult
--- matchAdd [src, dst] =
---   case (src, dst) of
---     (Reg s1 _, Reg s2 _) | s1 == s2 -> simpleResult s1
---     (Reg s1 _, Mem s2 _) | s1 == s2 -> simpleResult s1
---     (Mem s1 _, Reg s2 _) | s1 == s2 -> simpleResult s1
---   where
---     simpleResult sz =
---       MatchResult
---         { outReg = Just dst,
---           usesRegs = [src, dst],
---           setsRegs = [dst],
---           fmtInstr = simpleBinOpFmt "add" sz
---         }
-
--------------------------------------
 
 type FuncName = Text.Text
 
@@ -137,23 +87,7 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
              => IR.FunctionDef
              -> RWS IR.IrModule a InstrSelectState ()
     runArgs' funcDef =
-      mapM_ runArg' $ zip (funcDef ^. IR.argTypes) (funcDef ^. IR.args)
-      where
-        runArg' :: Monoid a
-                => (IR.Type, Word32)
-                -> RWS IR.IrModule a InstrSelectState ()
-        runArg' (tp, irId) = do
-          let sz = case tp ^. IR.kind of
-                IR.Type'INT8 -> Byte
-                IR.Type'INT16 -> Word
-                IR.Type'INT32 -> Long
-                IR.Type'INT64 -> Quad
-                IR.Type'FLOAT -> F32
-                IR.Type'DOUBLE -> F64
-                IR.Type'POINTER -> Quad
-                -- TODO: struct/array
-          regIdx <- defineReg sz
-          regIdxByIrId %= Map.insert (fromIntegral irId) regIdx
+      mapM_ defineRegForIrId $ zip (funcDef ^. IR.argTypes) (funcDef ^. IR.args)
 
 runBasicBlock :: BasicBlockId -> RWS IR.IrModule FuncBody InstrSelectState ()
 runBasicBlock basicBlockId = do
@@ -177,45 +111,76 @@ runPhi _ = return [] -- TODO
 runInstr :: Monoid a
          => IR.BasicBlock'Instruction
          -> RWS IR.IrModule a InstrSelectState [Instr]
-runInstr _ = return [] -- TODO
+runInstr irInstr =
+  case irInstr ^. IR.kind of
+    IR.BasicBlock'Instruction'VALUE -> do
+      case irInstr ^. IR.value . IR.maybe'v of
+        Just (IR.Value'Undef _) -> do
+          defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+          return []
+        _ -> do
+          (instrs, regIdx) <- runValue (irInstr ^. IR.value)
+          regSize <- use (regSize . at regIdx . to unwrapMaybe)
+          r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+          let mov = Instr "mov" (Just regSize) [Reg regIdx, Reg r]
+          return (instrs ++ [mov])
+    -- TODO: generic bin op processing?
+    IR.BasicBlock'Instruction'ADD -> do
+      (instrsL, regIdxL) <- runValue (irInstr ^. IR.binOpLeft)
+      (instrsR, regIdxR) <- runValue (irInstr ^. IR.binOpRight)
+      regSize <- use (regSize . at regIdxR . to unwrapMaybe)
+      -- TODO: assuming szL == szR == szDst
+      let add = Instr "add" (Just regSize) [Reg regIdxL, Reg regIdxR]
+      r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+      let mov = Instr "mov" (Just regSize) [Reg regIdxR, Reg r]
+      return (instrsL ++ instrsR ++ [add, mov])
+    _ -> do
+      return [] -- TODO
 
 runTerminator :: Monoid a
               => IR.BasicBlock'Terminator
               -> RWS IR.IrModule a InstrSelectState [Instr]
 runTerminator _ = return [] -- TODO
 
--- for cast_from, always return Reg
+-- always return a writable RegIdx
 runValue :: Monoid a
          => IR.Value
-         -> RWS IR.IrModule a InstrSelectState ([Instr], Operand)
+         -> RWS IR.IrModule a InstrSelectState ([Instr], RegIdx)
 runValue irValue = do
   let Just v = irValue ^. IR.maybe'v
   case v of
-    IR.Value'I8 x -> return ([], Imm (fromIntegral x))
-    IR.Value'I16 x -> return ([], Imm (fromIntegral x))
-    IR.Value'I32 x -> return ([], Imm (fromIntegral x))
-    IR.Value'I64 x -> return ([], Imm (fromIntegral x))
-    IR.Value'F32 x -> return ([], ImmF (Left x))
-    IR.Value'F64 x -> return ([], ImmF (Right x))
+    IR.Value'I8 x -> do
+      let imm = Imm (fromIntegral x)
+      regIdx <- defineReg Byte
+      return ([Instr "mov" (Just Byte) [imm, Reg regIdx]], regIdx)
+    IR.Value'I16 x -> do
+      let imm = Imm (fromIntegral x)
+      regIdx <- defineReg Word
+      return ([Instr "mov" (Just Word) [imm, Reg regIdx]], regIdx)
+    IR.Value'I32 x -> do
+      let imm = Imm (fromIntegral x)
+      regIdx <- defineReg Long
+      return ([Instr "mov" (Just Long) [imm, Reg regIdx]], regIdx)
+    IR.Value'I64 x -> do
+      let imm = Imm (fromIntegral x)
+      regIdx <- defineReg Quad
+      return ([Instr "mov" (Just Quad) [imm, Reg regIdx]], regIdx)
+    IR.Value'F32 x -> do
+      let imm = ImmF (Left x)
+      regIdx <- defineReg F32
+      return ([Instr "mov" (Just F32) [imm, Reg regIdx]], regIdx)
+    IR.Value'F64 x -> do
+      let imm = ImmF (Right x)
+      regIdx <- defineReg F64
+      return ([Instr "mov" (Just F64) [imm, Reg regIdx]], regIdx)
     -- TODO: aggregate
-    IR.Value'Address' addr ->
-      return ([], Addr (Text.unpack (addr ^. IR.symbol)) (addr ^. IR.offset))
+    IR.Value'Address' addr -> do
+      let imm = Addr (Text.unpack (addr ^. IR.symbol)) (addr ^. IR.offset)
+      regIdx <- defineReg Quad
+      return ([Instr "lea" (Just Quad) [imm, Reg regIdx]], regIdx)
     IR.Value'CastFrom fromIrValue -> do
-      (baseInstrs, fromValue) <- runValue fromIrValue
-      (copyInstrs, fromReg, fromSz) <- case fromValue of
-        Reg regIdx -> do
-          fromSz <- use (regSize . at regIdx . to unwrapMaybe)
-          return ([], fromValue, fromSz)
-        MReg _ _ -> error "unreachable"
-        _ -> do
-          let sz = case fromValue of
-                Imm _ -> Quad
-                ImmF (Left _) -> F32
-                ImmF (Right _) -> F64
-                Addr _ _ -> Quad
-          regIdx <- defineReg sz
-          let mov = Instr "mov" (Just sz) [fromValue, Reg regIdx]
-          return ([mov], Reg regIdx, sz)
+      (baseInstrs, fromRegIdx) <- runValue fromIrValue
+      fromSz <- use (regSize . at fromRegIdx . to unwrapMaybe)
       let toSz = case irValue ^. IR.type' . IR.kind of
             IR.Type'INT8 -> Byte
             IR.Type'INT16 -> Word
@@ -226,6 +191,7 @@ runValue irValue = do
             IR.Type'POINTER -> Quad
             IR.Type'BOOLEAN -> Byte
       toRegIdx <- defineReg toSz
+      let fromReg = Reg fromRegIdx
       let toReg = Reg toRegIdx
       let regs = [fromReg, toReg]
       castInstrs <- case (fromSz, toSz) of
@@ -249,7 +215,8 @@ runValue irValue = do
                 -- intN -> bool
                 _ -> return
                   [ Instr "test" (Just fromSz) [fromReg, fromReg]
-                  , Instr "setnz" Nothing [toReg]]
+                  , Instr "setnz" Nothing [toReg]
+                  ]
             -- F32/F64 <-> intN
             -- TODO: unsigned?
             -- TODO: cvtXX int arg must be r32/r64
@@ -258,19 +225,22 @@ runValue irValue = do
             (_, F32) -> return [Instr "cvtsi2ss" Nothing regs]
             (_, F64) -> return [Instr "cvtsi2sd" Nothing regs]
             -- intN -> intN
-            (Byte, _) -> return [Instr "mov" (Just Byte) regs]
-            (_, Byte) -> return [Instr "mov" (Just Byte) regs]
-            (Word, _) -> return [Instr "mov" (Just Word) regs]
-            (_, Word) -> return [Instr "mov" (Just Word) regs]
-            (Long, _) -> return [Instr "mov" (Just Long) regs]
-            (_, Long) -> return [Instr "mov" (Just Long) regs]
-            (Quad, Quad) -> return [Instr "mov" (Just Quad) regs]
-      return (baseInstrs ++ copyInstrs ++ castInstrs, toReg)
+            -- TODO: unsigned?
+            (Byte, _) -> return [Instr "movsb" (Just toSz) regs]
+            (_, Byte) -> return [Instr "mov" (Just toSz) regs]
+            (Word, _) -> return [Instr "movsw" (Just toSz) regs]
+            (_, Word) -> return [Instr "mov" (Just toSz) regs]
+            (Long, _) -> return [Instr "movsl" (Just toSz) regs]
+            (_, Long) -> return [Instr "mov" (Just toSz) regs]
+            (Quad, Quad) -> return [Instr "mov" (Just toSz) regs]
+      return (baseInstrs ++ castInstrs, toRegIdx)
     -- TODO: undef
     IR.Value'IrId irIdRaw -> do
       let irId = fromIntegral irIdRaw
-      regIdx <- use (regIdxByIrId . at irId . to unwrapMaybe)
-      return ([], Reg regIdx)
+      fromIdx <- use (regIdxByIrId . at irId . to unwrapMaybe)
+      regSize <- use (regSize . at fromIdx . to unwrapMaybe)
+      toIdx <- defineReg regSize
+      return ([Instr "mov" (Just regSize) [Reg fromIdx, Reg toIdx]], toIdx)
 
 getFuncDef :: Monoid a => RWS IR.IrModule a InstrSelectState IR.FunctionDef
 getFuncDef = do
@@ -295,6 +265,23 @@ getSuccessors bb =
       t ^. IR.switchDefaultTarget : t ^. IR.switchCaseTarget
   where
     t = bb ^. IR.terminator
+
+defineRegForIrId :: Monoid a
+                 => (IR.Type, Word32)
+                 -> RWS IR.IrModule a InstrSelectState RegIdx
+defineRegForIrId (tp, irId) = do
+  let sz = case tp ^. IR.kind of
+        IR.Type'INT8 -> Byte
+        IR.Type'INT16 -> Word
+        IR.Type'INT32 -> Long
+        IR.Type'INT64 -> Quad
+        IR.Type'FLOAT -> F32
+        IR.Type'DOUBLE -> F64
+        IR.Type'POINTER -> Quad
+        -- TODO: struct/array
+  regIdx <- defineReg sz
+  regIdxByIrId %= Map.insert (fromIntegral irId) regIdx
+  return regIdx
 
 defineReg :: Monoid a
           => RegSize
