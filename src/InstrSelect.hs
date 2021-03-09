@@ -18,7 +18,8 @@ import Text.Format (format)
 data RegSize
   = Byte | Word | Long | Quad
   | F64 | F32
-  | SizeAndAlign Int Int deriving (Eq, Show)
+  | SizeAndAlign Int Int -- implies stack alloc; reg value is the ptr
+    deriving (Eq, Show)
 
 newtype RegIdx = RegIdx Int deriving (Eq, Show, Ord)
 
@@ -115,6 +116,55 @@ runInstr :: Monoid a
          -> RWS IR.IrModule a InstrSelectState [Instr]
 runInstr irInstr =
   case irInstr ^. IR.kind of
+    IR.BasicBlock'Instruction'STORE -> do
+      (instrsDst, regIdxDst) <- runValue (irInstr ^. IR.storeDst)
+      (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.storeSrc)
+      regSize <- getRegSize regIdxSrc
+      -- "store a, b" means "mov a, (b)"
+      let mov = Instr "store" (Just regSize) [Reg regIdxSrc, Reg regIdxDst]
+      return (instrsDst ++ instrsSrc ++ [mov])
+    IR.BasicBlock'Instruction'LOAD -> do
+      (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.loadSrc)
+      regIdxDst <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+      regSize <- getRegSize regIdxDst
+      -- "load a, b" means "mov (a), b"
+      let mov = Instr "load" (Just regSize) [Reg regIdxSrc, Reg regIdxDst]
+      return (instrsSrc ++ [mov])
+    -- TODO: generic bin op processing?
+    IR.BasicBlock'Instruction'ADD -> do
+      (instrsL, regIdxL) <- runValue (irInstr ^. IR.binOpLeft)
+      (instrsR, regIdxR) <- runValue (irInstr ^. IR.binOpRight)
+      regSize <- getRegSize regIdxR
+      r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+      -- TODO: assuming szL == szR == szDst
+      let add = Instr "add" (Just regSize) [Reg regIdxL, Reg regIdxR]
+      let mov = Instr "mov" (Just regSize) [Reg regIdxR, Reg r]
+      return (instrsL ++ instrsR ++ [add, mov])
+    -- k | isCmpOp k -> do
+    --   (instrsL, regIdxL) <- runValue (irInstr ^. IR.binOpLeft)
+    --   (instrsR, regIdxR) <- runValue (irInstr ^. IR.binOpRight)
+    --   regSize <- getRegSize regIdxR
+    --   r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+    --   let tpKind = irInstr ^. IR.type' . IR.kind
+    --   let isFp = tpKind `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
+    --   let isEq = k == IR.BasicBlock'Instruction'EQ
+    --   let isNeq = k == IR.BasicBlock'Instruction'NEQ
+    --   cmp <- if isFp && (isEq || isNeq)
+    --         then do
+    --           -- eq/ne for fp needs special treatment here, since
+    --           -- (ucomi NaN, NaN) sets ZF=1 but NaN != NaN.
+    --           let (op1, op2, op3) = if isEq
+    --               then ("sete", "setnp", "and")
+    --               else ("setne", "setp", "or")
+    --           npRegIdx <- defineReg Byte
+    --           return
+    --             [ Instr "ucomi" (Just regSize) [Reg regIdxL, Reg regIdxR]
+    --             , Instr op1 Nothing [Reg r]
+    --             , Instr op2 Nothing [Reg npRegIdx]
+    --             , Instr op3 (Just Byte) [Reg npRegIdx, Reg r]
+    --             ]
+    --         else return []
+    --   return [] -- FIXME
     IR.BasicBlock'Instruction'VALUE -> do
       case irInstr ^. IR.value . IR.maybe'v of
         Just (IR.Value'Undef _) -> do
@@ -122,22 +172,11 @@ runInstr irInstr =
           return []
         _ -> do
           (instrs, regIdx) <- runValue (irInstr ^. IR.value)
-          regSize <- use (regSize . at regIdx . to unwrapMaybe)
+          regSize <- getRegSize regIdx
           r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
           let mov = Instr "mov" (Just regSize) [Reg regIdx, Reg r]
           return (instrs ++ [mov])
-    -- TODO: generic bin op processing?
-    IR.BasicBlock'Instruction'ADD -> do
-      (instrsL, regIdxL) <- runValue (irInstr ^. IR.binOpLeft)
-      (instrsR, regIdxR) <- runValue (irInstr ^. IR.binOpRight)
-      regSize <- use (regSize . at regIdxR . to unwrapMaybe)
-      -- TODO: assuming szL == szR == szDst
-      let add = Instr "add" (Just regSize) [Reg regIdxL, Reg regIdxR]
-      r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
-      let mov = Instr "mov" (Just regSize) [Reg regIdxR, Reg r]
-      return (instrsL ++ instrsR ++ [add, mov])
-    _ -> do
-      return [] -- TODO
+    x -> error ("TODO: unimplemented instr " ++ show x)
 
 runTerminator :: Monoid a
               => IR.BasicBlock'Terminator
@@ -182,7 +221,7 @@ runValue irValue = do
       return ([Instr "lea" (Just Quad) [imm, Reg regIdx]], regIdx)
     IR.Value'CastFrom fromIrValue -> do
       (baseInstrs, fromRegIdx) <- runValue fromIrValue
-      fromSz <- use (regSize . at fromRegIdx . to unwrapMaybe)
+      fromSz <- getRegSize fromRegIdx
       let toSz = case irValue ^. IR.type' . IR.kind of
             IR.Type'INT8 -> Byte
             IR.Type'INT16 -> Word
@@ -240,7 +279,7 @@ runValue irValue = do
     IR.Value'IrId irIdRaw -> do
       let irId = fromIntegral irIdRaw
       fromIdx <- use (regIdxByIrId . at irId . to unwrapMaybe)
-      regSize <- use (regSize . at fromIdx . to unwrapMaybe)
+      regSize <- getRegSize fromIdx
       toIdx <- defineReg regSize
       return ([Instr "mov" (Just regSize) [Reg fromIdx, Reg toIdx]], toIdx)
 
@@ -268,6 +307,11 @@ getSuccessors bb =
   where
     t = bb ^. IR.terminator
 
+getRegSize :: Monoid a
+           => RegIdx
+           -> RWS r a InstrSelectState RegSize
+getRegSize regIdx = use (regSize . at regIdx . to unwrapMaybe)
+
 defineRegForIrId :: Monoid a
                  => (IR.Type, Word32)
                  -> RWS IR.IrModule a InstrSelectState RegIdx
@@ -292,6 +336,13 @@ defineReg sz = do
   newIdx <- lastRegIdx <+= 1
   regSize %= Map.insert (RegIdx newIdx) sz
   return $ RegIdx newIdx
+
+isCmpOp :: IR.BasicBlock'Instruction'Kind -> Bool
+isCmpOp k = b <= v && v <= e
+  where
+    b = fromEnum IR.BasicBlock'Instruction'EQ
+    v = fromEnum k
+    e = fromEnum IR.BasicBlock'Instruction'UGEQ
 
 unwrapMaybe :: Maybe a -> a
 unwrapMaybe (Just x) = x
