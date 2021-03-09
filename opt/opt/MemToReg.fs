@@ -163,11 +163,7 @@ let run (fn: Proto.FunctionDef) (cfg: CFG.CFG) (dom: DOM.DOM) =
             r
 
     let rename() =
-        let c =
-            let getInstrId r = fn.Bbs.[r.Bb].Instructions.[r.Idx].Id
-            allocaRefs.Values
-            |> Seq.collect (Seq.map (fun r -> getInstrId r, ref 0))
-            |> Map.ofSeq
+        let c = allocaRefs.Keys |> Seq.map (fun r -> (r, ref 0)) |> Map.ofSeq
         let s = c |> Map.map (fun _ _ -> ref [])
         let vi = c |> Map.map (fun _ _ -> new List<uint>())
         let mutable oldLHS: Map<uint, uint> = Map.empty
