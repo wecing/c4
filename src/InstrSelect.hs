@@ -106,7 +106,9 @@ runBasicBlock basicBlockId = do
 runPhi :: Monoid a
        => IR.BasicBlock'PhiNode
        -> RWS IR.IrModule a InstrSelectState [Instr]
-runPhi _ = return [] -- TODO
+runPhi phi = do
+  defineRegForIrId (phi ^. IR.type', phi ^. IR.id)
+  return [] -- phi will be revisited and eliminated in reg allocator
 
 runInstr :: Monoid a
          => IR.BasicBlock'Instruction
