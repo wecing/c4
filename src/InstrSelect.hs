@@ -140,31 +140,60 @@ runInstr irInstr =
       let add = Instr "add" (Just regSize) [Reg regIdxL, Reg regIdxR]
       let mov = Instr "mov" (Just regSize) [Reg regIdxR, Reg r]
       return (instrsL ++ instrsR ++ [add, mov])
-    -- k | isCmpOp k -> do
-    --   (instrsL, regIdxL) <- runValue (irInstr ^. IR.binOpLeft)
-    --   (instrsR, regIdxR) <- runValue (irInstr ^. IR.binOpRight)
-    --   regSize <- getRegSize regIdxR
-    --   r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
-    --   let tpKind = irInstr ^. IR.type' . IR.kind
-    --   let isFp = tpKind `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
-    --   let isEq = k == IR.BasicBlock'Instruction'EQ
-    --   let isNeq = k == IR.BasicBlock'Instruction'NEQ
-    --   cmp <- if isFp && (isEq || isNeq)
-    --         then do
-    --           -- eq/ne for fp needs special treatment here, since
-    --           -- (ucomi NaN, NaN) sets ZF=1 but NaN != NaN.
-    --           let (op1, op2, op3) = if isEq
-    --               then ("sete", "setnp", "and")
-    --               else ("setne", "setp", "or")
-    --           npRegIdx <- defineReg Byte
-    --           return
-    --             [ Instr "ucomi" (Just regSize) [Reg regIdxL, Reg regIdxR]
-    --             , Instr op1 Nothing [Reg r]
-    --             , Instr op2 Nothing [Reg npRegIdx]
-    --             , Instr op3 (Just Byte) [Reg npRegIdx, Reg r]
-    --             ]
-    --         else return []
-    --   return [] -- FIXME
+    k | isCmpOp k -> do
+      (instrsL, regIdxL) <- runValue (irInstr ^. IR.binOpLeft)
+      (instrsR, regIdxR) <- runValue (irInstr ^. IR.binOpRight)
+      regSize <- getRegSize regIdxR
+      r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+      let tpKind = irInstr ^. IR.type' . IR.kind
+      let isFp = tpKind `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
+      let isEq = k == IR.BasicBlock'Instruction'EQ
+      let isNeq = k == IR.BasicBlock'Instruction'NEQ
+      cmp <- if isFp && (isEq || isNeq) then do
+              -- eq/ne for fp needs special treatment here, since
+              -- (ucomi NaN, NaN) sets ZF=1 but (NaN cmp NaN) is false.
+              let (op1, op2, op3) = if isEq
+                  then ("sete", "setnp", "and")
+                  else ("setne", "setp", "or")
+              npRegIdx <- defineReg Byte
+              return
+                [ Instr "ucomi" (Just regSize) [Reg regIdxL, Reg regIdxR]
+                , Instr op1 Nothing [Reg r]
+                , Instr op2 Nothing [Reg npRegIdx]
+                , Instr op3 (Just Byte) [Reg npRegIdx, Reg r]
+                ]
+            else if isFp then do
+              let (op, revCmpArgs) = case k of
+                    IR.BasicBlock'Instruction'LT -> ("seta", False)
+                    IR.BasicBlock'Instruction'GT -> ("seta", True)
+                    IR.BasicBlock'Instruction'LEQ -> ("setae", False)
+                    IR.BasicBlock'Instruction'GEQ -> ("setae", True)
+              let cmpArgs = if revCmpArgs
+                  then [Reg regIdxL, Reg regIdxR]
+                  else [Reg regIdxR, Reg regIdxL]
+              return
+                [ Instr "ucomi" (Just regSize) cmpArgs
+                , Instr op Nothing [Reg r]
+                ]
+            else do
+              let op = case k of
+                    IR.BasicBlock'Instruction'EQ -> "sete"
+                    IR.BasicBlock'Instruction'NEQ -> "setne"
+                    IR.BasicBlock'Instruction'LT -> "setl"
+                    IR.BasicBlock'Instruction'GT -> "setg"
+                    IR.BasicBlock'Instruction'LEQ -> "setle"
+                    IR.BasicBlock'Instruction'GEQ -> "setge"
+                    IR.BasicBlock'Instruction'ULT -> "setb"
+                    IR.BasicBlock'Instruction'UGT -> "seta"
+                    IR.BasicBlock'Instruction'ULEQ -> "setbe"
+                    IR.BasicBlock'Instruction'UGEQ -> "setae"
+              return
+                [ Instr "cmp" (Just regSize) [Reg regIdxR, Reg regIdxL]
+                , Instr op Nothing [Reg r]
+                ]
+      -- I actually do not understand why clang emits this
+      let and1 = Instr "and" (Just Byte) [Imm 1, Reg r]
+      return (instrsL ++ instrsR ++ cmp ++ [and1])
     IR.BasicBlock'Instruction'VALUE -> do
       case irInstr ^. IR.value . IR.maybe'v of
         Just (IR.Value'Undef _) -> do
