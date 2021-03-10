@@ -130,6 +130,14 @@ runInstr irInstr =
       -- "load a, b" means "mov (a), b"
       let mov = Instr "load" (Just regSize) [Reg regIdxSrc, Reg regIdxDst]
       return (instrsSrc ++ [mov])
+    IR.BasicBlock'Instruction'NOT -> do
+      (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.loadSrc)
+      regIdxDst <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+      regSize <- getRegSize regIdxDst
+      -- NOT could only be applied to integral types
+      let ins = Instr "not" (Just regSize) [Reg regIdxSrc]
+      let mov = Instr "mov" (Just regSize) [Reg regIdxSrc, Reg regIdxDst]
+      return (instrsSrc ++ [ins, mov])
     k | isBinArithOp k -> runBinArithOp irInstr k
     k | isCmpOp k -> runCmpOp irInstr k
     IR.BasicBlock'Instruction'VALUE -> do
