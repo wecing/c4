@@ -4,6 +4,7 @@
     <TargetFramework>net5.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="X86Rewrite.fs" />
     <Compile Include="CFG.fs" />
     <Compile Include="DOM.fs" />
     <Compile Include="MemToReg.fs" />
