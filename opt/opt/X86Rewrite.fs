@@ -18,7 +18,7 @@ let private classifyTp (ir: Proto.IrModule) (tp: Proto.Type)
         let rec f = fun () ->
             match !stack with
             | [] -> None
-            | (tp, paddingOnly) :: _ when tp.Kind = TK.Struct ->
+            | (tp, paddingOnly) :: tps when tp.Kind = TK.Struct ->
                 let structDef = ir.StructDefs.[tp.StructId]
                 let fields =
                     Seq.zip structDef.Type structDef.PaddingOnly |> List.ofSeq
@@ -27,9 +27,9 @@ let private classifyTp (ir: Proto.IrModule) (tp: Proto.Type)
                         fields |> List.map (fun x -> fst x, true)
                     else
                         fields
-                stack := fields @ !stack
+                stack := fields @ tps
                 f()
-            | (tp, paddingOnly) :: _ when tp.Kind = TK.Array ->
+            | (tp, paddingOnly) :: tps when tp.Kind = TK.Array ->
                 if tp.ArraySize > 16u then
                     // early return: if array size exceeds two eightbytes, the
                     // whole struct must also be larger than two eightbytes.
@@ -38,9 +38,10 @@ let private classifyTp (ir: Proto.IrModule) (tp: Proto.Type)
                 else
                     let tps = List.replicate (min 16u tp.ArraySize |> int)
                                              (tp.ArrayElemType, paddingOnly)
-                    stack := tps @ !stack
+                    stack := tps @ tps
                     f()
-            | (tp, paddingOnly) :: _ ->
+            | (tp, paddingOnly) :: tps ->
+                stack := tps
                 let (clazz, sz) =
                     match tp.Kind with
                     | TK.Int8 -> (INTEGER, 1u)
@@ -80,7 +81,9 @@ let private classifyTp (ir: Proto.IrModule) (tp: Proto.Type)
                     | (SSE, SSE) -> SSE
                 r :=
                     match !r with
-                    | _ when newClazz = MEMORY -> [MEMORY]
+                    | _ when newClazz = MEMORY ->
+                        classified := true
+                        [MEMORY]
                     | [_] -> [newClazz]
                     | [x; _] -> [x; newClazz]
                     | _ -> failwith "unreachable"
@@ -101,14 +104,51 @@ let private classifyTp (ir: Proto.IrModule) (tp: Proto.Type)
 // store i64, %arg1_p1, i64* (%p as i64*)
 // store i64, %arg1_p2, i64* (%p as i64* + 8)
 let private rewriteFnEntry (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
-    let irInstrs : Map<uint32, Instr> =
+    let irInstrs : Map<uint, Instr> =
         fn.Bbs.Values
         |> Seq.collect (fun bb -> bb.Instructions)
         |> Seq.map (fun x -> (x.Id, x))
         |> Map.ofSeq
-    
+
+    let nextIrId : unit -> uint =
+        let irIds =
+            irInstrs
+            |> Map.toSeq
+            |> Seq.map fst
+            |> Seq.append fn.Args
+            |> Set.ofSeq
+            |> ref
+        let lastIrId = Set.count !irIds |> uint |> ref
+        fun () ->
+            lastIrId := !lastIrId + 1u
+            while Set.contains !lastIrId !irIds do
+                lastIrId := !lastIrId + 1u
+            irIds := Set.add !lastIrId !irIds
+            !lastIrId
+
+    // TODO: also rewrite all Type.FUNCTION instances
+
     let processArg (alloc: Instr) (store: Instr) =
-        () // TODO
+        let cs = classifyTp ir store.StoreSrc.Type
+        let argIdx = Seq.findIndex (fun x -> x = store.StoreSrc.IrId) fn.Args
+        if cs = [MEMORY] then
+            // change fn signature
+            fn.ArgTypes.[argIdx] <- alloc.Type
+            // alloc -> value alias
+            alloc.Kind <- K.Value
+            alloc.Value <- Proto.Value()
+            alloc.Value.Type <- alloc.Type
+            alloc.Value.IrId <- store.StoreSrc.IrId
+            // store -> undef
+            store.Kind <- K.Value
+            store.Type <- store.StoreSrc.Type
+            store.Value <- Proto.Value()
+            store.Value.Type <- store.Type
+            store.Value.Undef <- true
+            store.StoreSrc <- null
+            store.StoreDst <- null
+        else
+            () // TODO
 
     irInstrs
     |> Map.toSeq
@@ -121,10 +161,8 @@ let private rewriteFnEntry (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
             && x.StoreSrc.Type.Kind = Proto.Type.Types.Kind.Struct)
     |> Seq.iter (fun x -> processArg irInstrs.[x.StoreDst.IrId] x)
 
-    () // TODO
-
 let run (ir: Proto.IrModule) =
     for KeyValue (_, fn) in ir.FunctionDefs do
         if fn.EntryBb <> 0u then
             rewriteFnEntry ir fn
-// TODO fn call, fn return
+            // TODO fn call, fn return
