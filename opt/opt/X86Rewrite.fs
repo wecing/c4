@@ -4,8 +4,10 @@ module X86Rewrite
 open C4.Ir
 
 type private Instr = Proto.BasicBlock.Types.Instruction
+type private Terminator = Proto.BasicBlock.Types.Terminator
 type private K = Instr.Types.Kind
 type private TK = Proto.Type.Types.Kind
+type private TermK = Terminator.Types.Kind
 type private VC = Proto.Value.VOneofCase
 
 type private EightByteClass = INTEGER | SSE | NO_CLASS | MEMORY
@@ -89,6 +91,9 @@ let private classifyTp (ir: Proto.IrModule) (tp: Proto.Type)
                     | _ -> failwith "unreachable"
     !r
 
+let sizeofTp (ir: Proto.IrModule) (tp: Proto.Type) : uint =
+    0u // TODO
+
 // rewrite arg store on fn entry, e.g.:
 //
 // %p = alloca &T
@@ -112,6 +117,7 @@ let private rewriteFnEntry (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
         |> Seq.map (fun x -> (x.Id, x))
         |> Map.ofSeq
 
+    // x86 rewrite must happen before MemToReg, so no phi here
     let nextIrId : unit -> uint =
         let irIds =
             irInstrs
@@ -226,9 +232,78 @@ let private rewriteFnEntry (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
             && x.StoreSrc.Type.Kind = Proto.Type.Types.Kind.Struct)
     |> Seq.iter (fun x -> processArg irInstrs.[x.StoreDst.IrId] x)
 
+// rewrite fn arg passing & value returning
+let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
+    let remIntRegs = ref 6 // rdi, rsi, rdx, rcx, r8, r9
+    let remSseRegs = ref 8 // xmm0 - xmm7
+
+    // this could be empty for fn decls
+    let irInstrs : Map<uint, Instr> =
+        fn.Bbs.Values
+        |> Seq.collect (fun bb -> bb.Instructions)
+        |> Seq.map (fun x -> (x.Id, x))
+        |> Map.ofSeq
+
+    // x86 rewrite must happen before MemToReg, so no phi here
+    let nextIrId : unit -> uint =
+        let irIds =
+            irInstrs
+            |> Map.toSeq
+            |> Seq.map fst
+            |> Seq.append fn.Args
+            |> Set.ofSeq
+            |> ref
+        let lastIrId = Set.count !irIds |> uint |> ref
+        fun () ->
+            lastIrId := !lastIrId + 1u
+            while Set.contains !lastIrId !irIds do
+                lastIrId := !lastIrId + 1u
+            irIds := Set.add !lastIrId !irIds
+            !lastIrId
+
+    // rewrite value returning first
+    if fn.ReturnType.Kind = TK.Struct &&
+       classifyTp ir fn.ReturnType = [MEMORY] then
+        // from:
+        //   &T f():
+        //     %v = load %p
+        //     ret %v
+        // to:
+        //   &T* f(&T* %r):
+        //     memcpy %r, %p
+        //     ret %r
+        remIntRegs := !remIntRegs - 1
+        let rt = Proto.Type()
+        rt.PointeeType <- fn.ReturnType
+        rt.Kind <- TK.Pointer
+        fn.ReturnType <- rt
+        let hiddenArg = nextIrId()
+        fn.Args.Insert(0, hiddenArg)
+        fn.ArgTypes.Insert(0, rt.Clone())
+
+        for bb in fn.Bbs.Values do
+            if bb.Terminator.Kind = TermK.Return then
+                let loadInstr = irInstrs.[bb.Terminator.ReturnValue.IrId]
+                bb.Terminator.ReturnValue.IrId <- hiddenArg
+                bb.Terminator.ReturnValue.Type <- rt.Clone()
+                // loadInstr -> memcpyInstr
+                loadInstr.Kind <- K.Memcpy
+                loadInstr.MemcpySrc <- loadInstr.LoadSrc
+                loadInstr.LoadSrc <- null
+                loadInstr.MemcpyDst <- Proto.Value()
+                loadInstr.MemcpyDst.IrId <- hiddenArg
+                loadInstr.MemcpyDst.Type <- rt.Clone()
+                loadInstr.MemcpySize <- sizeofTp ir rt.PointeeType
+    // keep using the load+ret pattern if &T could be passed via regs
+
+    () // TODO
+
 let run (ir: Proto.IrModule) =
     for KeyValue (_, fn) in ir.FunctionDefs do
-        if fn.EntryBb <> 0u then
-            rewriteFnEntry ir fn
-            // TODO fn call, fn return
-            // TODO: also rewrite all Type.FUNCTION instances
+        rewriteFn ir fn
+
+        // // TODO: fn signature needs to be updated even if entryBb = 0u
+        // if fn.EntryBb <> 0u then
+        //     rewriteFnEntry ir fn
+        //     // TODO fn call, fn return
+        //     // TODO: also rewrite all Type.FUNCTION instances
