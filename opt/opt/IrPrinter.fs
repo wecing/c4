@@ -72,7 +72,8 @@ let private printBb (id: uint32) (bb: Proto.BasicBlock) =
             | IK.Store -> $"store {fv i.StoreSrc}, {fv i.StoreDst}"
             | IK.Load ->
                 $"{assign} load {ft i.LoadSrc.Type.PointeeType}, {fv i.LoadSrc}"
-            | IK.Memcpy -> $"memcpy {fv i.MemcpyDst}, {fv i.MemcpySrc}"
+            | IK.Memcpy ->
+                $"memcpy {fv i.MemcpyDst}, {fv i.MemcpySrc}, i32 {i.MemcpySize}"
             | IK.Neg -> $"{assign} neg {fv i.NegSrc}"
             | IK.Not -> $"{assign} not {fv i.NotSrc}"
             | _ when IK.BitOr <= i.Kind && i.Kind <= IK.Ugeq ->

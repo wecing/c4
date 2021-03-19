@@ -94,144 +94,6 @@ let private classifyTp (ir: Proto.IrModule) (tp: Proto.Type)
 let sizeofTp (ir: Proto.IrModule) (tp: Proto.Type) : uint =
     0u // TODO
 
-// rewrite arg store on fn entry, e.g.:
-//
-// %p = alloca &T
-// store &T %arg1, &T* %p
-//
-// could be rewritten as:
-//
-// %p = &T* %arg1
-//
-// or:
-//
-// %p = alloca &T
-// store i64, %arg1_p1, i64* (%p as i64*)
-// store i64, %arg1_p2, i64* (%p as i64* + 8)
-//
-// fn signature will also be updated here.
-let private rewriteFnEntry (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
-    let irInstrs : Map<uint, Instr> =
-        fn.Bbs.Values
-        |> Seq.collect (fun bb -> bb.Instructions)
-        |> Seq.map (fun x -> (x.Id, x))
-        |> Map.ofSeq
-
-    // x86 rewrite must happen before MemToReg, so no phi here
-    let nextIrId : unit -> uint =
-        let irIds =
-            irInstrs
-            |> Map.toSeq
-            |> Seq.map fst
-            |> Seq.append fn.Args
-            |> Set.ofSeq
-            |> ref
-        let lastIrId = Set.count !irIds |> uint |> ref
-        fun () ->
-            lastIrId := !lastIrId + 1u
-            while Set.contains !lastIrId !irIds do
-                lastIrId := !lastIrId + 1u
-            irIds := Set.add !lastIrId !irIds
-            !lastIrId
-
-    let insertAfter (oldInstr: Instr) (newInstr: Instr) =
-        let (bbId, instrIdx) =
-            fn.Bbs
-            |> Seq.map (fun (KeyValue (bbId, bb)) ->
-                bb.Instructions
-                |> Seq.tryFindIndex (fun x -> x.Id = oldInstr.Id)
-                |> Option.map (fun idx -> bbId, idx))
-            |> Seq.find Option.isSome
-            |> Option.get
-        fn.Bbs.[bbId].Instructions.Insert(instrIdx + 1, newInstr)
-
-    let processArg (alloc: Instr) (store: Instr) =
-        let argIdx = Seq.findIndex (fun x -> x = store.StoreSrc.IrId) fn.Args
-        let cs = classifyTp ir store.StoreSrc.Type
-        if cs = [MEMORY] then
-            // change fn signature
-            fn.ArgTypes.[argIdx] <- alloc.Type
-            // alloc -> value alias
-            alloc.Kind <- K.Value
-            alloc.Value <- Proto.Value()
-            alloc.Value.Type <- alloc.Type
-            alloc.Value.IrId <- store.StoreSrc.IrId
-            // store -> undef
-            store.Kind <- K.Value
-            store.Type <- store.StoreSrc.Type
-            store.Value <- Proto.Value()
-            store.Value.Type <- store.Type
-            store.Value.Undef <- true
-            store.StoreSrc <- null
-            store.StoreDst <- null
-        else
-            let newStore() =
-                let s = Instr()
-                s.Id <- nextIrId()
-                s.Type <- Proto.Type()
-                s.Type.Kind <- TK.Void
-                s.Kind <- K.Store
-                // StoreDst/Src will be fully initialized later
-                s.StoreDst <- Proto.Value()
-                s.StoreSrc <- Proto.Value()
-                insertAfter store s
-                s
-
-            let processStore (s: Instr) (clazz: EightByteClass) (offset: int) =
-                let tp = Proto.Type()
-                tp.Kind <- if clazz = SSE then TK.Double else TK.Int64
-                let ptrTp = Proto.Type()
-                ptrTp.Kind <- TK.Pointer
-                ptrTp.PointeeType <- tp
-                
-                s.StoreSrc.Type <- tp
-
-                let dstValue =
-                    let dstAddr = Instr()
-                    dstAddr.Id <- nextIrId()
-                    dstAddr.Type <- ptrTp
-                    dstAddr.Kind <- K.Add
-                    dstAddr.BinOpLeft <- Proto.Value()
-                    dstAddr.BinOpLeft.Type <- ptrTp
-                    dstAddr.BinOpLeft.CastFrom <- Proto.Value()
-                    dstAddr.BinOpLeft.CastFrom.Type <- alloc.Type
-                    dstAddr.BinOpLeft.CastFrom.IrId <- alloc.Id
-                    dstAddr.BinOpRight <- Proto.Value()
-                    dstAddr.BinOpRight.Type <- Proto.Type()
-                    dstAddr.BinOpRight.Type.Kind <- TK.Int64
-                    dstAddr.BinOpRight.I64 <- int64 offset
-                    insertAfter alloc dstAddr
-                    let v = Proto.Value()
-                    v.Type <- ptrTp
-                    v.IrId <- dstAddr.Id
-                    v
-                s.StoreDst <- dstValue
-
-                // change fn signature
-                if s.StoreSrc.IrId = 0u then
-                    s.StoreSrc.IrId <- nextIrId()
-                    fn.Args.Insert(argIdx + 1, s.StoreSrc.IrId)
-                    fn.ArgTypes.Insert(argIdx + 1, tp)
-                else
-                    fn.ArgTypes.[argIdx] <- tp
-
-            Seq.zip cs [0; 8]
-            |> Seq.filter (fun (c, _) -> c <> NO_CLASS)
-            |> Seq.zip [Some store; None]
-            |> Seq.map (fun (s, x) -> (Option.defaultWith newStore s, x))
-            |> Seq.iter (fun (x, (y, z)) -> processStore x y z)
-
-    irInstrs
-    |> Map.toSeq
-    |> Seq.map snd
-    |> Seq.filter
-        (fun x ->
-            x.Kind = K.Store
-            && x.StoreSrc.VCase = VC.IrId
-            && Seq.contains x.StoreSrc.IrId fn.Args
-            && x.StoreSrc.Type.Kind = Proto.Type.Types.Kind.Struct)
-    |> Seq.iter (fun x -> processArg irInstrs.[x.StoreDst.IrId] x)
-
 // rewrite fn arg passing & value returning
 let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
     let remIntRegs = ref 6 // rdi, rsi, rdx, rcx, r8, r9
@@ -296,14 +158,155 @@ let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
                 loadInstr.MemcpySize <- sizeofTp ir rt.PointeeType
     // keep using the load+ret pattern if &T could be passed via regs
 
-    () // TODO
+    let stores =
+        irInstrs
+        |> Map.toSeq
+        |> Seq.map snd
+        |> Seq.filter
+            (fun x ->
+                x.Kind = K.Store
+                && x.StoreSrc.VCase = VC.IrId
+                && Seq.contains x.StoreSrc.IrId fn.Args
+                && x.StoreSrc.Type.Kind = TK.Struct)
+    let args =
+        Seq.zip fn.Args fn.ArgTypes
+        |> Seq.indexed
+        |> Seq.filter (fun p -> (snd (snd p)).Kind = TK.Struct)
+    for (argIdx, (argIrId, argTp)) in args do
+        // from:
+        //   f(&T %arg1):
+        //     %p = alloca &T
+        //     store &T %arg1, &T* %p
+        //
+        // to either:
+        //   f(i64 %arg1_p1, i64 %arg_p2):
+        //     %p = alloca &T
+        //     store i64, %arg1_p1, i64* (%p as i64* + 0)
+        //     store i64, %arg1_p2, i64* (%p as i64* + 8)
+        //
+        // or:
+        //   f(&T* %arg1):
+        //     %p = %arg1
+        let cs = classifyTp ir argTp
+        let splitStore =
+            if cs = [MEMORY] then
+                false
+            else
+                for c in cs do
+                    let r = if c = INTEGER then remIntRegs else remSseRegs
+                    r := !r - 1
+                !remIntRegs >= 0 && !remSseRegs >= 0
+        if splitStore then
+            let insertOrUpdateArg (irIdOpt: uint option)
+                          (clazz: EightByteClass) : uint =
+                let tp = Proto.Type()
+                tp.Kind <- if clazz = INTEGER then TK.Int64 else TK.Double
+                match irIdOpt with
+                | Some x ->
+                    fn.ArgTypes.[argIdx] <- tp
+                    x
+                | None ->
+                    let irId = nextIrId()
+                    fn.Args.Insert(argIdx + 1, irId)
+                    fn.ArgTypes.Insert(argIdx + 1, tp)
+                    irId
+            let args =
+                Seq.zip cs [0; 8]
+                |> Seq.filter (fun (c, _) -> c <> NO_CLASS)
+                |> Seq.zip [Some argIrId; None]
+                |> Seq.map (fun (irIdOpt, (clazz, offset)) -> 
+                    (insertOrUpdateArg irIdOpt clazz, clazz, offset))
+
+            if fn.EntryBb <> 0u then
+                let store =
+                    stores |> Seq.find (fun x -> x.StoreSrc.IrId = argIrId)
+                let alloc = irInstrs.[store.StoreDst.IrId]
+
+                let insertAfter (oldInstr: Instr) (newInstr: Instr) =
+                    let (bbId, instrIdx) =
+                        fn.Bbs
+                        |> Seq.map (fun (KeyValue (bbId, bb)) ->
+                            bb.Instructions
+                            |> Seq.tryFindIndex (fun x -> x.Id = oldInstr.Id)
+                            |> Option.map (fun idx -> bbId, idx))
+                        |> Seq.find Option.isSome
+                        |> Option.get
+                    fn.Bbs.[bbId].Instructions.Insert(instrIdx + 1, newInstr)
+
+                let newStore(): Instr =
+                    let s = Instr()
+                    s.Id <- nextIrId()
+                    s.Type <- Proto.Type()
+                    s.Type.Kind <- TK.Void
+                    s.Kind <- K.Store
+                    // StoreDst/Src will be fully initialized later
+                    s.StoreDst <- Proto.Value()
+                    s.StoreSrc <- Proto.Value()
+                    insertAfter store s
+                    s
+
+                let processStore (s: Instr)
+                                 (irId: uint)
+                                 (clazz: EightByteClass)
+                                 (offset: int) =
+                    let tp = Proto.Type()
+                    tp.Kind <- if clazz = SSE then TK.Double else TK.Int64
+                    let ptrTp = Proto.Type()
+                    ptrTp.Kind <- TK.Pointer
+                    ptrTp.PointeeType <- tp
+                    
+                    s.StoreSrc.IrId <- irId
+                    s.StoreSrc.Type <- tp.Clone()
+
+                    let dstValue =
+                        let dstAddr = Instr()
+                        dstAddr.Id <- nextIrId()
+                        dstAddr.Type <- ptrTp.Clone()
+                        dstAddr.Kind <- K.Add
+                        dstAddr.BinOpLeft <- Proto.Value()
+                        dstAddr.BinOpLeft.Type <- ptrTp.Clone()
+                        dstAddr.BinOpLeft.CastFrom <- Proto.Value()
+                        dstAddr.BinOpLeft.CastFrom.Type <- alloc.Type.Clone()
+                        dstAddr.BinOpLeft.CastFrom.IrId <- alloc.Id
+                        dstAddr.BinOpRight <- Proto.Value()
+                        dstAddr.BinOpRight.Type <- Proto.Type()
+                        dstAddr.BinOpRight.Type.Kind <- TK.Int64
+                        dstAddr.BinOpRight.I64 <- int64 offset
+                        insertAfter alloc dstAddr
+                        let v = Proto.Value()
+                        v.Type <- ptrTp.Clone()
+                        v.IrId <- dstAddr.Id
+                        v
+                    s.StoreDst <- dstValue
+
+                Seq.zip [Some store; None] args
+                |> Seq.map (fun (s, x) -> (Option.defaultWith newStore s, x))
+                |> Seq.iter (fun (a, (b, c, d)) -> processStore a b c d)
+        else
+            fn.ArgTypes.[argIdx] <- Proto.Type()
+            fn.ArgTypes.[argIdx].Kind <- TK.Pointer
+            fn.ArgTypes.[argIdx].PointeeType <- argTp
+            let argTp = fn.ArgTypes.[argIdx]
+            if fn.EntryBb <> 0u then
+                let store =
+                    stores |> Seq.find (fun x -> x.StoreSrc.IrId = argIrId)
+                let alloc = irInstrs.[store.StoreDst.IrId]
+                // alloc -> value alias
+                alloc.Kind <- K.Value
+                alloc.Value <- Proto.Value()
+                alloc.Value.Type <- argTp.Clone()
+                alloc.Value.IrId <- argIrId
+                // store -> undef
+                store.Kind <- K.Value
+                store.Type <- store.StoreSrc.Type
+                store.Value <- Proto.Value()
+                store.Value.Type <- store.Type.Clone()
+                store.Value.Undef <- true
+                store.StoreSrc <- null
+                store.StoreDst <- null
 
 let run (ir: Proto.IrModule) =
     for KeyValue (_, fn) in ir.FunctionDefs do
         rewriteFn ir fn
-
-        // // TODO: fn signature needs to be updated even if entryBb = 0u
-        // if fn.EntryBb <> 0u then
-        //     rewriteFnEntry ir fn
-        //     // TODO fn call, fn return
-        //     // TODO: also rewrite all Type.FUNCTION instances
+        // TODO: call instr
+        // TODO: also rewrite all Type.FUNCTION instances
