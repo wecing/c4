@@ -91,8 +91,20 @@ let private classifyTp (ir: Proto.IrModule) (tp: Proto.Type)
                     | _ -> failwith "unreachable"
     !r
 
-let sizeofTp (ir: Proto.IrModule) (tp: Proto.Type) : uint =
-    0u // TODO
+let rec sizeofTp (ir: Proto.IrModule) (tp: Proto.Type) : uint =
+    match tp.Kind with
+    | TK.Int8 -> 1u
+    | TK.Int16 -> 2u
+    | TK.Int32 -> 4u
+    | TK.Int64 -> 8u
+    | TK.Float -> 4u
+    | TK.Double -> 8u
+    | TK.Struct ->
+        let sd = ir.StructDefs.[tp.StructId]
+        sd.Type |> Seq.map (sizeofTp ir) |> Seq.sum
+    | TK.Pointer -> 8u
+    | TK.Array -> sizeofTp ir tp.ArrayElemType * tp.ArraySize
+    | _ -> failwith "illegal protobuf message"
 
 // rewrite fn arg passing & value returning
 let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
