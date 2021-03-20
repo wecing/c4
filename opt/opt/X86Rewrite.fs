@@ -91,7 +91,7 @@ let private classifyTp (ir: Proto.IrModule) (tp: Proto.Type)
                     | _ -> failwith "unreachable"
     !r
 
-let rec sizeofTp (ir: Proto.IrModule) (tp: Proto.Type) : uint =
+let rec private sizeofTp (ir: Proto.IrModule) (tp: Proto.Type) : uint =
     match tp.Kind with
     | TK.Int8 -> 1u
     | TK.Int16 -> 2u
