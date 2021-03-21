@@ -135,6 +135,28 @@ let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
             irIds := Set.add !lastIrId !irIds
             !lastIrId
 
+    let insertAfter (oldInstr: Instr) (newInstr: Instr) =
+        let (bbId, instrIdx) =
+            fn.Bbs
+            |> Seq.map (fun (KeyValue (bbId, bb)) ->
+                bb.Instructions
+                |> Seq.tryFindIndex (fun x -> x.Id = oldInstr.Id)
+                |> Option.map (fun idx -> bbId, idx))
+            |> Seq.find Option.isSome
+            |> Option.get
+        fn.Bbs.[bbId].Instructions.Insert(instrIdx + 1, newInstr)
+
+    let insertBefore (oldInstr: Instr) (newInstr: Instr) =
+        let (bbId, instrIdx) =
+            fn.Bbs
+            |> Seq.map (fun (KeyValue (bbId, bb)) ->
+                bb.Instructions
+                |> Seq.tryFindIndex (fun x -> x.Id = oldInstr.Id)
+                |> Option.map (fun idx -> bbId, idx))
+            |> Seq.find Option.isSome
+            |> Option.get
+        fn.Bbs.[bbId].Instructions.Insert(instrIdx, newInstr)
+
     // rewrite value returning first
     if fn.ReturnType.Kind = TK.Struct &&
        classifyTp ir fn.ReturnType = [MEMORY] then
@@ -202,12 +224,19 @@ let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
         let cs = classifyTp ir argTp
         let splitStore =
             if cs = [MEMORY] then
+                remIntRegs := !remIntRegs - 1
                 false
             else
-                for c in cs do
-                    let r = if c = INTEGER then remIntRegs else remSseRegs
-                    r := !r - 1
-                !remIntRegs >= 0 && !remSseRegs >= 0
+                let intRegs =
+                    cs |> Seq.filter (fun c -> c = INTEGER) |> Seq.length
+                let sseRegs = cs |> Seq.filter (fun c -> c = SSE) |> Seq.length
+                if !remIntRegs >= intRegs && !remSseRegs >= sseRegs then
+                    remIntRegs := !remIntRegs - intRegs
+                    remSseRegs := !remSseRegs - sseRegs
+                    true
+                else
+                    remIntRegs := !remIntRegs - 1
+                    false
         if splitStore then
             let insertOrUpdateArg (irIdOpt: uint option)
                           (clazz: EightByteClass) : uint =
@@ -233,17 +262,6 @@ let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
                 let store =
                     stores |> Seq.find (fun x -> x.StoreSrc.IrId = argIrId)
                 let alloc = irInstrs.[store.StoreDst.IrId]
-
-                let insertAfter (oldInstr: Instr) (newInstr: Instr) =
-                    let (bbId, instrIdx) =
-                        fn.Bbs
-                        |> Seq.map (fun (KeyValue (bbId, bb)) ->
-                            bb.Instructions
-                            |> Seq.tryFindIndex (fun x -> x.Id = oldInstr.Id)
-                            |> Option.map (fun idx -> bbId, idx))
-                        |> Seq.find Option.isSome
-                        |> Option.get
-                    fn.Bbs.[bbId].Instructions.Insert(instrIdx + 1, newInstr)
 
                 let newStore(): Instr =
                     let s = Instr()
@@ -284,7 +302,7 @@ let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
                         dstAddr.BinOpRight.Type <- Proto.Type()
                         dstAddr.BinOpRight.Type.Kind <- TK.Int64
                         dstAddr.BinOpRight.I64 <- int64 offset
-                        insertAfter alloc dstAddr
+                        insertBefore store dstAddr
                         let v = Proto.Value()
                         v.Type <- ptrTp.Clone()
                         v.IrId <- dstAddr.Id
@@ -326,6 +344,7 @@ let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
         for call in callInstrs do
             let remIntRegs = ref 6 // rdi, rsi, rdx, rcx, r8, r9
             let remSseRegs = ref 8 // xmm0 - xmm7
+
             // from:
             //   %p = alloca &T
             //   %v = call @f(...)
@@ -335,6 +354,7 @@ let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
             //   %v = call @f(%p, ...)
             let rt = call.FnCallFn.Type.PointeeType.FnReturnType
             if rt.Kind = TK.Struct && classifyTp ir rt = [MEMORY] then
+                remIntRegs := !remIntRegs - 1
                 let store =
                     irInstrs
                     |> Map.toSeq
@@ -344,14 +364,108 @@ let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
                 call.FnCallArgs.Insert(0, store.StoreDst)
                 call.Type <- store.StoreDst.Type.Clone()
                 store.Kind <- K.Value
+                store.Type <- Proto.Type()
+                store.Type.Kind <- TK.Int8
                 store.StoreSrc <- null
                 store.StoreDst <- null
                 store.Value <- Proto.Value()
-                store.Value.Type <- Proto.Type()
-                store.Value.Type.Kind <- TK.Int8
+                store.Value.Type <- store.Type.Clone()
                 store.Value.Undef <- true
 
-            () // TODO: args rewrite
+            // from:
+            //   %v = load %p
+            //   call @f(%v, ...)
+            // to:
+            //   %v1 = load (%p as i64* + 0)
+            //   %v2 = load (%p as i64* + 8)
+            //   call @f(%v1, %v2, ...)
+            // or:
+            //   call @f(%p, ...)
+            let args =
+                call.FnCallArgs
+                |> Seq.indexed
+                |> Seq.filter (fun (_, x) -> x.Type.Kind = TK.Struct)
+                |> Seq.map (fun (idx, arg) -> idx, arg.IrId, arg.Type)
+            let argsInserted = ref 0
+            for (argIdx, argIrId, argTp) in args do
+                let cs = classifyTp ir argTp
+                let splitStore =
+                    if cs = [MEMORY] then
+                        remIntRegs := !remIntRegs - 1
+                        false
+                    else
+                        let intRegs =
+                            cs
+                            |> Seq.filter (fun c -> c = INTEGER)
+                            |> Seq.length
+                        let sseRegs =
+                            cs |> Seq.filter (fun c -> c = SSE) |> Seq.length
+                        if !remIntRegs >= intRegs && !remSseRegs >= sseRegs then
+                            remIntRegs := !remIntRegs - intRegs
+                            remSseRegs := !remSseRegs - sseRegs
+                            true
+                        else
+                            remIntRegs := !remIntRegs - 1
+                            false
+
+                let load = irInstrs.[argIrId]
+                if splitStore then
+                    let origAddr = load.LoadSrc.Clone()
+                    let dstAddr (clazz: EightByteClass) (offset: int)
+                                : Proto.Value =
+                        let tp = Proto.Type()
+                        tp.Kind <- if clazz = SSE then TK.Double else TK.Int64
+                        let ptrTp = Proto.Type()
+                        ptrTp.Kind <- TK.Pointer
+                        ptrTp.PointeeType <- tp
+
+                        let dstAddr = Instr()
+                        dstAddr.Id <- nextIrId()
+                        dstAddr.Type <- ptrTp.Clone()
+                        dstAddr.Kind <- K.Add
+                        dstAddr.BinOpLeft <- Proto.Value()
+                        dstAddr.BinOpLeft.Type <- ptrTp.Clone()
+                        dstAddr.BinOpLeft.CastFrom <- origAddr.Clone()
+                        dstAddr.BinOpRight <- Proto.Value()
+                        dstAddr.BinOpRight.Type <- Proto.Type()
+                        dstAddr.BinOpRight.Type.Kind <- TK.Int64
+                        dstAddr.BinOpRight.I64 <- int64 offset
+                        insertBefore load dstAddr
+                        let v = Proto.Value()
+                        v.Type <- ptrTp.Clone()
+                        v.IrId <- dstAddr.Id
+                        v
+
+                    for (idx, clazz) in Seq.indexed cs do
+                        let addr = dstAddr clazz (idx * 8)
+                        let load =
+                            if idx = 0 then
+                                load
+                            else
+                                let load = Instr()
+                                load.Id <- nextIrId()
+                                load.Kind <- K.Load
+                                insertBefore call load
+                                load
+                        load.Type <- addr.Type.PointeeType.Clone()
+                        load.LoadSrc <- addr
+                        let arg = Proto.Value()
+                        arg.Type <- load.Type.Clone()
+                        arg.IrId <- load.Id
+                        if idx <> 0 then
+                            argsInserted := !argsInserted + 1
+                            call.FnCallArgs.Insert(argIdx + !argsInserted, arg)
+                        else
+                            call.FnCallArgs.[argIdx + !argsInserted] <- arg
+                else
+                    call.FnCallArgs.[argIdx + !argsInserted] <- load.LoadSrc
+                    load.LoadSrc <- null
+                    load.Kind <- K.Value
+                    load.Type <- Proto.Type()
+                    load.Type.Kind <- TK.Int8
+                    load.Value <- Proto.Value()
+                    load.Value.Type <- load.Type.Clone()
+                    load.Value.Undef <- true
 
     rewriteCallInstrs()
 
