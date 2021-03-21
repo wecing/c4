@@ -469,7 +469,76 @@ let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
 
     rewriteCallInstrs()
 
+let rec rewriteFnType (ir: Proto.IrModule) (tp: Proto.Type) =
+    let visitTp = rewriteFnType ir
+    match tp.Kind with
+    | TK.Pointer -> visitTp tp.PointeeType
+    | TK.Array -> visitTp tp.ArrayElemType
+    | TK.Function ->
+        visitTp tp.FnReturnType
+        tp.FnArgTypes |> Seq.iter visitTp
+    | _ -> ()
+
+    if tp.Kind = TK.Function then
+        printfn ">>> to be rewritten: tp = %A" tp // TODO
+        () // TODO
+
 let run (ir: Proto.IrModule) =
-    for KeyValue (_, fn) in ir.FunctionDefs do
+    for fn in ir.FunctionDefs.Values do
         rewriteFn ir fn
-        // TODO: also rewrite all Type.FUNCTION instances
+
+    // also rewrite all Type.FUNCTION instances
+    let visitTp = rewriteFnType ir
+    let rec visitValue (v: Proto.Value) =
+        visitTp v.Type
+        match v.VCase with
+        | VC.Aggregate -> v.Aggregate.Values |> Seq.iter visitValue
+        | VC.CastFrom -> visitValue v.CastFrom
+        | _ -> ()
+    for sd in ir.StructDefs.Values do
+        sd.Type |> Seq.iter visitTp
+    for gd in ir.GlobalDefs.Values do
+        visitTp gd.Type
+        if gd.Value <> null then
+            visitValue gd.Value
+    for fn in ir.FunctionDefs.Values do
+        visitTp fn.ReturnType
+        fn.ArgTypes |> Seq.iter visitTp
+        for bb in fn.Bbs.Values do
+            for phi in bb.PhiNodes do
+                visitTp phi.Type
+            for instr in bb.Instructions do
+                visitTp instr.Type
+                match instr.Kind with
+                | K.Alloca -> ()
+                | K.Store ->
+                    visitValue instr.StoreDst
+                    visitValue instr.StoreSrc
+                | K.Load -> visitValue instr.LoadSrc
+                | K.Memcpy ->
+                    visitValue instr.MemcpyDst
+                    visitValue instr.MemcpySrc
+                | K.Neg -> visitValue instr.NegSrc
+                | K.Not -> visitValue instr.NotSrc
+                | k when K.BitOr <= k && k <= K.Ugeq ->
+                    visitValue instr.BinOpLeft
+                    visitValue instr.BinOpRight
+                | K.FnCall ->
+                    visitValue instr.FnCallFn
+                    instr.FnCallArgs |> Seq.iter visitValue
+                | K.VaStart -> visitValue instr.VaStartVl
+                | K.VaArg -> visitValue instr.VaArgVl
+                | K.VaEnd -> visitValue instr.VaEndVl
+                | K.VaCopy ->
+                    visitValue instr.VaCopyDst
+                    visitValue instr.VaCopySrc
+                | K.Value -> visitValue instr.Value
+                | _ -> failwith "illegal protobuf message"
+            let term = bb.Terminator
+            match term.Kind with
+            | TermK.CondBr -> visitValue term.CondBrCond
+            | TermK.Return -> visitValue term.ReturnValue
+            | TermK.Switch ->
+                visitValue term.SwitchCond
+                term.SwitchCaseValue |> Seq.iter visitValue
+            | _ -> ()

@@ -192,7 +192,7 @@ message BasicBlock {
         Value bin_op_left = 12;
         Value bin_op_right = 13;
 
-        // FUN CALL
+        // FN_CALL
         Value fn_call_fn = 14;
         repeated Value fn_call_args = 15;
 
