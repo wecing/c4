@@ -106,7 +106,7 @@ let rec private sizeofTp (ir: Proto.IrModule) (tp: Proto.Type) : uint =
     | TK.Array -> sizeofTp ir tp.ArrayElemType * tp.ArraySize
     | _ -> failwith "illegal protobuf message"
 
-// rewrite fn arg passing & value returning
+// rewrite fn arg passing & value returning & call instrs
 let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
     let remIntRegs = ref 6 // rdi, rsi, rdx, rcx, r8, r9
     let remSseRegs = ref 8 // xmm0 - xmm7
@@ -317,8 +317,45 @@ let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
                 store.StoreSrc <- null
                 store.StoreDst <- null
 
+    let rewriteCallInstrs() =
+        let callInstrs =
+            irInstrs
+            |> Map.toSeq
+            |> Seq.map snd
+            |> Seq.filter (fun x -> x.Kind = K.FnCall)
+        for call in callInstrs do
+            let remIntRegs = ref 6 // rdi, rsi, rdx, rcx, r8, r9
+            let remSseRegs = ref 8 // xmm0 - xmm7
+            // from:
+            //   %p = alloca &T
+            //   %v = call @f(...)
+            //   store %v, %p
+            // to:
+            //   %p = alloca
+            //   %v = call @f(%p, ...)
+            let rt = call.FnCallFn.Type.PointeeType.FnReturnType
+            if rt.Kind = TK.Struct && classifyTp ir rt = [MEMORY] then
+                let store =
+                    irInstrs
+                    |> Map.toSeq
+                    |> Seq.map snd
+                    |> Seq.find (fun x ->
+                        x.Kind = K.Store && x.StoreSrc.IrId = call.Id)
+                call.FnCallArgs.Insert(0, store.StoreDst)
+                call.Type <- store.StoreDst.Type.Clone()
+                store.Kind <- K.Value
+                store.StoreSrc <- null
+                store.StoreDst <- null
+                store.Value <- Proto.Value()
+                store.Value.Type <- Proto.Type()
+                store.Value.Type.Kind <- TK.Int8
+                store.Value.Undef <- true
+
+            () // TODO: args rewrite
+
+    rewriteCallInstrs()
+
 let run (ir: Proto.IrModule) =
     for KeyValue (_, fn) in ir.FunctionDefs do
         rewriteFn ir fn
-        // TODO: call instr
         // TODO: also rewrite all Type.FUNCTION instances
