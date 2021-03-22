@@ -20,16 +20,21 @@ message GlobalDef {
     Value value = 3; // optional
 }
 
+// byval should only be applied to struct ptr fn args.
+// for caller, struct should be passed on stack.
+// for callee, instr selector should resolve struct ptr to N(%rbp).
+
 message FunctionDef {
     Linkage linkage = 1;
     Type return_type = 2;
     repeated Type arg_types = 3;
     repeated uint32 args = 4;
-    bool is_vararg = 5;
+    repeated bool arg_byval = 5;
+    bool is_vararg = 6;
 
     // `entry_bb` and `bbs` could be unset for external functions
-    uint32 entry_bb = 6; // ids and bbs use different namespace
-    map<uint32, BasicBlock> bbs = 7; // 1-based ID
+    uint32 entry_bb = 7; // ids and bbs use different namespace
+    map<uint32, BasicBlock> bbs = 8; // 1-based ID
 }
 
 enum Linkage {
@@ -76,7 +81,8 @@ message Type {
     // FUNCTION
     Type fn_return_type = 6;
     repeated Type fn_arg_types = 7;
-    bool fn_is_vararg = 8;
+    repeated bool fn_arg_byval = 8;
+    bool fn_is_vararg = 9;
 }
 
 message Value {
@@ -195,22 +201,23 @@ message BasicBlock {
         // FN_CALL
         Value fn_call_fn = 14;
         repeated Value fn_call_args = 15;
+        repeated bool fn_call_arg_byval = 16;
 
         // VA_START
-        Value va_start_vl = 16;
+        Value va_start_vl = 17;
 
         // VA_ARG
-        Value va_arg_vl = 17; // type is instr return type
+        Value va_arg_vl = 18; // type is instr return type
 
         // VA_END
-        Value va_end_vl = 18;
+        Value va_end_vl = 19;
 
         // VA_COPY
-        Value va_copy_dst = 19;
-        Value va_copy_src = 20;
+        Value va_copy_dst = 20;
+        Value va_copy_src = 21;
 
         // VALUE
-        Value value = 21;
+        Value value = 22;
     }
     message Terminator {
         enum Kind {

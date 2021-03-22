@@ -9,7 +9,6 @@ let main argv =
     // TODO: insert .Clone() on protobuf objs where needed
     // TODO: rewrite aggregate value init, e.g. `store {i64 1, i64 2}, %T* %p`
     // as scalar store or memcpy
-    // TODO: splitstore: byval &T* (does not consume remIntRegs)
     X86Rewrite.run ir
     for KeyValue (_, fn) in ir.FunctionDefs do
         if fn.EntryBb <> 0u then

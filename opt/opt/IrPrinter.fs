@@ -17,7 +17,12 @@ let rec private formatType (tp: Proto.Type) =
     | K.Array -> $"[{tp.ArraySize} x {formatType tp.ArrayElemType}]"
     | K.Function ->
         let ret = formatType tp.FnReturnType
-        let args = List.ofSeq tp.FnArgTypes |> List.map formatType
+        let args =
+            Seq.zip tp.FnArgTypes tp.FnArgByval
+            |> List.ofSeq
+            |> List.map (fun (tp, bv) ->
+                let prefix = if bv then "byval " else ""
+                prefix + formatType tp)
         let varargs = if tp.FnIsVararg then ["..."] else []
         let fullArgs = String.concat "," (args @ varargs)
         $"{ret}({fullArgs})"
@@ -86,7 +91,12 @@ let private printBb (id: uint32) (bb: Proto.BasicBlock) =
                     | k -> k.ToString().ToLower()
                 $"{assign} {op} {ft i.Type}, {l}, {r}"
             | IK.FnCall ->
-                let args = i.FnCallArgs |> Seq.map fv |> String.concat ", "
+                let args =
+                    Seq.zip i.FnCallArgs i.FnCallArgByval
+                    |> Seq.map (fun (x, bv) ->
+                        let prefix = if bv then "byval " else ""
+                        prefix + fv x)
+                    |> String.concat ", "
                 if i.Type.Kind = K.Void then
                     $"call void, {fv i.FnCallFn} ({args})"
                 else
@@ -157,12 +167,14 @@ let printIr (ir: Proto.IrModule) =
                 | Proto.Linkage.Internal -> "internal "
                 | _ -> failwith "illegal protobuf message"
             let retTp = formatType fnDef.ReturnType
-            let formatArg = fun (tp, id) -> $"{formatType tp} %%{id}"
+            let formatArg = fun (tp, id, bv) ->
+                let prefix = if bv then "byval " else ""
+                $"{prefix}{formatType tp} %%{id}"
             let args =
                 if fnDef.Args.Count = 0 then
                     Seq.map formatType fnDef.ArgTypes
                 else
-                    Seq.zip fnDef.ArgTypes fnDef.Args
+                    Seq.zip3 fnDef.ArgTypes fnDef.Args fnDef.ArgByval
                     |> Seq.map formatArg
             let argsRepr =
                 List.ofSeq args @ if fnDef.IsVararg then ["..."] else []
