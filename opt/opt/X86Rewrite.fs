@@ -452,11 +452,11 @@ let private rewriteFn (ir: Proto.IrModule) (fn: Proto.FunctionDef) =
                         let arg = Proto.Value()
                         arg.Type <- load.Type.Clone()
                         arg.IrId <- load.Id
-                        if idx <> 0 then
+                        if idx = 0 then
+                            call.FnCallArgs.[argIdx + !argsInserted] <- arg
+                        else
                             argsInserted := !argsInserted + 1
                             call.FnCallArgs.Insert(argIdx + !argsInserted, arg)
-                        else
-                            call.FnCallArgs.[argIdx + !argsInserted] <- arg
                 else
                     call.FnCallArgs.[argIdx + !argsInserted] <- load.LoadSrc
                     load.LoadSrc <- null
@@ -480,8 +480,62 @@ let rec rewriteFnType (ir: Proto.IrModule) (tp: Proto.Type) =
     | _ -> ()
 
     if tp.Kind = TK.Function then
-        printfn ">>> to be rewritten: tp = %A" tp // TODO
-        () // TODO
+        let remIntRegs = ref 6 // rdi, rsi, rdx, rcx, r8, r9
+        let remSseRegs = ref 8 // xmm0 - xmm7
+
+        // from: &T(...)
+        // to: &T*(&T*, ...)
+        if tp.FnReturnType.Kind = TK.Struct &&
+           classifyTp ir tp.FnReturnType = [MEMORY] then
+            remIntRegs := !remIntRegs - 1
+            tp.FnArgTypes.Insert(0, Proto.Type())
+            tp.FnArgTypes.[0].Kind <- TK.Pointer
+            tp.FnArgTypes.[0].PointeeType <- tp.FnReturnType
+            tp.FnReturnType <- tp.FnArgTypes.[0].Clone()
+
+        // from: void(&T, ...)
+        // to: void(i64, i64, ...)
+        // or: void(&T*, ...)
+        let argsInserted = ref 0
+        let args =
+            tp.FnArgTypes
+            |> Seq.indexed
+            |> Seq.filter (fun (_, x) -> x.Kind = TK.Struct)
+        for (argIdx, argTp) in args do
+            let cs = classifyTp ir argTp
+            let splitStore =
+                if cs = [MEMORY] then
+                    remIntRegs := !remIntRegs - 1
+                    false
+                else
+                    let intRegs =
+                        cs
+                        |> Seq.filter (fun c -> c = INTEGER)
+                        |> Seq.length
+                    let sseRegs =
+                        cs |> Seq.filter (fun c -> c = SSE) |> Seq.length
+                    if !remIntRegs >= intRegs && !remSseRegs >= sseRegs then
+                        remIntRegs := !remIntRegs - intRegs
+                        remSseRegs := !remSseRegs - sseRegs
+                        true
+                    else
+                        remIntRegs := !remIntRegs - 1
+                        false
+            if splitStore then
+                for (clazzIdx, clazz) in Seq.indexed cs do
+                    let newTp = Proto.Type()
+                    newTp.Kind <- if clazz = SSE then TK.Double else TK.Int64
+                    if clazzIdx = 0 then
+                        tp.FnArgTypes.[argIdx + !argsInserted] <- newTp
+                    else
+                        argsInserted := !argsInserted + 1
+                        tp.FnArgTypes.Insert(argIdx + !argsInserted, newTp)
+            else
+                // TODO: byval pointer
+                let ptrTp = Proto.Type()
+                ptrTp.Kind <- TK.Pointer
+                ptrTp.PointeeType <- argTp
+                tp.FnArgTypes.[argIdx + !argsInserted] <- ptrTp
 
 let run (ir: Proto.IrModule) =
     for fn in ir.FunctionDefs.Values do
