@@ -2,7 +2,7 @@
 
 module InstrSelect (run) where
 
-import Control.Lens (Field2 (_2), at, to, use, uses, view, (^.), (%=), (<+=))
+import Control.Lens (Field2 (_2), at, to, use, uses, view, (^.), (.=), (%=), (<+=))
 import Control.Lens.TH (makeLenses)
 import Control.Monad.RWS.Lazy (RWS, evalRWS, tell)
 import Data.Int (Int64)
@@ -49,6 +49,7 @@ data Operand
   | Reg RegIdx -- mem, general reg, or sse reg
   | MReg RegSize MachineReg -- a specific machine reg
   | Addr String Int64 -- link time constant
+  | StackParam Int -- byte offset relative to head of stack params region
     deriving (Show)
 
 data Instr = Instr String (Maybe RegSize) [Operand] deriving (Show)
@@ -57,15 +58,30 @@ type FuncName = Text.Text
 
 type BasicBlockId = Word32
 
+data RunFnCallState = RunFnCallState
+  { _remIntRegs :: Int
+  , _remSseRegs :: Int
+  , _curStackSize :: Int
+  }
 data InstrSelectState = InstrSelectState
   { _visitedBasicBlocks :: Set.Set BasicBlockId
   , _currentFuncName :: FuncName
   , _lastRegIdx :: Int
   , _regSize :: Map.Map RegIdx RegSize
   , _regIdxByIrId :: Map.Map Int RegIdx
+  , _stackParamsRegionSize :: Int
+  , _runFnCallState :: RunFnCallState -- init'ed for every runFnCall call
   }
 
+makeLenses ''RunFnCallState
 makeLenses ''InstrSelectState
+
+initRunFnCallState :: RunFnCallState
+initRunFnCallState = RunFnCallState
+  { _remIntRegs = 6
+  , _remSseRegs = 8
+  , _curStackSize = 0
+  }
 
 type FuncBody = [(BasicBlockId, [Instr])]
 
@@ -83,6 +99,8 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
               , _lastRegIdx = 0
               , _regSize = Map.empty
               , _regIdxByIrId = Map.empty
+              , _stackParamsRegionSize = 0
+              , _runFnCallState = initRunFnCallState
               }
     runArgs' :: Monoid a
              => IR.FunctionDef
@@ -140,6 +158,7 @@ runInstr irInstr =
       return (instrsSrc ++ [ins, mov])
     k | isBinArithOp k -> runBinArithOp irInstr k
     k | isCmpOp k -> runCmpOp irInstr k
+    IR.BasicBlock'Instruction'FN_CALL -> runFnCall irInstr
     IR.BasicBlock'Instruction'VALUE -> do
       case irInstr ^. IR.value . IR.maybe'v of
         Just (IR.Value'Undef _) -> do
@@ -373,6 +392,49 @@ runCmpOp irInstr k = do
   let and1 = Instr "and" (Just Byte) [Imm 1, Reg r]
   return (instrsL ++ instrsR ++ cmp ++ [and1])
 
+runFnCall :: Monoid a
+          => IR.BasicBlock'Instruction
+          -> RWS IR.IrModule a InstrSelectState [Instr]
+runFnCall callInstr = do
+  runFnCallState .= initRunFnCallState
+
+  (instrsFn, regIdxFn) <- runValue (callInstr ^. IR.fnCallFn)
+  let tupleConcat xs = (map fst xs, map snd xs)
+  (instrsArgs, regIdxArgs) <-
+    tupleConcat <$> mapM runValue (callInstr ^. IR.fnCallArgs)
+
+  let args = zip (callInstr ^. IR.fnCallArgs) (callInstr ^. IR.fnCallArgByval)
+  firstPassInstrs <- mapM (runFnCallArg True) args
+  secondPassInstrs <- mapM (runFnCallArg False) args
+  -- TODO: return values / varargs %al
+
+  stackSize <- use (runFnCallState . curStackSize)
+  stackParamsRegionSize %= max stackSize
+  let instrs = instrsFn ++
+               concat (instrsArgs ++ firstPassInstrs ++ secondPassInstrs)
+  return instrs
+
+runFnCallArg :: Monoid a
+             => Bool
+             -> (IR.Value, Bool) -- arg, isByVal
+             -> RWS IR.IrModule a InstrSelectState [Instr]
+runFnCallArg isFirstPass (arg, True) = do
+  (sz, align) <- getTypeSizeAndAlign $ arg ^. IR.type' . IR.pointeeType
+  stackSize <- use $ runFnCallState . curStackSize
+  let stackSize =
+        if stackSize `mod` align == 0
+          then stackSize
+          else stackSize - (stackSize `mod` align) + align
+
+  -- TODO: copy / memcpy arg to (StackParam stackSize)
+
+  let stackSize = stackSize + sz
+
+  runFnCallState . curStackSize .= stackSize
+  return [] -- TODO
+runFnCallArg isFirstPass (arg, False) = do
+  return [] -- TODO
+
 getFuncDef :: Monoid a => RWS IR.IrModule a InstrSelectState IR.FunctionDef
 getFuncDef = do
   funcName <- use currentFuncName
@@ -396,6 +458,29 @@ getSuccessors bb =
       t ^. IR.switchDefaultTarget : t ^. IR.switchCaseTarget
   where
     t = bb ^. IR.terminator
+
+getTypeSizeAndAlign :: Monoid a
+                    => IR.Type
+                    -> RWS IR.IrModule a s (Int, Int)
+getTypeSizeAndAlign tp = do
+  case tp ^. IR.kind of
+    IR.Type'INT8 -> return (1, 1)
+    IR.Type'INT16 -> return (2, 2)
+    IR.Type'INT32 -> return (4, 4)
+    IR.Type'INT64 -> return (8, 8)
+    IR.Type'FLOAT -> return (4, 4)
+    IR.Type'DOUBLE -> return (8, 8)
+    IR.Type'STRUCT -> do
+      sd <- view (IR.structDefs . at (tp ^. IR.structId) . to unwrapMaybe)
+      sizeAndAlignList <- mapM getTypeSizeAndAlign (sd ^. IR.type')
+      let sz = sum $ map fst sizeAndAlignList
+      let align = foldr (max . snd . snd) 1 $
+                        filter fst $ zip (sd ^. IR.paddingOnly) sizeAndAlignList
+      return (sz, align)
+    IR.Type'POINTER -> return (8, 8)
+    IR.Type'ARRAY -> do
+      (sz, align) <- getTypeSizeAndAlign (tp ^. IR.arrayElemType)
+      return (sz * (tp ^. IR.arraySize . to fromIntegral), align)
 
 getRegSize :: Monoid a
            => RegIdx
