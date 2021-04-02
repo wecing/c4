@@ -2,17 +2,17 @@
 
 module InstrSelect (run) where
 
-import Control.Lens (Field2 (_2), at, to, use, uses, view, (^.), (.=), (%=), (<+=))
+import Control.Lens (at, to, use, uses, view, (^.), (.=), (%=), (<+=), (+=))
 import Control.Lens.TH (makeLenses)
 import Control.Monad.RWS.Lazy (RWS, evalRWS, tell)
 import Data.Int (Int64)
 import qualified Data.Map as Map
+import Data.Maybe (isJust, isNothing, fromJust)
 import qualified Data.ProtoLens.Runtime.Data.Text as Text
 import qualified Data.Set as Set
 import Data.Word (Word32)
 import qualified Proto.Ir as IR
 import qualified Proto.Ir_Fields as IR
-import Text.Format (format)
 
 -- data IntSize = Byte | Word | Long | Quad deriving (Eq)
 data RegSize
@@ -41,7 +41,7 @@ data MachineReg
   | XMM5
   | XMM6
   | XMM7
-    deriving (Show)
+    deriving (Eq, Show)
 
 data Operand
   = Imm Int64
@@ -50,7 +50,7 @@ data Operand
   | MReg RegSize MachineReg -- a specific machine reg
   | Addr String Int64 -- link time constant
   | StackParam Int -- byte offset relative to head of stack params region
-    deriving (Show)
+    deriving (Eq, Show)
 
 data Instr = Instr String (Maybe RegSize) [Operand] deriving (Show)
 
@@ -59,8 +59,8 @@ type FuncName = Text.Text
 type BasicBlockId = Word32
 
 data RunFnCallState = RunFnCallState
-  { _remIntRegs :: Int
-  , _remSseRegs :: Int
+  { _remIntRegs :: [MachineReg]
+  , _remSseRegs :: [MachineReg]
   , _curStackSize :: Int
   }
 data InstrSelectState = InstrSelectState
@@ -78,8 +78,8 @@ makeLenses ''InstrSelectState
 
 initRunFnCallState :: RunFnCallState
 initRunFnCallState = RunFnCallState
-  { _remIntRegs = 6
-  , _remSseRegs = 8
+  { _remIntRegs = [RDI, RSI, RDX, RCX, R8, R9]
+  , _remSseRegs = [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
   , _curStackSize = 0
   }
 
@@ -126,7 +126,7 @@ runPhi :: Monoid a
        => IR.BasicBlock'PhiNode
        -> RWS IR.IrModule a InstrSelectState [Instr]
 runPhi phi = do
-  defineRegForIrId (phi ^. IR.type', phi ^. IR.id)
+  _ <- defineRegForIrId (phi ^. IR.type', phi ^. IR.id)
   return [] -- phi will be revisited and eliminated in reg allocator
 
 runInstr :: Monoid a
@@ -137,24 +137,24 @@ runInstr irInstr =
     IR.BasicBlock'Instruction'STORE -> do
       (instrsDst, regIdxDst) <- runValue (irInstr ^. IR.storeDst)
       (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.storeSrc)
-      regSize <- getRegSize regIdxSrc
+      regSz <- getRegSize regIdxSrc
       -- "store a, b" means "mov a, (b)"
-      let mov = Instr "store" (Just regSize) [Reg regIdxSrc, Reg regIdxDst]
+      let mov = Instr "store" (Just regSz) [Reg regIdxSrc, Reg regIdxDst]
       return (instrsDst ++ instrsSrc ++ [mov])
     IR.BasicBlock'Instruction'LOAD -> do
       (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.loadSrc)
       regIdxDst <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
-      regSize <- getRegSize regIdxDst
+      regSz <- getRegSize regIdxDst
       -- "load a, b" means "mov (a), b"
-      let mov = Instr "load" (Just regSize) [Reg regIdxSrc, Reg regIdxDst]
+      let mov = Instr "load" (Just regSz) [Reg regIdxSrc, Reg regIdxDst]
       return (instrsSrc ++ [mov])
     IR.BasicBlock'Instruction'NOT -> do
       (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.loadSrc)
       regIdxDst <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
-      regSize <- getRegSize regIdxDst
+      regSz <- getRegSize regIdxDst
       -- NOT could only be applied to integral types
-      let ins = Instr "not" (Just regSize) [Reg regIdxSrc]
-      let mov = Instr "mov" (Just regSize) [Reg regIdxSrc, Reg regIdxDst]
+      let ins = Instr "not" (Just regSz) [Reg regIdxSrc]
+      let mov = Instr "mov" (Just regSz) [Reg regIdxSrc, Reg regIdxDst]
       return (instrsSrc ++ [ins, mov])
     k | isBinArithOp k -> runBinArithOp irInstr k
     k | isCmpOp k -> runCmpOp irInstr k
@@ -162,15 +162,15 @@ runInstr irInstr =
     IR.BasicBlock'Instruction'VALUE -> do
       case irInstr ^. IR.value . IR.maybe'v of
         Just (IR.Value'Undef _) -> do
-          defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+          _ <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
           return []
         _ -> do
           (instrs, regIdx) <- runValue (irInstr ^. IR.value)
-          regSize <- getRegSize regIdx
+          regSz <- getRegSize regIdx
           r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
-          let mov = Instr "mov" (Just regSize) [Reg regIdx, Reg r]
+          let mov = Instr "mov" (Just regSz) [Reg regIdx, Reg r]
           return (instrs ++ [mov])
-    x -> error ("TODO: unimplemented instr " ++ show x)
+    x -> error $ "TODO: unimplemented instr " ++ show x
 
 runTerminator :: Monoid a
               => IR.BasicBlock'Terminator
@@ -208,7 +208,7 @@ runValue irValue = do
       let imm = ImmF (Right x)
       regIdx <- defineReg F64
       return ([Instr "mov" (Just F64) [imm, Reg regIdx]], regIdx)
-    -- TODO: aggregate
+    IR.Value'Aggregate' _ -> undefined -- TODO
     IR.Value'Address' addr -> do
       let imm = Addr (Text.unpack (addr ^. IR.symbol)) (addr ^. IR.offset)
       regIdx <- defineReg Quad
@@ -225,6 +225,7 @@ runValue irValue = do
             IR.Type'DOUBLE -> F64
             IR.Type'POINTER -> Quad
             IR.Type'BOOLEAN -> Byte
+            k -> error $ "illegal IR: cannot cast to " ++ show k
       toRegIdx <- defineReg toSz
       let fromReg = Reg fromRegIdx
       let toReg = Reg toRegIdx
@@ -269,13 +270,13 @@ runValue irValue = do
             (_, Long) -> return [Instr "mov" (Just toSz) regs]
             (Quad, Quad) -> return [Instr "mov" (Just toSz) regs]
       return (baseInstrs ++ castInstrs, toRegIdx)
-    -- TODO: undef
+    IR.Value'Undef _ -> undefined -- TODO
     IR.Value'IrId irIdRaw -> do
       let irId = fromIntegral irIdRaw
-      fromIdx <- use (regIdxByIrId . at irId . to unwrapMaybe)
-      regSize <- getRegSize fromIdx
-      toIdx <- defineReg regSize
-      return ([Instr "mov" (Just regSize) [Reg fromIdx, Reg toIdx]], toIdx)
+      fromIdx <- use (regIdxByIrId . at irId . to fromJust)
+      regSz <- getRegSize fromIdx
+      toIdx <- defineReg regSz
+      return ([Instr "mov" (Just regSz) [Reg fromIdx, Reg toIdx]], toIdx)
 
 runBinArithOp :: Monoid a
               => IR.BasicBlock'Instruction
@@ -284,7 +285,7 @@ runBinArithOp :: Monoid a
 runBinArithOp irInstr k = do
   (instrsL, regIdxL) <- runValue (irInstr ^. IR.binOpLeft)
   (instrsR, regIdxR) <- runValue (irInstr ^. IR.binOpRight)
-  regSize <- getRegSize regIdxR
+  regSz <- getRegSize regIdxR
   r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
   -- TODO: assuming szL == szR == szDst
   let tpKind = irInstr ^. IR.type' . IR.kind
@@ -305,6 +306,7 @@ runBinArithOp irInstr k = do
         IR.BasicBlock'Instruction'UDIV -> "div"
         IR.BasicBlock'Instruction'MOD -> "idiv"
         IR.BasicBlock'Instruction'UMOD -> "div"
+        _ -> error $ "not a bin op: " ++ show k
   let isIntDiv =
         not isFp &&
         k `elem` [ IR.BasicBlock'Instruction'DIV
@@ -316,20 +318,20 @@ runBinArithOp irInstr k = do
                  ]
   let arith
         | isIntDiv =
-            [ Instr "mov" (Just regSize) [Imm 0, MReg regSize RDX]
-            , Instr "mov" (Just regSize) [Reg regIdxR, MReg regSize RAX]
-            , Instr op (Just regSize) [Reg regIdxL]
-            , Instr "mov" (Just regSize) [MReg regSize RAX, Reg r]
+            [ Instr "mov" (Just regSz) [Imm 0, MReg regSz RDX]
+            , Instr "mov" (Just regSz) [Reg regIdxR, MReg regSz RAX]
+            , Instr op (Just regSz) [Reg regIdxL]
+            , Instr "mov" (Just regSz) [MReg regSz RAX, Reg r]
             ]
         | isIntMod =
-            [ Instr "mov" (Just regSize) [Imm 0, MReg regSize RDX]
-            , Instr "mov" (Just regSize) [Reg regIdxR, MReg regSize RAX]
-            , Instr op (Just regSize) [Reg regIdxL]
-            , Instr "mov" (Just regSize) [MReg regSize RDX, Reg r]
+            [ Instr "mov" (Just regSz) [Imm 0, MReg regSz RDX]
+            , Instr "mov" (Just regSz) [Reg regIdxR, MReg regSz RAX]
+            , Instr op (Just regSz) [Reg regIdxL]
+            , Instr "mov" (Just regSz) [MReg regSz RDX, Reg r]
             ]
         | otherwise =
-            [ Instr op (Just regSize) [Reg regIdxR, Reg regIdxL]
-            , Instr "mov" (Just regSize) [Reg regIdxL, Reg r]
+            [ Instr op (Just regSz) [Reg regIdxR, Reg regIdxL]
+            , Instr "mov" (Just regSz) [Reg regIdxL, Reg r]
             ]
   return (instrsL ++ instrsR ++ arith)
 
@@ -340,7 +342,7 @@ runCmpOp :: Monoid a
 runCmpOp irInstr k = do
   (instrsL, regIdxL) <- runValue (irInstr ^. IR.binOpLeft)
   (instrsR, regIdxR) <- runValue (irInstr ^. IR.binOpRight)
-  regSize <- getRegSize regIdxR
+  regSz <- getRegSize regIdxR
   r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
   let tpKind = irInstr ^. IR.type' . IR.kind
   let isFp = tpKind `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
@@ -354,7 +356,7 @@ runCmpOp irInstr k = do
               else ("setne", "setp", "or")
           npRegIdx <- defineReg Byte
           return
-            [ Instr "ucomi" (Just regSize) [Reg regIdxL, Reg regIdxR]
+            [ Instr "ucomi" (Just regSz) [Reg regIdxL, Reg regIdxR]
             , Instr op1 Nothing [Reg r]
             , Instr op2 Nothing [Reg npRegIdx]
             , Instr op3 (Just Byte) [Reg npRegIdx, Reg r]
@@ -365,11 +367,12 @@ runCmpOp irInstr k = do
                 IR.BasicBlock'Instruction'GT -> ("seta", True)
                 IR.BasicBlock'Instruction'LEQ -> ("setae", False)
                 IR.BasicBlock'Instruction'GEQ -> ("setae", True)
+                _ -> error "illegal IR"
           let cmpArgs = if revCmpArgs
               then [Reg regIdxL, Reg regIdxR]
               else [Reg regIdxR, Reg regIdxL]
           return
-            [ Instr "ucomi" (Just regSize) cmpArgs
+            [ Instr "ucomi" (Just regSz) cmpArgs
             , Instr op Nothing [Reg r]
             ]
         else do
@@ -384,8 +387,9 @@ runCmpOp irInstr k = do
                 IR.BasicBlock'Instruction'UGT -> "seta"
                 IR.BasicBlock'Instruction'ULEQ -> "setbe"
                 IR.BasicBlock'Instruction'UGEQ -> "setae"
+                _ -> error "illegal IR"
           return
-            [ Instr "cmp" (Just regSize) [Reg regIdxR, Reg regIdxL]
+            [ Instr "cmp" (Just regSz) [Reg regIdxR, Reg regIdxL]
             , Instr op Nothing [Reg r]
             ]
   -- I actually do not understand why clang emits this
@@ -403,48 +407,95 @@ runFnCall callInstr = do
   (instrsArgs, regIdxArgs) <-
     tupleConcat <$> mapM runValue (callInstr ^. IR.fnCallArgs)
 
-  let args = zip (callInstr ^. IR.fnCallArgs) (callInstr ^. IR.fnCallArgByval)
+  let args = zip3 (map (^. IR.type') $ callInstr ^. IR.fnCallArgs)
+                  (callInstr ^. IR.fnCallArgByval)
+                  regIdxArgs
   firstPassInstrs <- mapM (runFnCallArg True) args
   secondPassInstrs <- mapM (runFnCallArg False) args
-  -- TODO: return values / varargs %al
+  -- TODO: return values / varargs %al / call
 
   stackSize <- use (runFnCallState . curStackSize)
-  stackParamsRegionSize %= max stackSize
+  stackParamsRegionSize %= max (roundUp stackSize 16) -- ABI requirement
   let instrs = instrsFn ++
                concat (instrsArgs ++ firstPassInstrs ++ secondPassInstrs)
   return instrs
 
+-- first pass: copy on-stack params
+-- second pass: pass rest params
 runFnCallArg :: Monoid a
              => Bool
-             -> (IR.Value, Bool) -- arg, isByVal
+             -> (IR.Type, Bool, RegIdx)
              -> RWS IR.IrModule a InstrSelectState [Instr]
-runFnCallArg isFirstPass (arg, True) = do
-  (sz, align) <- getTypeSizeAndAlign $ arg ^. IR.type' . IR.pointeeType
-  stackSize <- use $ runFnCallState . curStackSize
-  let stackSize =
-        if stackSize `mod` align == 0
-          then stackSize
-          else stackSize - (stackSize `mod` align) + align
+runFnCallArg isFirstPass (irTp, isByVal, regIdx) = do
+  let tp = irTp ^. (if isByVal then IR.pointeeType else to id)
+  (sz, _) <- getTypeSizeAndAlign tp
+  reg <- if isByVal then return Nothing else do
+    let isIntType = case tp ^. IR.kind of
+          IR.Type'INT8 -> True
+          IR.Type'INT16 -> True
+          IR.Type'INT32 -> True
+          IR.Type'INT64 -> True
+          IR.Type'FLOAT -> False
+          IR.Type'DOUBLE -> False
+          IR.Type'POINTER -> True
+          k -> error $ "illegal fn call arg type: " ++ show k
+    regs <- use $ runFnCallState
+                  . (if isIntType then remIntRegs else remSseRegs)
+    case regs of
+      r : rs -> do
+        runFnCallState . (if isIntType then remIntRegs else remSseRegs) .= rs
+        return $ Just r
+      _ -> return Nothing
 
-  -- TODO: copy / memcpy arg to (StackParam stackSize)
+  if isFirstPass && (isByVal || isNothing reg) then do
+    stackSize <- use $ runFnCallState . curStackSize
 
-  let stackSize = stackSize + sz
+    instrs <-
+      if isByVal then do
+        -- memcpy arg to (StackParam stackSize)
+        let repCount = Imm $ fromIntegral sz `div` 8
+        let rep1 = if repCount == Imm 0 then [] else
+              [ Instr "mov" (Just Quad) [repCount, MReg Quad RCX]
+              , Instr "lea" (Just Quad) [StackParam stackSize, MReg Quad RDI]
+              , Instr "mov" (Just Quad) [Reg regIdx, MReg Quad RSI]
+              -- Move RCX quadwords from (RSI) to (RDI)
+              , Instr "repmovs" (Just Quad) []
+              ]
+        let stackSize' = stackSize + (sz - sz `mod` 8)
+        let repCount' = Imm $ fromIntegral sz `mod` 8
+        let rep2 = if repCount' == Imm 0 then [] else
+              [ Instr "mov" (Just Quad) [repCount', MReg Quad RCX]
+              , Instr "lea" (Just Quad) [StackParam stackSize', MReg Quad RDI]
+              , Instr "mov" (Just Quad) [Reg regIdx, MReg Quad RSI]
+              -- Move RCX bytes from (RSI) to (RDI)
+              , Instr "repmovs" (Just Byte) []
+              ]
+        return (rep1 ++ rep2)
+      else do
+        -- copy arg to (StackParam stackSize)
+        regSz <- getRegSize regIdx
+        let mov = Instr "mov" (Just regSz) [Reg regIdx, StackParam stackSize]
+        return [mov]
 
-  runFnCallState . curStackSize .= stackSize
-  return [] -- TODO
-runFnCallArg isFirstPass (arg, False) = do
-  return [] -- TODO
+    runFnCallState . curStackSize += roundUp sz 8
+    return instrs
+  else if not isFirstPass && isJust reg then do
+    regSz <- getRegSize regIdx
+    let r = fromJust reg
+    let mov = Instr "mov" (Just regSz) [Reg regIdx, MReg regSz r]
+    return [mov]
+  else return []
 
 getFuncDef :: Monoid a => RWS IR.IrModule a InstrSelectState IR.FunctionDef
 getFuncDef = do
   funcName <- use currentFuncName
-  view (IR.functionDefs . at funcName . to unwrapMaybe)
+  view (IR.functionDefs . at funcName . to fromJust)
 
 getBasicBlock :: Monoid a
               => BasicBlockId
               -> RWS IR.IrModule a InstrSelectState IR.BasicBlock
 getBasicBlock basicBlockId =
-  (^. IR.bbs . at basicBlockId . to unwrapMaybe) <$> getFuncDef
+  (^. IR.bbs . at basicBlockId . to fromJust) <$> getFuncDef
 
 getSuccessors :: IR.BasicBlock -> [BasicBlockId]
 getSuccessors bb =
@@ -456,6 +507,7 @@ getSuccessors bb =
     IR.BasicBlock'Terminator'RETURN -> []
     IR.BasicBlock'Terminator'SWITCH ->
       t ^. IR.switchDefaultTarget : t ^. IR.switchCaseTarget
+    _ -> error "illegal IR"
   where
     t = bb ^. IR.terminator
 
@@ -471,7 +523,7 @@ getTypeSizeAndAlign tp = do
     IR.Type'FLOAT -> return (4, 4)
     IR.Type'DOUBLE -> return (8, 8)
     IR.Type'STRUCT -> do
-      sd <- view (IR.structDefs . at (tp ^. IR.structId) . to unwrapMaybe)
+      sd <- view (IR.structDefs . at (tp ^. IR.structId) . to fromJust)
       sizeAndAlignList <- mapM getTypeSizeAndAlign (sd ^. IR.type')
       let sz = sum $ map fst sizeAndAlignList
       let align = foldr (max . snd . snd) 1 $
@@ -481,11 +533,12 @@ getTypeSizeAndAlign tp = do
     IR.Type'ARRAY -> do
       (sz, align) <- getTypeSizeAndAlign (tp ^. IR.arrayElemType)
       return (sz * (tp ^. IR.arraySize . to fromIntegral), align)
+    k -> error $ "unexpected type " ++ show k
 
 getRegSize :: Monoid a
            => RegIdx
            -> RWS r a InstrSelectState RegSize
-getRegSize regIdx = use (regSize . at regIdx . to unwrapMaybe)
+getRegSize regIdx = use (regSize . at regIdx . to fromJust)
 
 defineRegForIrId :: Monoid a
                  => (IR.Type, Word32)
@@ -499,7 +552,10 @@ defineRegForIrId (tp, irId) = do
         IR.Type'FLOAT -> F32
         IR.Type'DOUBLE -> F64
         IR.Type'POINTER -> Quad
-        -- TODO: struct/array
+        IR.Type'BOOLEAN -> Byte
+        IR.Type'STRUCT -> undefined -- TODO
+        IR.Type'ARRAY -> undefined -- TODO
+        k -> error $ "unexpected type " ++ show k
   regIdx <- defineReg sz
   regIdxByIrId %= Map.insert (fromIntegral irId) regIdx
   return regIdx
@@ -526,5 +582,5 @@ isCmpOp k = b <= v && v <= e
     v = fromEnum k
     e = fromEnum IR.BasicBlock'Instruction'UGEQ
 
-unwrapMaybe :: Maybe a -> a
-unwrapMaybe (Just x) = x
+roundUp :: Int -> Int -> Int
+roundUp x n = if x `mod` n == 0 then x else x + n - (x `mod` n)
