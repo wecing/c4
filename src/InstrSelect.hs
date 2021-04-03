@@ -400,8 +400,6 @@ runFnCall :: Monoid a
           => IR.BasicBlock'Instruction
           -> RWS IR.IrModule a InstrSelectState [Instr]
 runFnCall callInstr = do
-  runFnCallState .= initRunFnCallState
-
   (instrsFn, regIdxFn) <- runValue (callInstr ^. IR.fnCallFn)
   let tupleConcat xs = (map fst xs, map snd xs)
   (instrsArgs, regIdxArgs) <-
@@ -410,14 +408,37 @@ runFnCall callInstr = do
   let args = zip3 (map (^. IR.type') $ callInstr ^. IR.fnCallArgs)
                   (callInstr ^. IR.fnCallArgByval)
                   regIdxArgs
+  runFnCallState .= initRunFnCallState
   firstPassInstrs <- mapM (runFnCallArg True) args
+  runFnCallState .= initRunFnCallState
   secondPassInstrs <- mapM (runFnCallArg False) args
-  -- TODO: return values / varargs %al / call
+
+  let isVarargs =
+        callInstr ^. IR.fnCallFn . IR.type' . IR.pointeeType . IR.fnIsVararg
+  alInstr <- if not isVarargs then return [] else do
+        n <- use $ runFnCallState . remSseRegs . to length . to (8 -)
+        return [ Instr "mov" (Just Byte) [Imm $ fromIntegral n, MReg Byte RAX] ]
+
+  -- something like callq *(%rax) or callq *-48(%rbp)
+  let actualCallInstr = [Instr "call" (Just Quad) [Reg regIdxFn]]
+
+  regIdxDst <- defineRegForIrId (callInstr ^. IR.type', callInstr ^. IR.id)
+  regSzDst <- getRegSize regIdxDst
+  let mvRet = case callInstr ^. IR.type' . IR.kind of
+        IR.Type'STRUCT ->
+          undefined -- TODO: copy RAX/RDX/XMM to regIdsDst (should be a ptr?)
+        k ->
+          let isSse = k `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
+              mr = if isSse then XMM0 else RAX
+          in [ Instr "mov" (Just regSzDst) [MReg regSzDst mr, Reg regIdxDst] ]
 
   stackSize <- use (runFnCallState . curStackSize)
   stackParamsRegionSize %= max (roundUp stackSize 16) -- ABI requirement
   let instrs = instrsFn ++
-               concat (instrsArgs ++ firstPassInstrs ++ secondPassInstrs)
+               concat (instrsArgs ++ firstPassInstrs ++ secondPassInstrs) ++
+               alInstr ++
+               actualCallInstr ++
+               mvRet
   return instrs
 
 -- first pass: copy on-stack params
