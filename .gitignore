@@ -35,5 +35,8 @@ opt/opt-proto/*.cs
 opt/opt-test/bin
 opt/opt-test/obj
 
+as/.stack-work/
+as/as-exe
+
 **/*.rs.bk
 stale_outputs_checked

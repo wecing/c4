@@ -1,0 +1,77 @@
+cabal-version: 1.24
+
+-- This file has been generated from package.yaml by hpack version 0.33.0.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: e2d22e1562dce74ed6c4c87d31df8ee8ce20092967ddf82c788532b77069b4a8
+
+name:           as
+version:        0.1.0.0
+description:    IR assembler for C4
+author:         Chenguang Wang
+maintainer:     w3cing@gmail.com
+copyright:      Chenguang Wang
+license:        BSD3
+build-type:     Custom
+extra-source-files:
+    src/ir.proto
+
+custom-setup
+  setup-depends:
+      Cabal
+    , base
+    , proto-lens-setup
+
+library
+  exposed-modules:
+      InstrSelect
+      Proto.Ir
+      Proto.Ir_Fields
+  other-modules:
+      Paths_as
+  hs-source-dirs:
+      src
+  ghc-options: -Wall
+  build-tool-depends:
+      proto-lens-protoc:proto-lens-protoc
+  build-depends:
+      base >=4.7 && <5
+    , containers
+    , lens
+    , mtl
+    , proto-lens-runtime
+    , text-format-simple
+  default-language: Haskell2010
+
+executable as-exe
+  main-is: Main.hs
+  other-modules:
+      Paths_as
+  hs-source-dirs:
+      app
+  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-tool-depends:
+      proto-lens-protoc:proto-lens-protoc
+  build-depends:
+      as
+    , base >=4.7 && <5
+    , bytestring
+    , pretty-simple
+    , proto-lens
+  default-language: Haskell2010
+
+test-suite as-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_as
+  hs-source-dirs:
+      test
+  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-tool-depends:
+      proto-lens-protoc:proto-lens-protoc
+  build-depends:
+      as
+    , base >=4.7 && <5
+  default-language: Haskell2010

@@ -21,3 +21,7 @@ dotnet build
 cd ..
 dotnet build
 cd ..
+
+cd as
+stack build --copy-bins
+cd ..

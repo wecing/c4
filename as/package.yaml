@@ -1,0 +1,68 @@
+name:                as
+version:             0.1.0.0
+license:             BSD3
+author:              "Chenguang Wang"
+maintainer:          "w3cing@gmail.com"
+copyright:           "Chenguang Wang"
+extra-source-files:  src/ir.proto
+
+custom-setup:
+  dependencies:
+  - base
+  - Cabal
+  - proto-lens-setup
+
+build-tools: proto-lens-protoc:proto-lens-protoc
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         IR assembler for C4
+
+dependencies:
+- base >= 4.7 && < 5
+
+ghc-options:
+  - -Wall
+
+library:
+  source-dirs: src
+  exposed-modules:
+  - InstrSelect
+  - Proto.Ir
+  - Proto.Ir_Fields
+  dependencies:
+  - containers
+  - lens
+  - mtl
+  - proto-lens-runtime
+  - text-format-simple
+
+executables:
+  as-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - as
+    - bytestring
+    - pretty-simple
+    - proto-lens
+
+tests:
+  as-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - as
