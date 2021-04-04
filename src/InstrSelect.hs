@@ -134,6 +134,7 @@ runInstr :: Monoid a
          -> RWS IR.IrModule a InstrSelectState [Instr]
 runInstr irInstr =
   case irInstr ^. IR.kind of
+    IR.BasicBlock'Instruction'ALLOCA -> undefined -- TODO
     IR.BasicBlock'Instruction'STORE -> do
       (instrsDst, regIdxDst) <- runValue (irInstr ^. IR.storeDst)
       (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.storeSrc)
@@ -148,6 +149,8 @@ runInstr irInstr =
       -- "load a, b" means "mov (a), b"
       let mov = Instr "load" (Just regSz) [Reg regIdxSrc, Reg regIdxDst]
       return (instrsSrc ++ [mov])
+    IR.BasicBlock'Instruction'MEMCPY -> undefined -- TODO
+    IR.BasicBlock'Instruction'NEG -> undefined -- TODO
     IR.BasicBlock'Instruction'NOT -> do
       (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.loadSrc)
       regIdxDst <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
@@ -159,6 +162,10 @@ runInstr irInstr =
     k | isBinArithOp k -> runBinArithOp irInstr k
     k | isCmpOp k -> runCmpOp irInstr k
     IR.BasicBlock'Instruction'FN_CALL -> runFnCall irInstr
+    IR.BasicBlock'Instruction'VA_START -> undefined -- TODO
+    IR.BasicBlock'Instruction'VA_ARG -> undefined -- TODO
+    IR.BasicBlock'Instruction'VA_END -> undefined -- TODO
+    IR.BasicBlock'Instruction'VA_COPY -> undefined -- TODO
     IR.BasicBlock'Instruction'VALUE -> do
       case irInstr ^. IR.value . IR.maybe'v of
         Just (IR.Value'Undef _) -> do
@@ -170,12 +177,42 @@ runInstr irInstr =
           r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
           let mov = Instr "mov" (Just regSz) [Reg regIdx, Reg r]
           return (instrs ++ [mov])
-    x -> error $ "TODO: unimplemented instr " ++ show x
+    k -> error $ "illegal IR: instr kind " ++ show k
 
 runTerminator :: Monoid a
               => IR.BasicBlock'Terminator
               -> RWS IR.IrModule a InstrSelectState [Instr]
-runTerminator _ = return [] -- TODO
+runTerminator term = do
+  case term ^. IR.kind of
+    IR.BasicBlock'Terminator'BR -> do
+      label <- getLabel $ term ^. IR.brTarget
+      return [Instr "jmp" (Just Quad) [Addr label 0]]
+    IR.BasicBlock'Terminator'COND_BR -> do
+      labelTrue <- getLabel $ term ^. IR.condBrTrue
+      labelFalse <- getLabel $ term ^. IR.condBrFalse
+      (instrsCond, regIdxCond) <- runValue $ term ^. IR.condBrCond
+      let instrsBr =
+            [ Instr "cmp" (Just Byte) [Imm 0, Reg regIdxCond]
+            , Instr "je" (Just Quad) [Addr labelFalse 0]
+            , Instr "jmp" (Just Quad) [Addr labelTrue 0]
+            ]
+      return $ instrsCond ++ instrsBr
+    IR.BasicBlock'Terminator'RETURN_VOID ->
+      return [ Instr "ret" Nothing [] ]
+    IR.BasicBlock'Terminator'RETURN -> do
+      (instrsVal, regIdxVal) <- runValue $ term ^. IR.returnValue
+      regSzVal <- getRegSize regIdxVal
+      let instrsRet = case term ^. IR.returnValue . IR.type' . IR.kind of
+            IR.Type'STRUCT -> undefined -- TODO: copy regIdxVal to RAX/RDX/XMM
+            k ->
+              let isSse = k `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
+                  mr = if isSse then XMM0 else RAX
+              in [ Instr "mov" (Just regSzVal) [Reg regIdxVal, MReg regSzVal mr]
+                 , Instr "ret" Nothing []]
+      return $ instrsVal ++ instrsRet
+    IR.BasicBlock'Terminator'SWITCH -> do
+      undefined -- TODO
+    k -> error $ "illegal IR: terminator kind " ++ show k
 
 -- always return a writable RegIdx
 runValue :: Monoid a
@@ -417,7 +454,7 @@ runFnCall callInstr = do
         callInstr ^. IR.fnCallFn . IR.type' . IR.pointeeType . IR.fnIsVararg
   alInstr <- if not isVarargs then return [] else do
         n <- use $ runFnCallState . remSseRegs . to length . to (8 -)
-        return [ Instr "mov" (Just Byte) [Imm $ fromIntegral n, MReg Byte RAX] ]
+        return [Instr "mov" (Just Byte) [Imm $ fromIntegral n, MReg Byte RAX]]
 
   -- something like callq *(%rax) or callq *-48(%rbp)
   let actualCallInstr = [Instr "call" (Just Quad) [Reg regIdxFn]]
@@ -430,7 +467,7 @@ runFnCall callInstr = do
         k ->
           let isSse = k `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
               mr = if isSse then XMM0 else RAX
-          in [ Instr "mov" (Just regSzDst) [MReg regSzDst mr, Reg regIdxDst] ]
+          in [Instr "mov" (Just regSzDst) [MReg regSzDst mr, Reg regIdxDst]]
 
   stackSize <- use (runFnCallState . curStackSize)
   stackParamsRegionSize %= max (roundUp stackSize 16) -- ABI requirement
@@ -588,6 +625,13 @@ defineReg sz = do
   newIdx <- lastRegIdx <+= 1
   regSize %= Map.insert (RegIdx newIdx) sz
   return $ RegIdx newIdx
+
+getLabel :: Monoid a
+         => BasicBlockId
+         -> RWS r a InstrSelectState String
+getLabel bb = do
+  fnName <- uses currentFuncName Text.unpack
+  return $ "." ++ fnName ++ "." ++ show bb
 
 isBinArithOp :: IR.BasicBlock'Instruction'Kind -> Bool
 isBinArithOp k = b <= v && v <= e
