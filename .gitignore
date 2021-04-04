@@ -2,7 +2,6 @@
 *.swp
 
 pp/src/main/java/c4/ast
-pp/src/main/resources/ast.proto
 
 pp/target
 pp/project/target
@@ -20,8 +19,6 @@ pp/**/metals.sbt
 
 pp/.vscode
 
-cc/ast.proto
-cc/ir.proto
 cc/src/ast.rs
 cc/src/ir.rs
 
@@ -37,7 +34,6 @@ opt/opt/obj
 opt/opt-proto/bin
 opt/opt-proto/obj
 opt/opt-proto/*.cs
-opt/opt-proto/*.proto
 opt/opt-test/bin
 opt/opt-test/obj
 

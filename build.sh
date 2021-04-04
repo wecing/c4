@@ -26,11 +26,6 @@ java -jar pp/src/main/resources/java-cup-11b.jar \
   -parser C4Parser -symbols C4Symbols -destdir pp/src/main/java/c4/ast/ \
   pp/src/main/resources/parser.cup
 
-cp_if_outdated proto/ast.proto pp/src/main/resources/ast.proto
-cp_if_outdated proto/ast.proto cc/ast.proto
-cp_if_outdated proto/ir.proto cc/ir.proto
-cp_if_outdated proto/ir.proto opt/opt-proto/ir.proto
-
 cd pp
 sbt assembly
 cd ..
