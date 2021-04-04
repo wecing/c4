@@ -1,8 +1,6 @@
 .DS_Store
 *.swp
 
-pp/src/main/java/c4/ast
-
 pp/target
 pp/project/target
 pp/project/project
