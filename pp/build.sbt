@@ -4,7 +4,7 @@ version := "1.0"
 scalaVersion := "2.13.3"
 scalacOptions ++= Seq("-deprecation", "-feature")
 
-libraryDependencies += "com.github.vbmacher" % "java-cup" % "11b"
+libraryDependencies += "com.github.vbmacher" % "java-cup-runtime" % "11b"
 libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.0" % "test"
 libraryDependencies += "org.typelevel" %% "cats-core" % "2.1.1"
 libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.1.2"
