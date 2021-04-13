@@ -1,12 +1,15 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 
 module InstrSelect (run) where
 
 import Control.Lens (at, to, use, uses, view, (^.), (.=), (%=), (<+=), (+=))
 import Control.Lens.TH (makeLenses)
-import Control.Monad.RWS.Lazy (RWS, evalRWS, tell)
+import Control.Monad.RWS.Lazy (RWS, evalRWS, execRWS, state, tell)
 import Data.Int (Int64)
+import Data.List (tails)
 import qualified Data.Map as Map
+import Data.Map ((!))
 import Data.Maybe (isJust, isNothing, fromJust)
 import qualified Data.ProtoLens.Runtime.Data.Text as Text
 import qualified Data.Set as Set
@@ -83,13 +86,13 @@ initRunFnCallState = RunFnCallState
   , _curStackSize = 0
   }
 
-type FuncBody = [(BasicBlockId, [Instr])]
+type FuncBody = Map.Map BasicBlockId [Instr]
 
 run :: IR.IrModule -> Map.Map FuncName FuncBody
 run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
   where
     runFunc' :: FuncName -> IR.FunctionDef -> FuncBody
-    runFunc' funcName funcDef = snd $ evalRWS m r s
+    runFunc' funcName funcDef = dePhi phiNodes regIdxSz funcBody
       where
         m = runArgs' funcDef >> runBasicBlock (funcDef ^. IR.entryBb)
         r = irModule
@@ -102,6 +105,10 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
               , _stackParamsRegionSize = 0
               , _runFnCallState = initRunFnCallState
               }
+        (s', funcBody) = execRWS m r s
+        phiNodes = Map.map (^. IR.phiNodes) $ funcDef ^. IR.bbs
+        regIdxSz = Map.map (\idx -> (idx, (s' ^. regSize) ! idx))
+                           $ s' ^. regIdxByIrId
     runArgs' :: Monoid a
              => IR.FunctionDef
              -> RWS IR.IrModule a InstrSelectState ()
@@ -119,7 +126,7 @@ runBasicBlock basicBlockId = do
       xs1 <- concat <$> mapM runPhi (basicBlock ^. IR.phiNodes)
       xs2 <- concat <$> mapM runInstr (basicBlock ^. IR.instructions)
       xs3 <- runTerminator $ basicBlock ^. IR.terminator
-      tell [(basicBlockId, xs1 ++ xs2 ++ xs3)]
+      tell $ Map.singleton basicBlockId $ xs1 ++ xs2 ++ xs3
       mapM_ runBasicBlock $ getSuccessors basicBlock
 
 runPhi :: Monoid a
@@ -543,6 +550,56 @@ runFnCallArg isFirstPass (irTp, isByVal, regIdx) = do
     let mov = Instr "mov" (Just regSz) [Reg regIdx, MReg regSz r]
     return [mov]
   else return []
+
+dePhi :: Map.Map BasicBlockId [IR.BasicBlock'PhiNode]
+      -> Map.Map Int (RegIdx, RegSize)
+      -> FuncBody
+      -> FuncBody
+dePhi phiNodes regIdxSz funcBody = r
+  where
+    -- for: %dst = phi [(bbId, %src), ...]
+    -- produce: mov %src, %dst
+    getMov :: BasicBlockId -> IR.BasicBlock'PhiNode -> Instr
+    getMov bbId phi =
+      let srcIrId = phi ^. IR.id
+          dstIrId = snd $ head $ filter (\p -> fst p == bbId)
+                                        $ zip (phi ^. IR.bbIds)
+                                              (phi ^. IR.valIds)
+          (src, sz) = regIdxSz ! (fromIntegral srcIrId :: Int)
+          (dst, _) = regIdxSz ! (fromIntegral dstIrId :: Int)
+      in Instr "mov" (Just sz) [Reg dst, Reg src]
+    s :: [BasicBlockId]
+    s = filter (`Map.notMember` funcBody) [1..]
+    -- w: new bbs inserted for phi
+    -- return: funcBody with updated jmp targets
+    m :: RWS () FuncBody [BasicBlockId] FuncBody
+    m = Map.fromList <$> mapM f1 (Map.toList funcBody)
+    f1 :: (BasicBlockId, [Instr])
+       -> RWS () FuncBody [BasicBlockId] (BasicBlockId, [Instr])
+    f1 (bbId, instrs) = (bbId,) <$> mapM f2 (zip (repeat bbId) instrs)
+    f2 :: (BasicBlockId, Instr) -> RWS () FuncBody [BasicBlockId] Instr
+    f2 (bbId, Instr op sz args)
+      | op `elem` ["jmp", "je"] =
+        do let label = case args of
+                [Addr x 0] -> x
+                _ -> error "Cannot process jmp target"
+           let targetBbId =
+                let t = tail $ last $ filter (\x -> x /= [] && head x == '.')
+                                             $ tails label
+                in fromIntegral (read t :: Int) :: BasicBlockId
+           let phiNodes' = filter (\n -> bbId `elem` n ^. IR.bbIds)
+                                  (phiNodes ! targetBbId)
+           if null phiNodes' then return $ Instr op sz args else do
+             newBbId <- state (\s' -> (head s', tail s'))
+             let newBbLabel = reverse (dropWhile ('.' /=) $ reverse label)
+                              ++ show newBbId
+             let movs = map (getMov bbId) phiNodes' ++ [Instr "jmp" sz args]
+             tell $ Map.singleton newBbId movs
+             return $ Instr op sz [Addr newBbLabel 0]
+      | otherwise = return $ Instr op sz args
+    (funcBody', newBbs) = evalRWS m () s
+    r = newBbs `Map.union` funcBody' -- union is left-biased
+
 
 getFuncDef :: Monoid a => RWS IR.IrModule a InstrSelectState IR.FunctionDef
 getFuncDef = do
