@@ -4,7 +4,7 @@ cabal-version: 1.24
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e2d22e1562dce74ed6c4c87d31df8ee8ce20092967ddf82c788532b77069b4a8
+-- hash: 58c46a9a459d8ce7b905db126129e2e08eacb7e8460f658c011bc027e6df40bb
 
 name:           as
 version:        0.1.0.0
@@ -28,6 +28,7 @@ library
       InstrSelect
       Proto.Ir
       Proto.Ir_Fields
+      RegAlloc
   other-modules:
       Paths_as
   hs-source-dirs:
@@ -40,8 +41,8 @@ library
     , containers
     , lens
     , mtl
+    , pretty-simple
     , proto-lens-runtime
-    , text-format-simple
   default-language: Haskell2010
 
 executable as-exe

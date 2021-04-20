@@ -1,19 +1,21 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 
-module InstrSelect (run) where
+module InstrSelect where
 
 import Control.Lens (at, to, use, uses, view, (^.), (.=), (%=), (<+=), (+=))
 import Control.Lens.TH (makeLenses)
 import Control.Monad.RWS.Lazy (RWS, evalRWS, execRWS, state, tell)
 import Data.Int (Int64)
 import Data.List (tails)
-import qualified Data.Map as Map
 import Data.Map ((!))
 import Data.Maybe (isJust, isNothing, fromJust)
+import Data.Word (Word32)
+
+import qualified Data.Map as Map
 import qualified Data.ProtoLens.Runtime.Data.Text as Text
 import qualified Data.Set as Set
-import Data.Word (Word32)
+
 import qualified Proto.Ir as IR
 import qualified Proto.Ir_Fields as IR
 
@@ -65,7 +67,7 @@ data RunFnCallState = RunFnCallState
   { _remIntRegs :: [MachineReg]
   , _remSseRegs :: [MachineReg]
   , _curStackSize :: Int
-  }
+  } deriving (Show)
 data InstrSelectState = InstrSelectState
   { _visitedBasicBlocks :: Set.Set BasicBlockId
   , _currentFuncName :: FuncName
@@ -74,7 +76,7 @@ data InstrSelectState = InstrSelectState
   , _regIdxByIrId :: Map.Map Int RegIdx
   , _stackParamsRegionSize :: Int
   , _runFnCallState :: RunFnCallState -- init'ed for every runFnCall call
-  }
+  } deriving (Show)
 
 makeLenses ''RunFnCallState
 makeLenses ''InstrSelectState
@@ -88,11 +90,11 @@ initRunFnCallState = RunFnCallState
 
 type FuncBody = Map.Map BasicBlockId [Instr]
 
-run :: IR.IrModule -> Map.Map FuncName FuncBody
+run :: IR.IrModule -> Map.Map FuncName (InstrSelectState, FuncBody)
 run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
   where
-    runFunc' :: FuncName -> IR.FunctionDef -> FuncBody
-    runFunc' funcName funcDef = dePhi phiNodes regIdxSz funcBody
+    runFunc' :: FuncName -> IR.FunctionDef -> (InstrSelectState, FuncBody)
+    runFunc' funcName funcDef = (s', dePhi phiNodes regIdxSz funcBody)
       where
         m = runArgs' funcDef >> runBasicBlock (funcDef ^. IR.entryBb)
         r = irModule

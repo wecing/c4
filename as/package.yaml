@@ -35,12 +35,13 @@ library:
   - InstrSelect
   - Proto.Ir
   - Proto.Ir_Fields
+  - RegAlloc
   dependencies:
   - containers
   - lens
   - mtl
+  - pretty-simple
   - proto-lens-runtime
-  - text-format-simple
 
 executables:
   as-exe:

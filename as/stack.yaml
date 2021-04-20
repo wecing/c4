@@ -45,7 +45,7 @@ packages:
 #
 # extra-deps: []
 extra-deps:
-- text-format-simple-1.1.0
+- pretty-simple-3.3.0.0
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
