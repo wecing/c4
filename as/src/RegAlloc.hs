@@ -2,9 +2,11 @@
 
 module RegAlloc where
 
-import Control.Lens ((^.))
+import Control.Lens (at, uses, (^.), (%=))
 import Control.Lens.TH (makeLenses)
+import Control.Monad.State.Lazy (State, execState)
 import Data.Map ((!))
+import Data.Maybe (fromJust)
 import Debug.Pretty.Simple (pTrace)
 
 import InstrSelect (BasicBlockId, FuncBody, FuncName, Instr(..), InstrSelectState, MachineReg(..), Operand(..), RegIdx)
@@ -24,6 +26,7 @@ data RegAllocState = RegAllocState
   , _defMap :: Map.Map InstrLabel [Var]
   , _succMap :: Map.Map InstrLabel [InstrLabel]
   , _predMap :: Map.Map InstrLabel [InstrLabel]
+  , _liveMap :: Map.Map InstrLabel [Var]
   } deriving (Show)
 
 makeLenses ''RegAllocState
@@ -63,15 +66,36 @@ run _ = Map.mapWithKey run'
           , _defMap = Map.map (\(_, x, _) -> x) udsMap
           , _succMap = Map.map (\(_, _, x) -> x) udsMap
           , _predMap = getPredMap $ Map.map (\(_, _, x) -> x) udsMap
+          , _liveMap = Map.map (const []) udsMap
           }
+        raState' = execState (mapM_ visitInstr $ Map.keys udsMap) raState
         r = -- pTrace ("funcName = " ++ Text.unpack funcName) $
             -- pTrace ("funcBody = " ++ show funcBody) $
             -- pTrace ("raState = " ++ show raState)
             -- pTrace ("useMap = " ++ show (raState ^. useMap))
             -- pTrace ("defMap = " ++ show (raState ^. defMap))
             -- pTrace ("udsMap = " ++ show udsMap)
-            pTrace ("predMap = " ++ show (raState ^. predMap))
+            -- pTrace ("predMap = " ++ show (raState ^. predMap))
+            pTrace ("liveMap = " ++ show (raState' ^. liveMap))
                    Map.empty -- TODO
+
+visitInstr :: InstrLabel -> State RegAllocState ()
+visitInstr label = uses (useMap . at label) fromJust >>= mapM_ (visitUse label)
+
+visitUse :: InstrLabel -> Var -> State RegAllocState ()
+visitUse label v = do
+  isLive <- uses (liveMap . at label) ((v `elem`) . fromJust)
+  if isLive then return () else do
+    liveMap . at label %= fmap (v :)
+    uses (predMap . at label) fromJust >>= mapM_ (`visitPred` v)
+
+visitPred :: InstrLabel -> Var -> State RegAllocState ()
+visitPred label v = do
+  isLive <- uses (liveMap . at label) ((v `elem`) . fromJust)
+  isDef <- uses (defMap . at label) ((v `elem`) . fromJust)
+  if isLive || isDef then return () else do
+    liveMap . at label %= fmap (v :)
+    uses (predMap . at label) fromJust >>= mapM_ (`visitPred` v)
 
 getUD :: Instr -> ([Var], [Var])
 getUD (Instr "and" _ [Imm _, Reg y]) = ([Left y], [Left y])
@@ -91,7 +115,7 @@ getUD (Instr "mov" _ [Reg x, MReg _ y]) = ([Left x], [Right y])
 getUD (Instr "mov" _ [Reg x, StackParam _]) = ([Left x], [])
 getUD (Instr "not" _ [Reg x]) = ([Left x], [Left x])
 getUD (Instr "repmovs" _ []) = ([Right RCX, Right RSI, Right RDI], [])
-getUD (Instr "ret" _ []) = ([], map Right [RAX, RDX, XMM0, XMM1]) -- TODO
+getUD (Instr "ret" _ []) = (map Right [RAX, RDX, XMM0, XMM1], []) -- TODO
 getUD (Instr "store" _ [Reg x, Reg y]) = ([Left x, Left y], [])
 getUD (Instr "test" _ [Reg x, Reg y]) = ([Left x, Left y], [])
 getUD (Instr "ucomi" _ [Reg x, Reg y]) = ([Left x, Left y], [])
@@ -115,6 +139,12 @@ getUD (Instr op _ [Reg x])
                , "setge", "setl", "setle", "setp", "setnp", "setnz" ]
 getUD (Instr "call" _ [Reg x]) = (Left x : us, ds)
   where
+    -- consider the case:
+    --
+    -- f1:
+    --   call f2
+    --
+    -- f2 could be an arbitraty address so we do not know which regs it uses
     us = map Right [ RAX, RDI, RSI, RDX, RCX, R8, R9
                    , XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7 ]
     ds = map Right [ RAX, RDX, XMM0, XMM1 ]
