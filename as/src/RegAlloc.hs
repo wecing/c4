@@ -2,7 +2,7 @@
 
 module RegAlloc where
 
-import Control.Lens (at, uses, (^.), (%=))
+import Control.Lens (at, use, uses, (^.), (%=))
 import Control.Lens.TH (makeLenses)
 import Control.Monad.State.Lazy (State, execState)
 import Data.Map ((!))
@@ -27,6 +27,8 @@ data RegAllocState = RegAllocState
   , _succMap :: Map.Map InstrLabel [InstrLabel]
   , _predMap :: Map.Map InstrLabel [InstrLabel]
   , _liveMap :: Map.Map InstrLabel [Var]
+  , _interfMap :: Map.Map Var [Var]
+  , _instrMap :: Map.Map InstrLabel Instr
   } deriving (Show)
 
 makeLenses ''RegAllocState
@@ -60,6 +62,8 @@ run _ = Map.mapWithKey run'
               _ -> [next]
         udsMap :: Map.Map InstrLabel ([Var], [Var], [InstrLabel])
         udsMap = Map.mapWithKey getUds funcBody'
+        allVars :: [Var] -- contains dups
+        allVars = concat $ concatMap (\(u, d, _) -> [u, d]) (Map.elems udsMap)
         raState = RegAllocState
           { _iSelState = instrSelectState
           , _useMap = Map.map (\(x, _, _) -> x) udsMap
@@ -67,8 +71,13 @@ run _ = Map.mapWithKey run'
           , _succMap = Map.map (\(_, _, x) -> x) udsMap
           , _predMap = getPredMap $ Map.map (\(_, _, x) -> x) udsMap
           , _liveMap = Map.map (const []) udsMap
+          , _interfMap = Map.fromList $ zip allVars (repeat [])
+          , _instrMap = funcBody'
           }
-        raState' = execState (mapM_ visitInstr $ Map.keys udsMap) raState
+        m = do
+          mapM_ visitInstr $ Map.keys udsMap
+          mapM_ updateInterfMap $ Map.keys udsMap
+        raState' = execState m raState
         r = -- pTrace ("funcName = " ++ Text.unpack funcName) $
             -- pTrace ("funcBody = " ++ show funcBody) $
             -- pTrace ("raState = " ++ show raState)
@@ -76,9 +85,12 @@ run _ = Map.mapWithKey run'
             -- pTrace ("defMap = " ++ show (raState ^. defMap))
             -- pTrace ("udsMap = " ++ show udsMap)
             -- pTrace ("predMap = " ++ show (raState ^. predMap))
-            pTrace ("liveMap = " ++ show (raState' ^. liveMap))
+            -- pTrace ("liveMap = " ++ show (s' ^. liveMap))
+            pTrace (Text.unpack funcName
+                    ++ " interfMap = " ++ show (raState' ^. interfMap))
                    Map.empty -- TODO
 
+-- visit*: liveness analysis methods
 visitInstr :: InstrLabel -> State RegAllocState ()
 visitInstr label = uses (useMap . at label) fromJust >>= mapM_ (visitUse label)
 
@@ -97,13 +109,40 @@ visitPred label v = do
     liveMap . at label %= fmap (v :)
     uses (predMap . at label) fromJust >>= mapM_ (`visitPred` v)
 
+-- interference graph building
+updateInterfMap :: InstrLabel -> State RegAllocState ()
+updateInterfMap label = do
+  instr <- uses (instrMap . at label) fromJust
+  liveAfter <- do
+      ss <- uses (succMap . at label) fromJust
+      m <- use liveMap
+      return $ concatMap (m !) ss
+  ds <- uses (defMap . at label) fromJust
+  us <- uses (useMap . at label) fromJust
+  let isMov = case instr of
+        Instr "mov" _ _ -> True
+        _ -> False
+  -- getInterfs :: Var -> [Var]
+  let getInterfs d =
+        let f = if isMov then (\x -> x /= d && (x `notElem` us)) else (/= d) in
+          filter f liveAfter
+  -- interfPairs :: [(Var, Var)] (bi-directional)
+  let interfPairs = concatMap (\(x, y) -> [(x, y), (y, x)]) $
+                           concatMap (\(x, y) -> zip (repeat x) y) $
+                                     zip ds $ map getInterfs ds
+  interfMap %= (\m -> Map.unionsWith
+                      (\x y -> filter (`notElem` x) y ++ x)
+                      (m : map (\(x, y) -> Map.singleton x [y]) interfPairs))
+
 getUD :: Instr -> ([Var], [Var])
 getUD (Instr "and" _ [Imm _, Reg y]) = ([Left y], [Left y])
 getUD (Instr "cmp" _ [Imm _, Reg y]) = ([Left y], [])
 getUD (Instr "cmp" _ [Reg x, Reg y]) = ([Left x, Left y], [])
 getUD (Instr "cmpneq" _ [Reg x, Reg y]) = ([Left x, Left y], [])
-getUD (Instr "div" _ [Reg x]) = ([Right RDX, Right RAX], [Left x])
-getUD (Instr "idiv" _ [Reg x]) = ([Right RDX, Right RAX], [Left x])
+getUD (Instr "div" _ [Reg x]) =
+  ([Left x, Right RDX, Right RAX], [Right RDX, Right RAX])
+getUD (Instr "idiv" _ [Reg x]) =
+  ([Left x, Right RDX, Right RAX], [Right RDX, Right RAX])
 getUD (Instr "je" _ [Addr _ _]) = ([], [])
 getUD (Instr "jmp" _ [Addr _ _]) = ([], [])
 getUD (Instr "lea" _ [Addr _ _, Reg y]) = ([], [Left y])

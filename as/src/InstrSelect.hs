@@ -46,7 +46,7 @@ data MachineReg
   | XMM5
   | XMM6
   | XMM7
-    deriving (Eq, Show)
+    deriving (Eq, Show, Ord)
 
 data Operand
   = Imm Int64
