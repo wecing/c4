@@ -23,6 +23,7 @@ data RegAllocState = RegAllocState
   , _useMap :: Map.Map InstrLabel [Var]
   , _defMap :: Map.Map InstrLabel [Var]
   , _succMap :: Map.Map InstrLabel [InstrLabel]
+  , _predMap :: Map.Map InstrLabel [InstrLabel]
   } deriving (Show)
 
 makeLenses ''RegAllocState
@@ -61,13 +62,15 @@ run _ = Map.mapWithKey run'
           , _useMap = Map.map (\(x, _, _) -> x) udsMap
           , _defMap = Map.map (\(_, x, _) -> x) udsMap
           , _succMap = Map.map (\(_, _, x) -> x) udsMap
+          , _predMap = getPredMap $ Map.map (\(_, _, x) -> x) udsMap
           }
         r = -- pTrace ("funcName = " ++ Text.unpack funcName) $
             -- pTrace ("funcBody = " ++ show funcBody) $
             -- pTrace ("raState = " ++ show raState)
             -- pTrace ("useMap = " ++ show (raState ^. useMap))
             -- pTrace ("defMap = " ++ show (raState ^. defMap))
-            pTrace ("udsMap = " ++ show udsMap)
+            -- pTrace ("udsMap = " ++ show udsMap)
+            pTrace ("predMap = " ++ show (raState ^. predMap))
                    Map.empty -- TODO
 
 getUD :: Instr -> ([Var], [Var])
@@ -116,3 +119,16 @@ getUD (Instr "call" _ [Reg x]) = (Left x : us, ds)
                    , XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7 ]
     ds = map Right [ RAX, RDX, XMM0, XMM1 ]
 getUD instr = error $ "unexpected instr for getUD: " ++ show instr
+
+getPredMap :: Map.Map InstrLabel [InstrLabel] -> Map.Map InstrLabel [InstrLabel]
+getPredMap succMap' =
+  foldr f emptyPredMap pairs
+  where
+    emptyPredMap :: Map.Map InstrLabel [InstrLabel]
+    emptyPredMap = Map.map (const []) succMap'
+    pairs :: [(InstrLabel, InstrLabel)]
+    pairs = concatMap (\p -> zip (repeat $ fst p) (snd p)) $ Map.toList succMap'
+    f :: (InstrLabel, InstrLabel)
+      -> Map.Map InstrLabel [InstrLabel]
+      -> Map.Map InstrLabel [InstrLabel]
+    f (p, s) = Map.update (\ps -> Just (p : ps)) s
