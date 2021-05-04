@@ -20,8 +20,8 @@
 # resolver:
 #   url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/17/3.yaml
 #
-# last LTS version supported by haskell-language-server as of 02/14/2021
-resolver: lts-16.31
+# last LTS version supported by haskell-language-server as of May 3, 2021
+resolver: lts-17.10
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -44,8 +44,6 @@ packages:
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
 # extra-deps: []
-extra-deps:
-- pretty-simple-3.3.0.0
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
