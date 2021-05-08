@@ -16,5 +16,4 @@ main = do
   ir <- case runParser (parseMessage :: Parser IR.IrModule) bs of
     Left msg -> fail msg
     Right ir -> return ir
-  pPrint ir
   pPrint $ RegAlloc.run ir $ InstrSelect.run ir

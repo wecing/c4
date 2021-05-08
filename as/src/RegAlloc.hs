@@ -8,10 +8,20 @@ import Control.Monad.State.Lazy (State, execState)
 import Data.Either (isLeft, lefts, rights)
 import Data.List (sortBy)
 import Data.Map ((!))
-import Data.Maybe (fromJust, mapMaybe)
-import Debug.Pretty.Simple (pTrace)
+import Data.Maybe (fromJust, fromMaybe, mapMaybe)
 
-import InstrSelect (BasicBlockId, FuncBody, FuncName, Instr(..), InstrSelectState, MachineReg(..), Operand(..), RegIdx, RegSize(..), regSize)
+import InstrSelect
+  ( BasicBlockId
+  , FuncBody
+  , FuncName
+  , Instr(..)
+  , InstrSelectState
+  , MachineReg(..)
+  , Operand(..)
+  , RegIdx
+  , RegSize(..)
+  , regSize
+  )
 
 import qualified Data.Map as Map
 import qualified Data.ProtoLens.Runtime.Data.Text as Text
@@ -43,7 +53,7 @@ run :: IR.IrModule
 run _ = Map.mapWithKey run'
   where
     run' :: FuncName -> (InstrSelectState, FuncBody) -> FuncBody
-    run' funcName (instrSelectState, funcBody) = r -- TODO
+    run' funcName (instrSelectState, funcBody) = funcBody''
       where
         labelInstrs :: BasicBlockId -> [Instr] -> [(InstrLabel, Instr)]
         labelInstrs bbId instrs =
@@ -86,18 +96,24 @@ run _ = Map.mapWithKey run'
         colors = colorNodes (raState' ^. iSelState . regSize)
                             (raState' ^. interfMap)
 
-        r = -- pTrace ("funcName = " ++ Text.unpack funcName) $
-            -- pTrace ("funcBody = " ++ show funcBody) $
-            -- pTrace ("raState = " ++ show raState)
-            -- pTrace ("useMap = " ++ show (raState ^. useMap))
-            -- pTrace ("defMap = " ++ show (raState ^. defMap))
-            -- pTrace ("udsMap = " ++ show udsMap)
-            -- pTrace ("predMap = " ++ show (raState ^. predMap))
-            -- pTrace ("liveMap = " ++ show (s' ^. liveMap))
-            -- pTrace (Text.unpack funcName
-            --         ++ " interfMap = " ++ show (raState' ^. interfMap))
-            pTrace (Text.unpack funcName ++ " colors = " ++ show colors)
-                   Map.empty -- TODO
+        rewriteInstr :: Instr -> Maybe Instr
+        rewriteInstr (Instr op sz rs) =
+          case rs' of
+            [a, b] | a == b && op == "mov" -> Nothing
+            _ -> Just $ Instr op sz rs'
+          where
+            rewriteOperand :: Operand -> Operand
+            rewriteOperand (Reg r) =
+              maybe (Reg r) (MReg (fromMaybe Byte sz)) (colors ! r)
+            rewriteOperand x = x
+            rs' = map rewriteOperand rs
+
+        funcBody'' = Map.map (mapMaybe rewriteInstr) funcBody
+
+        -- TODO: prologue: expected arg reg vs assigned correction
+        -- TODO: save args for varargs functions
+        -- TODO: spill
+        -- TODO: ret/call
 
 getUD :: Instr -> ([Var], [Var])
 getUD (Instr "and" _ [Imm _, Reg y]) = ([Left y], [Left y])
@@ -143,12 +159,7 @@ getUD (Instr op _ [Reg x])
                , "setge", "setl", "setle", "setp", "setnp", "setnz" ]
 getUD (Instr "call" _ [Reg x]) = (Left x : us, ds)
   where
-    -- consider the case:
-    --
-    -- f1:
-    --   call f2
-    --
-    -- f2 could be an arbitraty address so we do not know which regs it uses
+    -- TODO: obtain call reg usage info from InstrSelect
     us = map Right [ RAX, RDI, RSI, RDX, RCX, R8, R9
                    , XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7 ]
     ds = map Right [ RAX, RDX, XMM0, XMM1 ]
