@@ -5,6 +5,7 @@ module InstrSelect where
 
 import Control.Lens (at, to, use, uses, view, (^.), (.=), (%=), (<+=), (+=))
 import Control.Lens.TH (makeLenses)
+import Control.Monad (forM_, liftM2, when)
 import Control.Monad.RWS.Lazy (RWS, evalRWS, execRWS, state, tell)
 import Data.Int (Int64)
 import Data.List (tails)
@@ -12,9 +13,11 @@ import Data.Map ((!))
 import Data.Maybe (isJust, isNothing, fromJust)
 import Data.Word (Word32)
 
+import qualified Control.Monad.ST.Lazy as ST
 import qualified Data.Map as Map
 import qualified Data.ProtoLens.Runtime.Data.Text as Text
 import qualified Data.Set as Set
+import qualified Data.STRef.Lazy as ST
 
 import qualified Proto.Ir as IR
 import qualified Proto.Ir_Fields as IR
@@ -54,7 +57,14 @@ data Operand
   | Reg RegIdx -- mem, general reg, or sse reg
   | MReg RegSize MachineReg -- a specific machine reg
   | Addr String Int64 -- link time constant
-  | StackParam Int -- byte offset relative to head of stack params region
+  -- to get addr, use lea
+  --
+  -- byte offset relative to head of stack params region (callers view)
+  | StackParam Int
+  -- like StackParam, but for callees
+  | CalleeStackParam Int
+  -- local varaiables, starts with reg save area
+  | Locals Int
     deriving (Eq, Show)
 
 data Instr = Instr String (Maybe RegSize) [Operand] deriving (Show)
@@ -94,7 +104,7 @@ run :: IR.IrModule -> Map.Map FuncName (InstrSelectState, FuncBody)
 run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
   where
     runFunc' :: FuncName -> IR.FunctionDef -> (InstrSelectState, FuncBody)
-    runFunc' funcName funcDef = (s', dePhi phiNodes regIdxSz funcBody)
+    runFunc' funcName funcDef = (s', dePhi phiNodes regIdxSz funcBody')
       where
         m = runArgs' funcDef >> runBasicBlock (funcDef ^. IR.entryBb)
         r = irModule
@@ -111,6 +121,95 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
         phiNodes = Map.map (^. IR.phiNodes) $ funcDef ^. IR.bbs
         regIdxSz = Map.map (\idx -> (idx, (s' ^. regSize) ! idx))
                            $ s' ^. regIdxByIrId
+
+        -- prologue:
+        --   int %1 / &T* %1 =>
+        --     mov %rdi, Locals 0
+        --     mov Locals 0, %1
+        --   float %1 =>
+        --     mov %xmm0, Locals 48
+        --     mov Locals 48, %1
+        --   overfloating %n =>
+        --     mov CalleeStackParam X, %n
+        --   byval &T* %n =>
+        --     lea CalleeStackParam X, %n
+        prologue :: [Instr]
+        prologue = ST.runST $ do
+          gps <- ST.newSTRef $ zip [RDI, RSI, RDX, RCX, R8, R9] [0 :: Int, 8..]
+          fps <- ST.newSTRef $
+                   zip [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
+                       [48 :: Int, 64..]
+          paramsOffset <- ST.newSTRef (0 :: Int)
+          saveInstrs <- ST.newSTRef ([] :: [Instr])
+          initInstrs <- ST.newSTRef ([] :: [Instr])
+          let args = zip3 (funcDef ^. IR.argByval)
+                          (funcDef ^. IR.argTypes)
+                          (map fromIntegral (funcDef ^. IR.args) :: [Int])
+          forM_ args $ \(isByVal, tp, irId) -> do
+            let tp' = if isByVal then tp ^. IR.pointeeType else tp
+            let m' = getTypeSizeAndAlign tp'
+                     :: RWS IR.IrModule [()] () (Int, Int)
+            let ((sz, _), _) = evalRWS m' irModule ()
+            let reg = s' ^. regIdxByIrId . at irId . to fromJust
+            let regSz = s' ^. regSize . at reg . to fromJust
+            offset <- ST.readSTRef paramsOffset
+            if isByVal then do
+              let instr =
+                    Instr "lea" (Just Quad) [CalleeStackParam offset, Reg reg]
+              ST.modifySTRef paramsOffset (+ roundUp sz 8)
+              ST.modifySTRef initInstrs (++ [instr])
+            else if (tp ^. IR.kind)
+                    `elem` [IR.Type'FLOAT, IR.Type'DOUBLE] then do
+              fps' <- ST.readSTRef fps
+              if null fps' then do
+                let instr = Instr "mov" (Just regSz)
+                                        [CalleeStackParam offset, Reg reg]
+                ST.modifySTRef paramsOffset (+ roundUp sz 8)
+                ST.modifySTRef initInstrs (++ [instr])
+              else do
+                let (mreg, off) = head fps'
+                let saveI = Instr "mov" (Just regSz)
+                                        [MReg regSz mreg, Locals off]
+                ST.modifySTRef saveInstrs (++ [saveI])
+                let initI = Instr "mov" (Just regSz)
+                                        [Locals off, Reg reg]
+                ST.modifySTRef initInstrs (++ [initI])
+                ST.modifySTRef fps tail
+            else if (tp ^. IR.kind)
+                    `elem` [ IR.Type'INT8, IR.Type'INT16, IR.Type'INT32
+                           , IR.Type'INT64, IR.Type'POINTER ] then do
+              gps' <- ST.readSTRef gps
+              if null gps' then do
+                let instr = Instr "mov" (Just regSz)
+                                        [CalleeStackParam offset, Reg reg]
+                ST.modifySTRef paramsOffset (+ roundUp sz 8)
+                ST.modifySTRef initInstrs (++ [instr])
+              else do
+                let (mreg, off) = head gps'
+                let saveI = Instr "mov" (Just regSz)
+                                        [MReg regSz mreg, Locals off]
+                ST.modifySTRef saveInstrs (++ [saveI])
+                let initI = Instr "mov" (Just regSz)
+                                        [Locals off, Reg reg]
+                ST.modifySTRef initInstrs (++ [initI])
+                ST.modifySTRef gps tail
+            else
+              error $ "illegal fn call arg type: " ++ show (tp ^. IR.kind)
+
+            when (funcDef ^. IR.isVararg) $ do
+              fps' <- ST.readSTRef fps
+              gps' <- ST.readSTRef gps
+              let f (mreg, off) = Instr "mov" (Just F64)
+                                              [MReg F64 mreg, Locals off]
+              let g (mreg, off) = Instr "mov" (Just Quad)
+                                              [MReg Quad mreg, Locals off]
+              ST.modifySTRef saveInstrs (++ map g gps' ++ map f fps')
+
+          liftM2 (++) (ST.readSTRef saveInstrs) (ST.readSTRef initInstrs)
+
+        funcBody' = Map.insertWith (++) (funcDef ^. IR.entryBb) prologue
+                                   funcBody
+
     runArgs' :: Monoid a
              => IR.FunctionDef
              -> RWS IR.IrModule a InstrSelectState ()
@@ -462,7 +561,11 @@ runFnCall callInstr = do
   let isVarargs =
         callInstr ^. IR.fnCallFn . IR.type' . IR.pointeeType . IR.fnIsVararg
   alInstr <- if not isVarargs then return [] else do
-        n <- use $ runFnCallState . remSseRegs . to length . to (8 -)
+        -- X86-64 ABI v0.21 3.5.6:
+        -- When a function taking variable-arguments is called, %rax must be set
+        -- to eight times the number of floating point parameters passed to the
+        -- function in SSE registers.
+        n <- use $ runFnCallState . remSseRegs . to length . to (8 -) . to (8 *)
         return [Instr "mov" (Just Byte) [Imm $ fromIntegral n, MReg Byte RAX]]
 
   -- something like callq *(%rax) or callq *-48(%rbp)

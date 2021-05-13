@@ -92,6 +92,7 @@ run _ = Map.mapWithKey run'
           mapM_ updateInterfMap $ Map.keys udsMap
         raState' = execState m raState
 
+        -- TODO: value should be (Either MachineReg Int)
         colors :: Map.Map RegIdx (Maybe MachineReg)
         colors = colorNodes (raState' ^. iSelState . regSize)
                             (raState' ^. interfMap)
@@ -110,8 +111,6 @@ run _ = Map.mapWithKey run'
 
         funcBody'' = Map.map (mapMaybe rewriteInstr) funcBody
 
-        -- TODO: prologue: expected arg reg vs assigned correction
-        -- TODO: save args for varargs functions
         -- TODO: spill
         -- TODO: ret/call
 
@@ -127,9 +126,13 @@ getUD (Instr "idiv" _ [Reg x]) =
 getUD (Instr "je" _ [Addr _ _]) = ([], [])
 getUD (Instr "jmp" _ [Addr _ _]) = ([], [])
 getUD (Instr "lea" _ [Addr _ _, Reg y]) = ([], [Left y])
+getUD (Instr "lea" _ [CalleeStackParam _, Reg y]) = ([], [Left y])
 getUD (Instr "lea" _ [StackParam _, MReg _ y]) = ([], [Right y])
+getUD (Instr "mov" _ [CalleeStackParam _, Reg y]) = ([], [Left y])
 getUD (Instr "mov" _ [Imm _, MReg _ y]) = ([], [Right y])
 getUD (Instr "mov" _ [Imm _, Reg y]) = ([], [Left y])
+getUD (Instr "mov" _ [Locals _, Reg y]) = ([], [Left y])
+getUD (Instr "mov" _ [MReg _ x, Locals _]) = ([Right x], [])
 getUD (Instr "mov" _ [MReg _ x, Reg y]) = ([Right x], [Left y])
 getUD (Instr "mov" _ [Reg x, MReg _ y]) = ([Left x], [Right y])
 getUD (Instr "mov" _ [Reg x, StackParam _]) = ([Left x], [])
