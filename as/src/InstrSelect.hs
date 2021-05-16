@@ -61,10 +61,13 @@ data Operand
   --
   -- byte offset relative to head of stack params region (callers view)
   | StackParam Int
-  -- like StackParam, but for callees
+  -- like StackParam, but for callees; equals to n+16(%rbp)
   | CalleeStackParam Int
-  -- local varaiables, starts with reg save area
-  | Locals Int
+  -- byte offset into reg save area
+  | SavedReg Int
+  -- only used in reg alloc, replaces StackParam/CalleeStackParam/SavedReg.
+  -- e.g. RbpOffset -4 == -4(%rbp)
+  | RbpOffset Int
     deriving (Eq, Show)
 
 data Instr = Instr String (Maybe RegSize) [Operand] deriving (Show)
@@ -86,6 +89,7 @@ data InstrSelectState = InstrSelectState
   , _regIdxByIrId :: Map.Map Int RegIdx
   , _stackParamsRegionSize :: Int
   , _runFnCallState :: RunFnCallState -- init'ed for every runFnCall call
+  , _regSaveRegionSize :: Int
   } deriving (Show)
 
 makeLenses ''RunFnCallState
@@ -104,7 +108,7 @@ run :: IR.IrModule -> Map.Map FuncName (InstrSelectState, FuncBody)
 run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
   where
     runFunc' :: FuncName -> IR.FunctionDef -> (InstrSelectState, FuncBody)
-    runFunc' funcName funcDef = (s', dePhi phiNodes regIdxSz funcBody')
+    runFunc' funcName funcDef = (s'', dePhi phiNodes regIdxSz funcBody')
       where
         m = runArgs' funcDef >> runBasicBlock (funcDef ^. IR.entryBb)
         r = irModule
@@ -116,6 +120,7 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
               , _regIdxByIrId = Map.empty
               , _stackParamsRegionSize = 0
               , _runFnCallState = initRunFnCallState
+              , _regSaveRegionSize = 0
               }
         (s', funcBody) = execRWS m r s
         phiNodes = Map.map (^. IR.phiNodes) $ funcDef ^. IR.bbs
@@ -124,16 +129,16 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
 
         -- prologue:
         --   int %1 / &T* %1 =>
-        --     mov %rdi, Locals 0
-        --     mov Locals 0, %1
+        --     mov %rdi, SavedReg 0
+        --     mov SavedReg 0, %1
         --   float %1 =>
-        --     mov %xmm0, Locals 48
-        --     mov Locals 48, %1
+        --     mov %xmm0, SavedReg 48
+        --     mov SavedReg 48, %1
         --   overfloating %n =>
         --     mov CalleeStackParam X, %n
         --   byval &T* %n =>
         --     lea CalleeStackParam X, %n
-        prologue :: [Instr]
+        prologue :: (Int, [Instr])
         prologue = ST.runST $ do
           gps <- ST.newSTRef $ zip [RDI, RSI, RDX, RCX, R8, R9] [0 :: Int, 8..]
           fps <- ST.newSTRef $
@@ -142,6 +147,7 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
           paramsOffset <- ST.newSTRef (0 :: Int)
           saveInstrs <- ST.newSTRef ([] :: [Instr])
           initInstrs <- ST.newSTRef ([] :: [Instr])
+          regSaveRegionSz <- ST.newSTRef (0 :: Int)
           let args = zip3 (funcDef ^. IR.argByval)
                           (funcDef ^. IR.argTypes)
                           (map fromIntegral (funcDef ^. IR.args) :: [Int])
@@ -169,12 +175,13 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
               else do
                 let (mreg, off) = head fps'
                 let saveI = Instr "mov" (Just regSz)
-                                        [MReg regSz mreg, Locals off]
+                                        [MReg regSz mreg, SavedReg off]
                 ST.modifySTRef saveInstrs (++ [saveI])
                 let initI = Instr "mov" (Just regSz)
-                                        [Locals off, Reg reg]
+                                        [SavedReg off, Reg reg]
                 ST.modifySTRef initInstrs (++ [initI])
                 ST.modifySTRef fps tail
+                ST.modifySTRef regSaveRegionSz (max $ off + 8)
             else if (tp ^. IR.kind)
                     `elem` [ IR.Type'INT8, IR.Type'INT16, IR.Type'INT32
                            , IR.Type'INT64, IR.Type'POINTER ] then do
@@ -187,12 +194,13 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
               else do
                 let (mreg, off) = head gps'
                 let saveI = Instr "mov" (Just regSz)
-                                        [MReg regSz mreg, Locals off]
+                                        [MReg regSz mreg, SavedReg off]
                 ST.modifySTRef saveInstrs (++ [saveI])
                 let initI = Instr "mov" (Just regSz)
-                                        [Locals off, Reg reg]
+                                        [SavedReg off, Reg reg]
                 ST.modifySTRef initInstrs (++ [initI])
                 ST.modifySTRef gps tail
+                ST.modifySTRef regSaveRegionSz (max $ off + 8)
             else
               error $ "illegal fn call arg type: " ++ show (tp ^. IR.kind)
 
@@ -200,15 +208,19 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
               fps' <- ST.readSTRef fps
               gps' <- ST.readSTRef gps
               let f (mreg, off) = Instr "mov" (Just F64)
-                                              [MReg F64 mreg, Locals off]
+                                              [MReg F64 mreg, SavedReg off]
               let g (mreg, off) = Instr "mov" (Just Quad)
-                                              [MReg Quad mreg, Locals off]
+                                              [MReg Quad mreg, SavedReg off]
               ST.modifySTRef saveInstrs (++ map g gps' ++ map f fps')
+              ST.writeSTRef regSaveRegionSz (8 * (6 + 8))
 
-          liftM2 (++) (ST.readSTRef saveInstrs) (ST.readSTRef initInstrs)
+          liftM2 (,) (ST.readSTRef regSaveRegionSz)
+                     $ liftM2 (++) (ST.readSTRef saveInstrs)
+                                   (ST.readSTRef initInstrs)
 
-        funcBody' = Map.insertWith (++) (funcDef ^. IR.entryBb) prologue
-                                   funcBody
+        funcBody' =
+          Map.insertWith (++) (funcDef ^. IR.entryBb) (snd prologue) funcBody
+        s'' = s' { _regSaveRegionSize = fst prologue }
 
     runArgs' :: Monoid a
              => IR.FunctionDef
@@ -582,7 +594,7 @@ runFnCall callInstr = do
           in [Instr "mov" (Just regSzDst) [MReg regSzDst mr, Reg regIdxDst]]
 
   stackSize <- use (runFnCallState . curStackSize)
-  stackParamsRegionSize %= max (roundUp stackSize 16) -- ABI requirement
+  stackParamsRegionSize %= max stackSize
   let instrs = instrsFn ++
                concat (instrsArgs ++ firstPassInstrs ++ secondPassInstrs) ++
                alInstr ++

@@ -20,7 +20,10 @@ import InstrSelect
   , Operand(..)
   , RegIdx
   , RegSize(..)
+  , regSaveRegionSize
   , regSize
+  , roundUp
+  , stackParamsRegionSize
   )
 
 import qualified Data.Map as Map
@@ -28,6 +31,7 @@ import qualified Data.ProtoLens.Runtime.Data.Text as Text
 import qualified Data.Set as Set
 
 import qualified Proto.Ir as IR
+import qualified Proto.Ir_Fields as IR
 
 type InstrLabel = (String, Int)  -- (asm label, instr idx)
 
@@ -50,10 +54,10 @@ makeLenses ''RegAllocState
 run :: IR.IrModule
     -> Map.Map FuncName (InstrSelectState, FuncBody)
     -> Map.Map FuncName FuncBody
-run _ = Map.mapWithKey run'
+run ir = Map.mapWithKey run'
   where
     run' :: FuncName -> (InstrSelectState, FuncBody) -> FuncBody
-    run' funcName (instrSelectState, funcBody) = funcBody''
+    run' funcName (instrSelectState, funcBody) = funcBody'''
       where
         labelInstrs :: BasicBlockId -> [Instr] -> [(InstrLabel, Instr)]
         labelInstrs bbId instrs =
@@ -96,23 +100,62 @@ run _ = Map.mapWithKey run'
         colors = colorNodes (raState' ^. iSelState . regSize)
                             (raState' ^. interfMap)
 
-        rewriteInstr :: Instr -> Maybe Instr
+        -- determine location of spills
+        -- TODO: support allocas
+        localsOffset :: Map.Map RegIdx Int
+        localsOffset =
+          let elems = Set.fromList $ lefts $ Map.elems colors
+          in Map.fromList $ zip (Set.toList elems) [0,8..]
+
+        -- x86-64 ABI v0.21, 3.2.2:
+        --
+        -- The end of the input argument area shall be aligned on a 16 byte
+        -- boundary.
+        stackParamsRegionSz = raState' ^. iSelState . stackParamsRegionSize
+        regSaveRegionSz = raState' ^. iSelState . regSaveRegionSize
+        localsSize =
+          roundUp (8 * Map.size localsOffset
+                      + stackParamsRegionSz + regSaveRegionSz)
+                  16
+        -- low addr                   rbp                            high addr
+        -- StackParam | ... | SavedReg | old rbp | ret addr | CalleeStackParam
+
+        -- TODO: mem-to-mem mov/add/... to be rewritten
+        rewriteInstr :: Instr -> [Instr]
         rewriteInstr (Instr op sz rs) =
           case rs' of
-            [a, b] | a == b && op == "mov" -> Nothing
-            _ -> Just $ Instr op sz rs'
+            [a, b] | a == b && op == "mov" -> []
+            [] | op == "ret" ->
+              [ Instr "add" (Just Quad)
+                            [Imm (fromIntegral localsSize), MReg Quad RSP]
+              , Instr "pop" (Just Quad) [MReg Quad RBP]
+              , Instr "ret" Nothing [] ]
+            _ -> [Instr op sz rs']
           where
             rewriteOperand :: Operand -> Operand
             rewriteOperand (Reg r) =
               case colors ! r of
-                Left x -> Reg x
+                Left x ->
+                  let n = localsOffset ! x
+                  in RbpOffset (-localsSize + stackParamsRegionSz + n)
                 Right x -> MReg (fromMaybe Byte sz) x
+            rewriteOperand (StackParam n) = RbpOffset (-localsSize + n)
+            rewriteOperand (CalleeStackParam n) = RbpOffset (16 + n)
+            rewriteOperand (SavedReg n) = RbpOffset (-regSaveRegionSz + n)
             rewriteOperand x = x
             rs' = map rewriteOperand rs
 
-        funcBody'' = Map.map (mapMaybe rewriteInstr) funcBody
+        funcBody'' = Map.map (concatMap rewriteInstr) funcBody
 
-        -- TODO: spill
+        funcDef = (ir ^. IR.functionDefs) ! funcName
+        extraPrologue =
+          [ Instr "push" (Just Quad) [MReg Quad RBP]
+          , Instr "mov" (Just Quad) [MReg Quad RSP, MReg Quad RBP]
+          , Instr "sub" (Just Quad)
+                  [Imm (fromIntegral localsSize), MReg Quad RSP] ]
+        funcBody''' =
+          Map.insertWith (++) (funcDef ^. IR.entryBb) extraPrologue funcBody''
+
         -- TODO: ret/call
 
 getUD :: Instr -> ([Var], [Var])
@@ -132,8 +175,8 @@ getUD (Instr "lea" _ [StackParam _, MReg _ y]) = ([], [Right y])
 getUD (Instr "mov" _ [CalleeStackParam _, Reg y]) = ([], [Left y])
 getUD (Instr "mov" _ [Imm _, MReg _ y]) = ([], [Right y])
 getUD (Instr "mov" _ [Imm _, Reg y]) = ([], [Left y])
-getUD (Instr "mov" _ [Locals _, Reg y]) = ([], [Left y])
-getUD (Instr "mov" _ [MReg _ x, Locals _]) = ([Right x], [])
+getUD (Instr "mov" _ [SavedReg _, Reg y]) = ([], [Left y])
+getUD (Instr "mov" _ [MReg _ x, SavedReg _]) = ([Right x], [])
 getUD (Instr "mov" _ [MReg _ x, Reg y]) = ([Right x], [Left y])
 getUD (Instr "mov" _ [Reg x, MReg _ y]) = ([Left x], [Right y])
 getUD (Instr "mov" _ [Reg x, StackParam _]) = ([Left x], [])
