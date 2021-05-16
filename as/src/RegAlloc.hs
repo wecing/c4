@@ -92,8 +92,7 @@ run _ = Map.mapWithKey run'
           mapM_ updateInterfMap $ Map.keys udsMap
         raState' = execState m raState
 
-        -- TODO: value should be (Either MachineReg Int)
-        colors :: Map.Map RegIdx (Maybe MachineReg)
+        colors :: Map.Map RegIdx Var
         colors = colorNodes (raState' ^. iSelState . regSize)
                             (raState' ^. interfMap)
 
@@ -105,7 +104,9 @@ run _ = Map.mapWithKey run'
           where
             rewriteOperand :: Operand -> Operand
             rewriteOperand (Reg r) =
-              maybe (Reg r) (MReg (fromMaybe Byte sz)) (colors ! r)
+              case colors ! r of
+                Left x -> Reg x
+                Right x -> MReg (fromMaybe Byte sz) x
             rewriteOperand x = x
             rs' = map rewriteOperand rs
 
@@ -227,7 +228,7 @@ updateInterfMap label = do
 
 colorNodes :: Map.Map RegIdx RegSize
            -> Map.Map Var [Var]
-           -> Map.Map RegIdx (Maybe MachineReg)
+           -> Map.Map RegIdx Var
 colorNodes regSizeMap interfMap' = ret'
   where
     ssaMRegs = [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
@@ -288,14 +289,22 @@ colorNodes regSizeMap interfMap' = ret'
                $ filter (null . snd)
                $ iterate colorNextNode (initAssignedNums, coloringOrder)
 
+    sameNumVars :: Map.Map (Bool, Int) [Var]
+    sameNumVars =
+      Map.unionsWith (++)
+        $ map (\(v, n) -> Map.singleton (isIntVar v, n) [v])
+        $ Map.toList nums
+
+    ret :: Map.Map Var Var
     ret = Map.mapWithKey
-            (\k v -> if isIntVar k && v < 7 then Just $ intMRegs !! v
-                    else if isSsaVar k && v < 8 then Just $ ssaMRegs !! v
-                    else Nothing)
+            (\k v -> if isIntVar k && v < 7 then Right $ intMRegs !! v
+                    else if isSsaVar k && v < 8 then Right $ ssaMRegs !! v
+                    else head $ sameNumVars ! (isIntVar k, v))
           $ Map.filterWithKey (\k _ -> isLeft k) nums
 
     getLeft :: Either a b -> a
     getLeft (Left x) = x
     getLeft _ = undefined
 
+    ret' :: Map.Map RegIdx Var
     ret' = Map.mapKeys getLeft ret
