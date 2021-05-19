@@ -1,7 +1,7 @@
 name := "c4"
 version := "1.0"
 
-scalaVersion := "2.13.3"
+scalaVersion := "2.13.5"
 scalacOptions ++= Seq("-deprecation", "-feature")
 
 libraryDependencies += "com.github.vbmacher" % "java-cup-runtime" % "11b"
@@ -9,17 +9,17 @@ libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.0" % "test"
 libraryDependencies += "org.typelevel" %% "cats-core" % "2.1.1"
 libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.1.2"
 
-PB.targets in Compile := Seq(
-  scalapb.gen(flatPackage = true) -> (sourceManaged in Compile).value / "scala"
+Compile / PB.targets := Seq(
+  scalapb.gen(flatPackage = true) -> (Compile / sourceManaged).value / "scala"
 )
-PB.protoSources in Compile := Seq(
+Compile / PB.protoSources := Seq(
   sourceDirectory.value / "main" / "resources"
 )
 
-sourceGenerators in Compile += Def.task {
+Compile / sourceGenerators += Def.task {
   val jar = sourceDirectory.value / "main" / "resources" / "java-cup-11b.jar"
   val cup = sourceDirectory.value / "main" / "resources" / "parser.cup"
-  val outDir = (sourceManaged in Compile).value / "java" / "c4" / "ast"
+  val outDir = (Compile / sourceManaged).value / "java" / "c4" / "ast"
 
   val cacheFn = FileFunction.cached(outDir / ".cache") { _ =>
     scala.sys.process.Process("mkdir -p " + outDir).!
@@ -31,6 +31,6 @@ sourceGenerators in Compile += Def.task {
   cacheFn(Set(cup)).toSeq
 }.taskValue
 
-testOptions in Test += Tests.Argument("-oF")
+Test / testOptions += Tests.Argument("-oF")
 
-assemblyJarName in assembly := "parser.jar"
+assembly / assemblyJarName := "parser.jar"

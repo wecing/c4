@@ -875,6 +875,7 @@ object PPReader {
             case (x, "|" ~ y)  => Num(x.num | y.num, false)
             case (x, "&&" ~ y) => toN(x.num != 0 && y.num != 0)
             case (x, "||" ~ y) => toN(x.num != 0 || y.num != 0)
+            case (_, _ ~ _)    => ??? // unreachable
           }
       }
       // desired behavior: x1 ? y1 : (x2 ? y2 : (x3 ? y3 : z))
