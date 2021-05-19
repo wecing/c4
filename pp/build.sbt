@@ -1,13 +1,13 @@
 name := "c4"
 version := "1.0"
 
-scalaVersion := "2.13.5"
+scalaVersion := "3.0.0-RC2"
 scalacOptions ++= Seq("-deprecation", "-feature")
 
 libraryDependencies += "com.github.vbmacher" % "java-cup-runtime" % "11b"
-libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.0" % "test"
-libraryDependencies += "org.typelevel" %% "cats-core" % "2.1.1"
-libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.1.2"
+libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.7" % "test"
+libraryDependencies += "org.typelevel" %% "cats-core" % "2.6.0"
+libraryDependencies += "org.scala-lang.modules" %% "scala-parser-combinators" % "1.2.0-RC2"
 
 Compile / PB.targets := Seq(
   scalapb.gen(flatPackage = true) -> (Compile / sourceManaged).value / "scala"

@@ -118,6 +118,7 @@ case object Tok_builtin_va_arg extends Tok(Sym.BUILTIN_VA_ARG)
 case object Tok_builtin_va_end extends Tok(Sym.BUILTIN_VA_END)
 case object Tok_builtin_va_copy extends Tok(Sym.BUILTIN_VA_COPY)
 // symbols
+case object Tok_assign extends Tok(Sym.ASSIGN) // =
 case object Tok_lsbrkt extends Tok(Sym.LSBRKT) // [
 case object Tok_rsbrkt extends Tok(Sym.RSBRKT) // ]
 case object Tok_lparen extends Tok(Sym.LPAREN) // (
@@ -153,7 +154,6 @@ case object Tok_&& extends Tok(Sym.L_AND)
 case object Tok_|| extends Tok(Sym.L_OR)
 case object Tok_? extends Tok(Sym.QMARK)
 case object Tok_: extends Tok(Sym.COLON)
-case object Tok_= extends Tok(Sym.ASSIGN)
 case object Tok_*= extends Tok(Sym.MUL_ASSIGN)
 case object Tok_/= extends Tok(Sym.DIV_ASSIGN)
 case object Tok_%= extends Tok(Sym.MOD_ASSIGN)
@@ -370,7 +370,7 @@ class SourcePhase7Reader(
               "||" -> Tok_||,
               "?" -> Tok_?,
               ":" -> Tok_:,
-              "=" -> Tok_=,
+              "=" -> Tok_assign,
               "*=" -> Tok_*=,
               "/=" -> Tok_/=,
               "%=" -> Tok_%=,

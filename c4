@@ -32,7 +32,7 @@ if base_filename.endswith('.c'):
     base_filename = base_filename[:-2]
 
 # steps
-pp = ['java', '-jar', c4_path + '/pp/target/scala-2.13/parser.jar'] + \
+pp = ['java', '-jar', c4_path + '/pp/target/scala-3.0.0-RC2/parser.jar'] + \
     (['-E'] if args.preprocessor_only else []) + \
     ['-D' + m for m in args.define_macro or []] + \
     [args.file]

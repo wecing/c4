@@ -11,14 +11,14 @@ import scala.collection.mutable.ArrayBuffer
 
 class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
   it should "recognize pp-tokens" in {
-    checkPPTokens("===\n", Seq(Seq("==", "=").map(PPTokSym)))
-    checkPPTokens("+====\n", Seq(Seq("+=", "==", "=").map(PPTokSym)))
-    checkPPTokens("/= =\n", Seq(Seq("/=", "=").map(PPTokSym)))
-    checkPPTokens("/== \n", Seq(Seq("/=", "=").map(PPTokSym)))
-    checkPPTokens("/==\n", Seq(Seq("/=", "=").map(PPTokSym)))
-    checkPPTokens("/====\n", Seq(Seq("/=", "==", "=").map(PPTokSym)))
-    checkPPTokens("/+\n", Seq(Seq("/", "+").map(PPTokSym)))
-    checkPPTokens("/#\n", Seq(Seq("/", "#").map(PPTokSym)))
+    checkPPTokens("===\n", Seq(Seq("==", "=").map(PPTokSym.apply)))
+    checkPPTokens("+====\n", Seq(Seq("+=", "==", "=").map(PPTokSym.apply)))
+    checkPPTokens("/= =\n", Seq(Seq("/=", "=").map(PPTokSym.apply)))
+    checkPPTokens("/== \n", Seq(Seq("/=", "=").map(PPTokSym.apply)))
+    checkPPTokens("/==\n", Seq(Seq("/=", "=").map(PPTokSym.apply)))
+    checkPPTokens("/====\n", Seq(Seq("/=", "==", "=").map(PPTokSym.apply)))
+    checkPPTokens("/+\n", Seq(Seq("/", "+").map(PPTokSym.apply)))
+    checkPPTokens("/#\n", Seq(Seq("/", "#").map(PPTokSym.apply)))
     checkPPTokens(
       "F1()\n",
       Seq(Seq(PPTokId("F1"), PPTokSym("("), PPTokSym(")")))
@@ -29,7 +29,7 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
     checkPPTokens("//\n", Seq.empty)
     checkPPTokens("//===\n", Seq.empty)
     checkPPTokens("//\n/=\n", Seq(Seq(PPTokSym("/="))))
-    checkPPTokens("//===\n/+\n", Seq(Seq("/", "+").map(PPTokSym)))
+    checkPPTokens("//===\n/+\n", Seq(Seq("/", "+").map(PPTokSym.apply)))
     checkPPTokens("*//\n/=\n", toPPTokSyms(Seq(Seq("*"), Seq("/="))))
     checkPPTokens(
       "**//===\n/+\n",
@@ -65,22 +65,22 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
   it should "recognize pp-numbers" in {
     checkPPTokens(
       "5 .5 .5. .5.. .5... .5....\n",
-      Seq(Seq("5", ".5", ".5.", ".5..", ".5...", ".5....").map(PPTokNum))
+      Seq(Seq("5", ".5", ".5.", ".5..", ".5...", ".5....").map(PPTokNum.apply))
     )
     checkPPTokens(
       "42 42.42 0 08 1a 54.abc .4ab\n",
-      Seq(Seq("42", "42.42", "0", "08", "1a", "54.abc", ".4ab").map(PPTokNum))
+      Seq(Seq("42", "42.42", "0", "08", "1a", "54.abc", ".4ab").map(PPTokNum.apply))
     )
     checkPPTokens(
       "1ae 1e+ 1ae- 1aE+ 1E- 1ae-0xF.E+\n",
-      Seq(Seq("1ae", "1e+", "1ae-", "1aE+", "1E-", "1ae-0xF.E+").map(PPTokNum))
+      Seq(Seq("1ae", "1e+", "1ae-", "1aE+", "1E-", "1ae-0xF.E+").map(PPTokNum.apply))
     )
   }
 
   it should "recognize identifiers" in {
     checkPPTokens(
       "L LO LOW OW\n",
-      Seq(Seq("L", "LO", "LOW", "OW").map(PPTokId))
+      Seq(Seq("L", "LO", "LOW", "OW").map(PPTokId.apply))
     )
   }
 
@@ -302,7 +302,7 @@ class PPLineReaderTest extends AnyFlatSpec with should.Matchers {
   }
 
   private def toPPTokSyms(xs: Seq[Seq[String]]): Seq[Seq[PPTokSym]] = {
-    xs.map(_.map(PPTokSym))
+    xs.map(_.map(PPTokSym.apply))
   }
 
   private def checkPPTokens(str: String, tokens: Seq[Seq[PPTok]]): Unit = {

@@ -26,7 +26,7 @@ class TextUtilsTest extends AnyFlatSpec with should.Matchers {
     eval(raw"\000") should be("\u0000")
     eval(raw"\0000") should be("\u00000")
 
-    an[IllegalSourceException] should be thrownBy eval(raw"\")
+    an[IllegalSourceException] should be thrownBy eval("\\")
     an[IllegalSourceException] should be thrownBy eval(raw"\x")
 
     eval(raw"\xa") should be("\u000a")

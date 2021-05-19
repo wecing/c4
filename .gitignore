@@ -12,6 +12,7 @@ pp/.ijwb
 pp/.ensime*
 
 pp/.metals
+pp/.bsp
 pp/**/.bloop
 pp/**/metals.sbt
 
