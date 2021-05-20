@@ -83,6 +83,11 @@ message Type {
     repeated Type fn_arg_types = 7;
     repeated bool fn_arg_byval = 8;
     bool fn_is_vararg = 9;
+
+    // INTx (no POINTER)
+    //
+    // only used by Value.cast_from as a hint for sext/zext and fp<=>ui.
+    bool int_is_unsigned = 10;
 }
 
 message Value {

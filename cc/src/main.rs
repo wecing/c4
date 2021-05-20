@@ -648,12 +648,21 @@ impl C4IRBuilder {
             r
         }
 
+        fn u(mut t: ir::Type) -> ir::Type {
+            t.int_is_unsigned = true;
+            t
+        }
+
         match tp {
             Type::Void => r(K::VOID),
-            Type::Char | Type::UnsignedChar => r(K::INT8),
-            Type::Short | Type::UnsignedShort => r(K::INT16),
-            Type::Int | Type::UnsignedInt => r(K::INT32),
-            Type::Long | Type::UnsignedLong => r(K::INT64),
+            Type::Char => r(K::INT8),
+            Type::UnsignedChar => u(r(K::INT8)),
+            Type::Short => r(K::INT16),
+            Type::UnsignedShort => u(r(K::INT16)),
+            Type::Int => r(K::INT32),
+            Type::UnsignedInt => u(r(K::INT32)),
+            Type::Long => r(K::INT64),
+            Type::UnsignedLong => u(r(K::INT64)),
             Type::Float => r(K::FLOAT),
             Type::Double => r(K::DOUBLE),
             Type::Struct(su) | Type::Union(su) => {
