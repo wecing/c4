@@ -373,16 +373,17 @@ runValue irValue = do
     IR.Value'CastFrom fromIrValue -> do
       (baseInstrs, fromRegIdx) <- runValue fromIrValue
       fromSz <- getRegSize fromRegIdx
-      let toSz = case irValue ^. IR.type' . IR.kind of
-            IR.Type'INT8 -> Byte
-            IR.Type'INT16 -> Word
-            IR.Type'INT32 -> Long
-            IR.Type'INT64 -> Quad
-            IR.Type'FLOAT -> F32
-            IR.Type'DOUBLE -> F64
-            IR.Type'POINTER -> Quad
-            IR.Type'BOOLEAN -> Byte
+      let getSzAndIsUnsigned v' = case (v' :: IR.Value) ^. IR.type' . IR.kind of
+            IR.Type'INT8 -> (Byte, v' ^. IR.type' . IR.intIsUnsigned)
+            IR.Type'INT16 -> (Word, v' ^. IR.type' . IR.intIsUnsigned)
+            IR.Type'INT32 -> (Long, v' ^. IR.type' . IR.intIsUnsigned)
+            IR.Type'INT64 -> (Quad, v' ^. IR.type' . IR.intIsUnsigned)
+            IR.Type'FLOAT -> (F32, False)
+            IR.Type'DOUBLE -> (F64, False)
+            IR.Type'POINTER -> (Quad, True)
+            IR.Type'BOOLEAN -> (Byte, False)
             k -> error $ "illegal IR: cannot cast to " ++ show k
+      let (toSz, toUnsigned) = getSzAndIsUnsigned irValue
       toRegIdx <- defineReg toSz
       let fromReg = Reg fromRegIdx
       let toReg = Reg toRegIdx
@@ -418,12 +419,14 @@ runValue irValue = do
             (_, F32) -> return [Instr "cvtsi2ss" Nothing regs]
             (_, F64) -> return [Instr "cvtsi2sd" Nothing regs]
             -- intN -> intN
-            -- TODO: unsigned?
-            (Byte, _) -> return [Instr "movsb" (Just toSz) regs]
+            (Byte, _) -> let op = if toUnsigned then "movzb" else "movsb" in
+                         return [Instr op (Just toSz) regs]
             (_, Byte) -> return [Instr "mov" (Just toSz) regs]
-            (Word, _) -> return [Instr "movsw" (Just toSz) regs]
+            (Word, _) -> let op = if toUnsigned then "movzw" else "movsw" in
+                         return [Instr op (Just toSz) regs]
             (_, Word) -> return [Instr "mov" (Just toSz) regs]
-            (Long, _) -> return [Instr "movsl" (Just toSz) regs]
+            (Long, _) -> let op = if toUnsigned then "movzl" else "movsl" in
+                         return [Instr op (Just toSz) regs]
             (_, Long) -> return [Instr "mov" (Just toSz) regs]
             (Quad, Quad) -> return [Instr "mov" (Just toSz) regs]
       return (baseInstrs ++ castInstrs, toRegIdx)
