@@ -156,8 +156,6 @@ run ir = Map.mapWithKey run'
         funcBody''' =
           Map.insertWith (++) (funcDef ^. IR.entryBb) extraPrologue funcBody''
 
-        -- TODO: ret/call
-
 getUD :: Instr -> ([Var], [Var])
 getUD (Instr "and" _ [Imm _, Reg y]) = ([Left y], [Left y])
 getUD (Instr "cmp" _ [Imm _, Reg y]) = ([Left y], [])

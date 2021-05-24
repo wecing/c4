@@ -254,7 +254,12 @@ runInstr :: Monoid a
          -> RWS IR.IrModule a InstrSelectState [Instr]
 runInstr irInstr =
   case irInstr ^. IR.kind of
-    IR.BasicBlock'Instruction'ALLOCA -> undefined -- TODO
+    IR.BasicBlock'Instruction'ALLOCA -> do
+      let tp = irInstr ^. IR.type' . IR.pointeeType
+      structRegIdx <- defineRegForIrId (tp, irInstr ^. IR.id)
+      -- overwrites the irId -> regIdx mapping
+      ptrRegIdx <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+      return [Instr "lea" (Just Quad) [Reg structRegIdx, Reg ptrRegIdx]]
     IR.BasicBlock'Instruction'STORE -> do
       (instrsDst, regIdxDst) <- runValue (irInstr ^. IR.storeDst)
       (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.storeSrc)
@@ -269,7 +274,16 @@ runInstr irInstr =
       -- "load a, b" means "mov (a), b"
       let mov = Instr "load" (Just regSz) [Reg regIdxSrc, Reg regIdxDst]
       return (instrsSrc ++ [mov])
-    IR.BasicBlock'Instruction'MEMCPY -> undefined -- TODO
+    IR.BasicBlock'Instruction'MEMCPY -> do
+      (instrsDst, regIdxDst) <- runValue (irInstr ^. IR.memcpyDst)
+      (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.memcpySrc)
+      let repCount = Imm $ fromIntegral (irInstr ^. IR.memcpySize)
+      let instrsRep = [ Instr "mov" (Just Quad) [repCount, MReg Quad RCX]
+                      , Instr "mov" (Just Quad) [Reg regIdxDst, MReg Quad RDI]
+                      , Instr "mov" (Just Quad) [Reg regIdxSrc, MReg Quad RSI]
+                      -- Move RCX bytes from (RSI) to (RDI)
+                      , Instr "repmovs" (Just Byte) [] ]
+      return $ instrsDst ++ instrsSrc ++ instrsRep
     IR.BasicBlock'Instruction'NEG -> undefined -- TODO
     IR.BasicBlock'Instruction'NOT -> do
       (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.loadSrc)
@@ -445,9 +459,12 @@ runBinArithOp :: Monoid a
 runBinArithOp irInstr k = do
   (instrsL, regIdxL) <- runValue (irInstr ^. IR.binOpLeft)
   (instrsR, regIdxR) <- runValue (irInstr ^. IR.binOpRight)
-  regSz <- getRegSize regIdxR
   r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
-  -- TODO: assuming szL == szR == szDst
+  regSz <- do
+    regSzL <- getRegSize regIdxL
+    regSzR <- getRegSize regIdxR
+    when (regSzL /= regSzR) $ error "illegal bin op; regSzL != regSzR"
+    return regSzR
   let tpKind = irInstr ^. IR.type' . IR.kind
   let isFp = tpKind `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
   let op = case k of
@@ -777,20 +794,21 @@ getRegSize regIdx = use (regSize . at regIdx . to fromJust)
 
 defineRegForIrId :: Monoid a
                  => (IR.Type, Word32)
-                 -> RWS r a InstrSelectState RegIdx
+                 -> RWS IR.IrModule a InstrSelectState RegIdx
 defineRegForIrId (tp, irId) = do
-  let sz = case tp ^. IR.kind of
-        IR.Type'INT8 -> Byte
-        IR.Type'INT16 -> Word
-        IR.Type'INT32 -> Long
-        IR.Type'INT64 -> Quad
-        IR.Type'FLOAT -> F32
-        IR.Type'DOUBLE -> F64
-        IR.Type'POINTER -> Quad
-        IR.Type'BOOLEAN -> Byte
-        IR.Type'STRUCT -> undefined -- TODO
-        IR.Type'ARRAY -> undefined -- TODO
-        k -> error $ "unexpected type " ++ show k
+  sz <- do
+    case tp ^. IR.kind of
+      IR.Type'INT8 -> return Byte
+      IR.Type'INT16 -> return Word
+      IR.Type'INT32 -> return Long
+      IR.Type'INT64 -> return Quad
+      IR.Type'FLOAT -> return F32
+      IR.Type'DOUBLE -> return F64
+      IR.Type'POINTER -> return Quad
+      IR.Type'BOOLEAN -> return Byte
+      IR.Type'STRUCT -> uncurry SizeAndAlign <$> getTypeSizeAndAlign tp
+      IR.Type'ARRAY -> uncurry SizeAndAlign <$> getTypeSizeAndAlign tp
+      k -> error $ "unexpected type " ++ show k
   regIdx <- defineReg sz
   regIdxByIrId %= Map.insert (fromIntegral irId) regIdx
   return regIdx
