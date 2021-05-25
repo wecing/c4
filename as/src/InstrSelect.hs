@@ -271,9 +271,20 @@ runInstr irInstr =
       (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.loadSrc)
       regIdxDst <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
       regSz <- getRegSize regIdxDst
-      -- "load a, b" means "mov (a), b"
-      let mov = Instr "load" (Just regSz) [Reg regIdxSrc, Reg regIdxDst]
-      return (instrsSrc ++ [mov])
+      case regSz of
+        SizeAndAlign sz _ -> do
+          let repCount = Imm $ fromIntegral sz
+          let mov =
+                [ Instr "mov" (Just Quad) [repCount, MReg Quad RCX]
+                , Instr "lea" (Just Quad) [Reg regIdxDst, MReg Quad RDI]
+                , Instr "mov" (Just Quad) [Reg regIdxSrc, MReg Quad RSI]
+                -- Move RCX bytes from (RSI) to (RDI)
+                , Instr "repmovs" (Just Byte) [] ]
+          return (instrsSrc ++ mov)
+        _ -> do
+          -- "load a, b" means "mov (a), b"
+          let mov = Instr "load" (Just regSz) [Reg regIdxSrc, Reg regIdxDst]
+          return (instrsSrc ++ [mov])
     IR.BasicBlock'Instruction'MEMCPY -> do
       (instrsDst, regIdxDst) <- runValue (irInstr ^. IR.memcpyDst)
       (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.memcpySrc)
@@ -450,7 +461,18 @@ runValue irValue = do
       fromIdx <- use (regIdxByIrId . at irId . to fromJust)
       regSz <- getRegSize fromIdx
       toIdx <- defineReg regSz
-      return ([Instr "mov" (Just regSz) [Reg fromIdx, Reg toIdx]], toIdx)
+      case regSz of
+        SizeAndAlign sz _ -> do
+          let repCount = Imm $ fromIntegral sz
+          let mov =
+                [ Instr "mov" (Just Quad) [repCount, MReg Quad RCX]
+                , Instr "lea" (Just Quad) [Reg toIdx, MReg Quad RDI]
+                , Instr "lea" (Just Quad) [Reg fromIdx, MReg Quad RSI]
+                -- Move RCX bytes from (RSI) to (RDI)
+                , Instr "repmovs" (Just Byte) [] ]
+          return (mov, toIdx)
+        _ ->
+          return ([Instr "mov" (Just regSz) [Reg fromIdx, Reg toIdx]], toIdx)
 
 runBinArithOp :: Monoid a
               => IR.BasicBlock'Instruction
