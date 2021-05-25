@@ -133,7 +133,7 @@ run ir = Map.mapWithKey run'
             _ -> [Instr op sz rs']
           where
             rewriteOperand :: Operand -> Operand
-            rewriteOperand (Reg r) =
+            rewriteOperand (Reg r) | r `Map.member` colors =
               case colors ! r of
                 Left x ->
                   let n = localsOffset ! x
@@ -157,6 +157,7 @@ run ir = Map.mapWithKey run'
           Map.insertWith (++) (funcDef ^. IR.entryBb) extraPrologue funcBody''
 
 getUD :: Instr -> ([Var], [Var])
+getUD (Instr "add" _ [Imm _, MReg _ y]) = ([Right y], [Right y])
 getUD (Instr "and" _ [Imm _, Reg y]) = ([Left y], [Left y])
 getUD (Instr "cmp" _ [Imm _, Reg y]) = ([Left y], [])
 getUD (Instr "cmp" _ [Reg x, Reg y]) = ([Left x, Left y], [])
@@ -169,26 +170,29 @@ getUD (Instr "je" _ [Addr _ _]) = ([], [])
 getUD (Instr "jmp" _ [Addr _ _]) = ([], [])
 getUD (Instr "lea" _ [Addr _ _, Reg y]) = ([], [Left y])
 getUD (Instr "lea" _ [CalleeStackParam _, Reg y]) = ([], [Left y])
+getUD (Instr "lea" _ [Reg x, MReg _ y]) = ([Left x], [Right y])
 getUD (Instr "lea" _ [StackParam _, MReg _ y]) = ([], [Right y])
 getUD (Instr "mov" _ [CalleeStackParam _, Reg y]) = ([], [Left y])
 getUD (Instr "mov" _ [Imm _, MReg _ y]) = ([], [Right y])
 getUD (Instr "mov" _ [Imm _, Reg y]) = ([], [Left y])
-getUD (Instr "mov" _ [SavedReg _, Reg y]) = ([], [Left y])
-getUD (Instr "mov" _ [MReg _ x, SavedReg _]) = ([Right x], [])
 getUD (Instr "mov" _ [MReg _ x, Reg y]) = ([Right x], [Left y])
+getUD (Instr "mov" _ [MReg _ x, SavedReg _]) = ([Right x], [])
 getUD (Instr "mov" _ [Reg x, MReg _ y]) = ([Left x], [Right y])
 getUD (Instr "mov" _ [Reg x, StackParam _]) = ([Left x], [])
+getUD (Instr "mov" _ [SavedReg _, Reg y]) = ([], [Left y])
 getUD (Instr "not" _ [Reg x]) = ([Left x], [Left x])
 getUD (Instr "repmovs" _ []) = ([Right RCX, Right RSI, Right RDI], [])
 getUD (Instr "ret" _ []) = (map Right [RAX, RDX, XMM0, XMM1], []) -- TODO
 getUD (Instr "store" _ [Reg x, Reg y]) = ([Left x, Left y], [])
+getUD (Instr "store" _ [Reg x, MReg _ y]) = ([Left x, Right y], [])
+getUD (Instr "store" _ [MReg _ x, MReg _ y]) = ([Right x, Right y], [])
 getUD (Instr "test" _ [Reg x, Reg y]) = ([Left x, Left y], [])
 getUD (Instr "ucomi" _ [Reg x, Reg y]) = ([Left x, Left y], [])
 getUD (Instr op _ [Reg x, Reg y])
   | op `Map.member` dict = dict ! op
   where
     -- here div could only be divss/divsd
-    movLikes = [ "load", "mov", "movsb", "movsw", "movsl", "cvtss2sd"
+    movLikes = [ "lea", "load", "mov", "movsb", "movsw", "movsl", "cvtss2sd"
                , "cvtsd2ss", "cvtss2si", "cvtsd2si", "cvtsi2ss", "cvtsi2sd" ]
     addLikes = [ "xorps", "or", "xor", "and", "shl", "sar", "shr", "add", "sub"
                , "mul", "imul", "div" ]

@@ -319,9 +319,16 @@ runInstr irInstr =
         _ -> do
           (instrs, regIdx) <- runValue (irInstr ^. IR.value)
           regSz <- getRegSize regIdx
-          r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
-          let mov = Instr "mov" (Just regSz) [Reg regIdx, Reg r]
-          return (instrs ++ [mov])
+          case regSz of
+            SizeAndAlign _ _ -> do
+              -- runValue already makes a copy; no need to copy again
+              regIdxByIrId %= Map.insert (fromIntegral $ irInstr ^. IR.id)
+                                         regIdx
+              return instrs
+            _ -> do
+              r <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+              let mov = Instr "mov" (Just regSz) [Reg regIdx, Reg r]
+              return (instrs ++ [mov])
     k -> error $ "illegal IR: instr kind " ++ show k
 
 runTerminator :: Monoid a
@@ -347,13 +354,39 @@ runTerminator term = do
     IR.BasicBlock'Terminator'RETURN -> do
       (instrsVal, regIdxVal) <- runValue $ term ^. IR.returnValue
       regSzVal <- getRegSize regIdxVal
-      let instrsRet = case term ^. IR.returnValue . IR.type' . IR.kind of
-            IR.Type'STRUCT -> undefined -- TODO: copy regIdxVal to RAX/RDX/XMM
+      instrsRet <- case term ^. IR.returnValue . IR.type' . IR.kind of
+            IR.Type'STRUCT -> do
+              -- TODO: this is incorrect; should classify tp recursively
+              -- and handle the case of RAX+XMM0
+              let tpId = term ^. IR.returnValue . IR.type' . IR.structId
+              tps <- view (IR.structDefs . at tpId . to fromJust . IR.type')
+              let isFp t =
+                    (t :: IR.Type) ^. IR.kind
+                    `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
+              let isSse = any isFp tps
+              (sz, _) <- getTypeSizeAndAlign (term ^. IR.returnValue . IR.type')
+              let mov =
+                    if isSse then
+                      [ Instr "store" (Just F64) [Reg regIdxVal, MReg F64 XMM0]
+                      -- second elem
+                      , Instr "lea" (Just Quad) [Reg regIdxVal, MReg Quad RDX]
+                      , Instr "add" (Just Quad) [Imm 8, MReg Quad RDX]
+                      , Instr "store" (Just F64)
+                                      [MReg Quad RDX, MReg F64 XMM1] ]
+                    else
+                      [ Instr "store" (Just Quad) [Reg regIdxVal, MReg Quad RAX]
+                      -- second elem
+                      , Instr "lea" (Just Quad) [Reg regIdxVal, MReg Quad RDX]
+                      , Instr "add" (Just Quad) [Imm 8, MReg Quad RDX]
+                      , Instr "store" (Just Quad)
+                                      [MReg Quad RDX, MReg Quad RDX] ]
+              return $ if sz > 8 then mov else [head mov]
             k ->
               let isSse = k `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
                   mr = if isSse then XMM0 else RAX
-              in [ Instr "mov" (Just regSzVal) [Reg regIdxVal, MReg regSzVal mr]
-                 , Instr "ret" Nothing []]
+              in return
+                [ Instr "mov" (Just regSzVal) [Reg regIdxVal, MReg regSzVal mr]
+                , Instr "ret" Nothing [] ]
       return $ instrsVal ++ instrsRet
     IR.BasicBlock'Terminator'SWITCH -> do
       undefined -- TODO
