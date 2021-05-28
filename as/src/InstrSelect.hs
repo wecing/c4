@@ -181,7 +181,7 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
                                         [SavedReg off, Reg reg]
                 ST.modifySTRef initInstrs (++ [initI])
                 ST.modifySTRef fps tail
-                ST.modifySTRef regSaveRegionSz (max $ off + 8)
+                ST.modifySTRef regSaveRegionSz (max $ off + 16)
             else if (tp ^. IR.kind)
                     `elem` [ IR.Type'INT8, IR.Type'INT16, IR.Type'INT32
                            , IR.Type'INT64, IR.Type'POINTER ] then do
@@ -212,7 +212,7 @@ run irModule = Map.mapWithKey runFunc' $ irModule ^. IR.functionDefs
               let g (mreg, off) = Instr "mov" (Just Quad)
                                               [MReg Quad mreg, SavedReg off]
               ST.modifySTRef saveInstrs (++ map g gps' ++ map f fps')
-              ST.writeSTRef regSaveRegionSz (8 * (6 + 8))
+              ST.writeSTRef regSaveRegionSz (8 * 6 + 16 * 8)
 
           liftM2 (,) (ST.readSTRef regSaveRegionSz)
                      $ liftM2 (++) (ST.readSTRef saveInstrs)
@@ -367,19 +367,21 @@ runTerminator term = do
               (sz, _) <- getTypeSizeAndAlign (term ^. IR.returnValue . IR.type')
               let mov =
                     if isSse then
-                      [ Instr "store" (Just F64) [Reg regIdxVal, MReg F64 XMM0]
+                      [ Instr "load" (Just F64) [Reg regIdxVal, MReg F64 XMM0]
                       -- second elem
                       , Instr "lea" (Just Quad) [Reg regIdxVal, MReg Quad RDX]
                       , Instr "add" (Just Quad) [Imm 8, MReg Quad RDX]
-                      , Instr "store" (Just F64)
-                                      [MReg Quad RDX, MReg F64 XMM1] ]
+                      , Instr "load" (Just F64)
+                                     [MReg Quad RDX, MReg F64 XMM1]
+                      , Instr "ret" Nothing [] ]
                     else
-                      [ Instr "store" (Just Quad) [Reg regIdxVal, MReg Quad RAX]
+                      [ Instr "load" (Just Quad) [Reg regIdxVal, MReg Quad RAX]
                       -- second elem
                       , Instr "lea" (Just Quad) [Reg regIdxVal, MReg Quad RDX]
                       , Instr "add" (Just Quad) [Imm 8, MReg Quad RDX]
-                      , Instr "store" (Just Quad)
-                                      [MReg Quad RDX, MReg Quad RDX] ]
+                      , Instr "load" (Just Quad)
+                                     [MReg Quad RDX, MReg Quad RDX]
+                      , Instr "ret" Nothing [] ]
               return $ if sz > 8 then mov else [head mov]
             k ->
               let isSse = k `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]

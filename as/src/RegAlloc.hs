@@ -1,9 +1,11 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 
 module RegAlloc where
 
 import Control.Lens (at, use, uses, (^.), (%=))
 import Control.Lens.TH (makeLenses)
+import Control.Monad (forM_, liftM2)
 import Control.Monad.State.Lazy (State, execState)
 import Data.Either (isLeft, lefts, rights)
 import Data.List (sortBy)
@@ -26,9 +28,11 @@ import InstrSelect
   , stackParamsRegionSize
   )
 
+import qualified Control.Monad.ST.Lazy as ST
 import qualified Data.Map as Map
 import qualified Data.ProtoLens.Runtime.Data.Text as Text
 import qualified Data.Set as Set
+import qualified Data.STRef.Lazy as ST
 
 import qualified Proto.Ir as IR
 import qualified Proto.Ir_Fields as IR
@@ -101,11 +105,34 @@ run ir = Map.mapWithKey run'
                             (raState' ^. interfMap)
 
         -- determine location of spills
-        -- TODO: support allocas
         localsOffset :: Map.Map RegIdx Int
         localsOffset =
           let elems = Set.fromList $ lefts $ Map.elems colors
           in Map.fromList $ zip (Set.toList elems) [0,8..]
+
+        allocas :: Map.Map RegIdx (Int, Int) -- size and align
+        allocas =
+          let getOperands (Instr _ _ rs) = rs
+              ops = concatMap getOperands $ Map.elems funcBody'
+              getSizeAndAlign regIdx =
+                case raState' ^. iSelState . regSize . at regIdx of
+                  Just (SizeAndAlign sz align) -> Just (sz, align)
+                  _ -> Nothing
+              getSizeAndAlign' op =
+                case op of
+                  Reg regIdx -> (regIdx,) <$> getSizeAndAlign regIdx
+                  _ -> Nothing
+          in Map.fromList $ mapMaybe getSizeAndAlign' ops
+
+        (allocasOffset, spillsAndAllocasSize) = ST.runST $ do
+          offsets <- ST.newSTRef (Map.empty :: Map.Map RegIdx Int)
+          nextOffset <- ST.newSTRef $ 8 * Map.size localsOffset
+          forM_ (Map.toList allocas) $ \(regIdx, (sz, align)) -> do
+            ST.modifySTRef nextOffset (`roundUp` align)
+            off <- ST.readSTRef nextOffset
+            ST.modifySTRef offsets (Map.insert regIdx off)
+            ST.modifySTRef nextOffset (+ sz)
+          liftM2 (,) (ST.readSTRef offsets) (ST.readSTRef nextOffset)
 
         -- x86-64 ABI v0.21, 3.2.2:
         --
@@ -114,8 +141,7 @@ run ir = Map.mapWithKey run'
         stackParamsRegionSz = raState' ^. iSelState . stackParamsRegionSize
         regSaveRegionSz = raState' ^. iSelState . regSaveRegionSize
         localsSize =
-          roundUp (8 * Map.size localsOffset
-                      + stackParamsRegionSz + regSaveRegionSz)
+          roundUp (spillsAndAllocasSize + stackParamsRegionSz + regSaveRegionSz)
                   16
         -- low addr                   rbp                            high addr
         -- StackParam | ... | SavedReg | old rbp | ret addr | CalleeStackParam
@@ -139,6 +165,9 @@ run ir = Map.mapWithKey run'
                   let n = localsOffset ! x
                   in RbpOffset (-localsSize + stackParamsRegionSz + n)
                 Right x -> MReg (fromMaybe Byte sz) x
+            rewriteOperand (Reg r) =
+              let n = allocasOffset ! r
+              in RbpOffset (-localsSize + stackParamsRegionSz + n)
             rewriteOperand (StackParam n) = RbpOffset (-localsSize + n)
             rewriteOperand (CalleeStackParam n) = RbpOffset (16 + n)
             rewriteOperand (SavedReg n) = RbpOffset (-regSaveRegionSz + n)
@@ -172,6 +201,8 @@ getUD (Instr "lea" _ [Addr _ _, Reg y]) = ([], [Left y])
 getUD (Instr "lea" _ [CalleeStackParam _, Reg y]) = ([], [Left y])
 getUD (Instr "lea" _ [Reg x, MReg _ y]) = ([Left x], [Right y])
 getUD (Instr "lea" _ [StackParam _, MReg _ y]) = ([], [Right y])
+getUD (Instr "load" _ [MReg _ x, MReg _ y]) = ([Right x], [Right y])
+getUD (Instr "load" _ [Reg x, MReg _ y]) = ([Left x], [Right y])
 getUD (Instr "mov" _ [CalleeStackParam _, Reg y]) = ([], [Left y])
 getUD (Instr "mov" _ [Imm _, MReg _ y]) = ([], [Right y])
 getUD (Instr "mov" _ [Imm _, Reg y]) = ([], [Left y])
@@ -181,10 +212,10 @@ getUD (Instr "mov" _ [Reg x, MReg _ y]) = ([Left x], [Right y])
 getUD (Instr "mov" _ [Reg x, StackParam _]) = ([Left x], [])
 getUD (Instr "mov" _ [SavedReg _, Reg y]) = ([], [Left y])
 getUD (Instr "not" _ [Reg x]) = ([Left x], [Left x])
-getUD (Instr "repmovs" _ []) = ([Right RCX, Right RSI, Right RDI], [])
+getUD (Instr "repmovs" _ []) =
+  ([Right RCX, Right RSI, Right RDI], [Right RCX, Right RSI, Right RDI])
 getUD (Instr "ret" _ []) = (map Right [RAX, RDX, XMM0, XMM1], []) -- TODO
 getUD (Instr "store" _ [Reg x, Reg y]) = ([Left x, Left y], [])
-getUD (Instr "store" _ [Reg x, MReg _ y]) = ([Left x, Right y], [])
 getUD (Instr "store" _ [MReg _ x, MReg _ y]) = ([Right x, Right y], [])
 getUD (Instr "test" _ [Reg x, Reg y]) = ([Left x, Left y], [])
 getUD (Instr "ucomi" _ [Reg x, Reg y]) = ([Left x, Left y], [])
