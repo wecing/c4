@@ -295,9 +295,40 @@ runInstr irInstr =
                       -- Move RCX bytes from (RSI) to (RDI)
                       , Instr "repmovs" (Just Byte) [] ]
       return $ instrsDst ++ instrsSrc ++ instrsRep
-    IR.BasicBlock'Instruction'NEG -> undefined -- TODO
+    IR.BasicBlock'Instruction'NEG -> do
+      (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.negSrc)
+      regIdxDst <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
+      instrs <-
+        case irInstr ^. IR.type' . IR.kind of
+          -- because of integral promotion on negation expressions, we should
+          -- in practice never see neg on int8/16 though
+          IR.Type'INT8 -> return
+            [ Instr "mov" (Just Byte) [ Reg regIdxSrc, Reg regIdxDst ]
+            , Instr "neg" (Just Byte) [ Reg regIdxDst ] ]
+          IR.Type'INT16 -> return
+            [ Instr "mov" (Just Word) [ Reg regIdxSrc, Reg regIdxDst ]
+            , Instr "neg" (Just Word) [ Reg regIdxDst ] ]
+          IR.Type'INT32 -> return
+            [ Instr "mov" (Just Long) [ Reg regIdxSrc, Reg regIdxDst ]
+            , Instr "neg" (Just Long) [ Reg regIdxDst ] ]
+          IR.Type'INT64 -> return
+            [ Instr "mov" (Just Quad) [ Reg regIdxSrc, Reg regIdxDst ]
+            , Instr "neg" (Just Quad) [ Reg regIdxDst ] ]
+          IR.Type'FLOAT -> do
+            regIdxTemp <- defineReg Long
+            return [ Instr "mov" (Just F32) [ Reg regIdxSrc, Reg regIdxTemp ]
+                   , Instr "xor" (Just Long) [ Imm 0x80000000, Reg regIdxTemp ]
+                   , Instr "mov" (Just F32) [ Reg regIdxTemp, Reg regIdxDst ] ]
+          IR.Type'DOUBLE -> do
+            regIdxTemp <- defineReg Quad
+            return [ Instr "mov" (Just F64) [ Reg regIdxSrc, Reg regIdxTemp ]
+                   -- (minBound :: Int64) == 0x8000_0000_0000_0000
+                   , Instr "xor" (Just Quad) [ Imm minBound, Reg regIdxTemp ]
+                   , Instr "mov" (Just F64) [ Reg regIdxTemp, Reg regIdxDst ] ]
+          k -> error $ "illegal IR: neg on " ++ show k
+      return $ instrsSrc ++ instrs
     IR.BasicBlock'Instruction'NOT -> do
-      (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.loadSrc)
+      (instrsSrc, regIdxSrc) <- runValue (irInstr ^. IR.notSrc)
       regIdxDst <- defineRegForIrId (irInstr ^. IR.type', irInstr ^. IR.id)
       regSz <- getRegSize regIdxDst
       -- NOT could only be applied to integral types

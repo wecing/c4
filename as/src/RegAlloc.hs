@@ -211,6 +211,7 @@ getUD (Instr "mov" _ [MReg _ x, SavedReg _]) = ([Right x], [])
 getUD (Instr "mov" _ [Reg x, MReg _ y]) = ([Left x], [Right y])
 getUD (Instr "mov" _ [Reg x, StackParam _]) = ([Left x], [])
 getUD (Instr "mov" _ [SavedReg _, Reg y]) = ([], [Left y])
+getUD (Instr "neg" _ [Reg x]) = ([Left x], [Left x])
 getUD (Instr "not" _ [Reg x]) = ([Left x], [Left x])
 getUD (Instr "repmovs" _ []) =
   ([Right RCX, Right RSI, Right RDI], [Right RCX, Right RSI, Right RDI])
@@ -219,6 +220,7 @@ getUD (Instr "store" _ [Reg x, Reg y]) = ([Left x, Left y], [])
 getUD (Instr "store" _ [MReg _ x, MReg _ y]) = ([Right x, Right y], [])
 getUD (Instr "test" _ [Reg x, Reg y]) = ([Left x, Left y], [])
 getUD (Instr "ucomi" _ [Reg x, Reg y]) = ([Left x, Left y], [])
+getUD (Instr "xor" _ [Imm _, Reg y]) = ([Left y], [Left y])
 getUD (Instr op _ [Reg x, Reg y])
   | op `Map.member` dict = dict ! op
   where
