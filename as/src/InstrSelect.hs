@@ -8,9 +8,9 @@ import Control.Lens.TH (makeLenses)
 import Control.Monad (forM_, liftM2, when)
 import Control.Monad.RWS.Lazy (RWS, evalRWS, execRWS, state, tell)
 import Data.Int (Int64)
-import Data.List (tails)
+import Data.List (find, inits, tails)
 import Data.Map ((!))
-import Data.Maybe (isJust, isNothing, fromJust)
+import Data.Maybe (isJust, isNothing, fromJust, fromMaybe)
 import Data.Word (Word32)
 
 import qualified Control.Monad.ST.Lazy as ST
@@ -850,6 +850,64 @@ getSuccessors bb =
     _ -> error "illegal IR"
   where
     t = bb ^. IR.terminator
+
+data EightByteClass = IntegerC | Sse | NoClass | Memory deriving (Eq, Ord)
+
+classifyType :: Monoid a => IR.Type -> RWS IR.IrModule a s [EightByteClass]
+classifyType inputType =
+  let
+    mapFst f (a, b) = (f a, b)
+    mapSnd f (a, b) = (a, f b)
+    flat :: Monoid a => IR.Type -> RWS IR.IrModule a s [(IR.Type, Bool)]
+    flat tp = case tp ^. IR.kind of
+      IR.Type'STRUCT -> do
+        let tpId = tp ^. IR.structId
+        tps <- view (IR.structDefs . at tpId . to fromJust . IR.type')
+        paddingOnly <-
+          view (IR.structDefs . at tpId . to fromJust . IR.paddingOnly)
+        let flat' (t, p) = map (mapSnd (p ||)) <$> flat t
+        x <- traverse flat' $ zip tps paddingOnly -- tmp var for tp inference
+        return $ concat x
+      IR.Type'ARRAY -> do
+        tps <- flat $ tp ^. IR.arrayElemType
+        return $ concat $ replicate (fromIntegral $ tp ^. IR.arraySize) tps
+      _ | (tp ^. IR.kind)
+          `elem` [IR.Type'VOID, IR.Type'FUNCTION, IR.Type'UNSPECIFIED] ->
+        error "illegal IR"
+      _ -> return [(tp, False)]
+    classify :: IR.Type -> (EightByteClass, Int)
+    classify tp = case tp ^. IR.kind of
+      IR.Type'INT8 -> (IntegerC, 1)
+      IR.Type'INT16 -> (IntegerC, 2)
+      IR.Type'INT32 -> (IntegerC, 4)
+      IR.Type'INT64 -> (IntegerC, 8)
+      IR.Type'FLOAT -> (Sse, 4)
+      IR.Type'DOUBLE -> (Sse, 8)
+      IR.Type'POINTER -> (IntegerC, 8)
+      _ -> error "unreachable"
+    collectUntil :: ([a] -> Bool) -> [a] -> [a]
+    collectUntil f xs = fromMaybe xs $ find f (inits xs)
+    splitEightBytes :: [((EightByteClass, Int), Bool)]
+                    -> [[((EightByteClass, Int), Bool)]]
+    splitEightBytes [] = []
+    splitEightBytes xs =
+      let selected = collectUntil ((8 >=) . sum . map (snd . fst)) xs
+      in selected : splitEightBytes (drop (length selected) xs)
+    classifyEightBytes :: [[((EightByteClass, Int), Bool)]]
+                       -> [EightByteClass]
+    classifyEightBytes xs =
+      let cs :: [[EightByteClass]]
+          cs = map (map (fst . fst) . filter (not . snd)) xs
+          f :: [EightByteClass] -> EightByteClass
+          f cs' | Memory `elem` cs' = Memory
+                | IntegerC `elem` cs' = IntegerC
+                | otherwise = Sse
+      in map f cs
+  in do
+    flattened <- map (mapFst classify) <$> flat inputType
+    let sz = sum $ map (snd . fst) flattened
+    let ebcs = classifyEightBytes $ splitEightBytes flattened
+    return $ if sz > 16 || Memory `elem` ebcs then [Memory] else ebcs
 
 getTypeSizeAndAlign :: Monoid a
                     => IR.Type
