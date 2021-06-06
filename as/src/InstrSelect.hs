@@ -387,33 +387,27 @@ runTerminator term = do
       regSzVal <- getRegSize regIdxVal
       instrsRet <- case term ^. IR.returnValue . IR.type' . IR.kind of
             IR.Type'STRUCT -> do
-              -- TODO: this is incorrect; should classify tp recursively
-              -- and handle the case of RAX+XMM0
-              let tpId = term ^. IR.returnValue . IR.type' . IR.structId
-              tps <- view (IR.structDefs . at tpId . to fromJust . IR.type')
-              let isFp t =
-                    (t :: IR.Type) ^. IR.kind
-                    `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
-              let isSse = any isFp tps
-              (sz, _) <- getTypeSizeAndAlign (term ^. IR.returnValue . IR.type')
-              let mov =
-                    if isSse then
-                      [ Instr "load" (Just F64) [Reg regIdxVal, MReg F64 XMM0]
-                      -- second elem
-                      , Instr "lea" (Just Quad) [Reg regIdxVal, MReg Quad RDX]
+              ebcs <- classifyType $ term ^. IR.returnValue . IR.type'
+              let load1 = case head ebcs of
+                    IntegerC ->
+                      Instr "load" (Just Quad) [Reg regIdxVal, MReg Quad RAX]
+                    Sse ->
+                      Instr "load" (Just F64) [Reg regIdxVal, MReg F64 XMM0]
+                    _ -> error "illegal IR"
+              let load2 = case tail ebcs of
+                    [IntegerC] ->
+                      [ Instr "lea" (Just Quad) [Reg regIdxVal, MReg Quad RDX]
                       , Instr "add" (Just Quad) [Imm 8, MReg Quad RDX]
-                      , Instr "load" (Just F64)
-                                     [MReg Quad RDX, MReg F64 XMM1]
+                      , Instr "load" (Just Quad) [MReg Quad RDX, MReg Quad RDX]
                       , Instr "ret" Nothing [] ]
-                    else
-                      [ Instr "load" (Just Quad) [Reg regIdxVal, MReg Quad RAX]
-                      -- second elem
-                      , Instr "lea" (Just Quad) [Reg regIdxVal, MReg Quad RDX]
+                    [Sse] ->
+                      [ Instr "lea" (Just Quad) [Reg regIdxVal, MReg Quad RDX]
                       , Instr "add" (Just Quad) [Imm 8, MReg Quad RDX]
-                      , Instr "load" (Just Quad)
-                                     [MReg Quad RDX, MReg Quad RDX]
+                      , Instr "load" (Just F64) [MReg Quad RDX, MReg F64 XMM1]
                       , Instr "ret" Nothing [] ]
-              return $ if sz > 8 then mov else [head mov]
+                    [] -> []
+                    _ -> error "illegal IR"
+              return $ load1 : load2
             k ->
               let isSse = k `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
                   mr = if isSse then XMM0 else RAX
@@ -891,7 +885,7 @@ classifyType inputType =
                     -> [[((EightByteClass, Int), Bool)]]
     splitEightBytes [] = []
     splitEightBytes xs =
-      let selected = collectUntil ((8 >=) . sum . map (snd . fst)) xs
+      let selected = collectUntil ((>= 8) . sum . map (snd . fst)) xs
       in selected : splitEightBytes (drop (length selected) xs)
     classifyEightBytes :: [[((EightByteClass, Int), Bool)]]
                        -> [EightByteClass]
