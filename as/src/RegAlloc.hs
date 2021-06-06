@@ -218,6 +218,7 @@ getUD (Instr "repmovs" _ []) =
 getUD (Instr "ret" _ []) = (map Right [RAX, RDX, XMM0, XMM1], []) -- TODO
 getUD (Instr "store" _ [Reg x, Reg y]) = ([Left x, Left y], [])
 getUD (Instr "store" _ [MReg _ x, MReg _ y]) = ([Right x, Right y], [])
+getUD (Instr "store" _ [MReg _ x, Reg y]) = ([Right x, Left y], [])
 getUD (Instr "test" _ [Reg x, Reg y]) = ([Left x, Left y], [])
 getUD (Instr "ucomi" _ [Reg x, Reg y]) = ([Left x, Left y], [])
 getUD (Instr "xor" _ [Imm _, Reg y]) = ([Left y], [Left y])

@@ -687,13 +687,30 @@ runFnCall callInstr = do
 
   regIdxDst <- defineRegForIrId (callInstr ^. IR.type', callInstr ^. IR.id)
   regSzDst <- getRegSize regIdxDst
-  let mvRet = case callInstr ^. IR.type' . IR.kind of
-        IR.Type'STRUCT ->
-          undefined -- TODO: copy RAX/RDX/XMM to regIdsDst (should be a ptr?)
-        k ->
-          let isSse = k `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
-              mr = if isSse then XMM0 else RAX
-          in [Instr "mov" (Just regSzDst) [MReg regSzDst mr, Reg regIdxDst]]
+  mvRet <- case callInstr ^. IR.type' . IR.kind of
+    IR.Type'STRUCT -> do
+      ebcs <- classifyType $ callInstr ^. IR.type'
+      let store1 = case head ebcs of
+            IntegerC -> Instr "store" (Just Quad) [MReg Quad RAX, Reg regIdxDst]
+            Sse -> Instr "store" (Just F64) [MReg F64 XMM0, Reg regIdxDst]
+            _ -> error "illegal IR"
+      let store2 = case tail ebcs of
+            [IntegerC] ->
+              [ Instr "lea" (Just Quad) [Reg regIdxDst, MReg Quad RDI]
+              , Instr "add" (Just Quad) [Imm 8, MReg Quad RDI]
+              , Instr "store" (Just Quad) [MReg Quad RDX, MReg Quad RDI] ]
+            [Sse] ->
+              [ Instr "lea" (Just Quad) [Reg regIdxDst, MReg Quad RDI]
+              , Instr "add" (Just Quad) [Imm 8, MReg Quad RDI]
+              , Instr "store" (Just F64) [MReg F64 XMM1, MReg Quad RDI] ]
+            [] -> []
+            _ -> error "illegal IR"
+      return $ store1 : store2
+    k ->
+      let isSse = k `elem` [IR.Type'FLOAT, IR.Type'DOUBLE]
+          mr = if isSse then XMM0 else RAX
+      in return [ Instr "mov" (Just regSzDst)
+                              [MReg regSzDst mr, Reg regIdxDst] ]
 
   stackSize <- use (runFnCallState . curStackSize)
   stackParamsRegionSize %= max stackSize
