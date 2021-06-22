@@ -38,7 +38,9 @@ let compute (fn: Proto.FunctionDef) : CFG =
                 yield v.Terminator.CondBrTrue
                 yield v.Terminator.CondBrFalse }
             | TermK.ReturnVoid | TermK.Return -> Seq.empty
-            | TermK.Switch -> upcast v.Terminator.SwitchCaseTarget
+            | TermK.Switch -> seq {
+                yield! (v.Terminator.SwitchCaseTarget :> seq<uint>)
+                yield v.Terminator.SwitchDefaultTarget }
             | _ -> failwith "illegal protobuf message"
         (k, Seq.sort ts)
     fn.Bbs |> Seq.map getSucc |> ofPaths fn.EntryBb
