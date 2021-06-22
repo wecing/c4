@@ -416,7 +416,26 @@ runTerminator term = do
                 , Instr "ret" Nothing [] ]
       return $ instrsVal ++ instrsRet
     IR.BasicBlock'Terminator'SWITCH -> do
-      undefined -- TODO
+      (instrsCond, regIdxCond) <- runValue $ term ^. IR.switchCond
+      regSzCond <- getRegSize regIdxCond
+
+      let extractCaseValue cv =
+            case (cv :: IR.Value) ^. IR.maybe'v . to fromJust of
+              IR.Value'I8 v -> Imm $ fromIntegral v
+              IR.Value'I16 v -> Imm $ fromIntegral v
+              IR.Value'I32 v -> Imm $ fromIntegral v
+              IR.Value'I64 v -> Imm v
+              _ -> error "illegal IR"
+      let caseValues = map extractCaseValue $ term ^. IR.switchCaseValue
+      caseTargets <- traverse getLabel $ term ^. IR.switchCaseTarget
+      let genJmp (cv, ct) =
+            [ Instr "cmp" (Just regSzCond) [cv, Reg regIdxCond]
+            , Instr "je" (Just Quad) [Addr ct 0] ]
+      let instrsJmp = concatMap genJmp $ zip caseValues caseTargets
+
+      defaultTarget <- getLabel $ term ^. IR.switchDefaultTarget
+      let lastJump = Instr "jmp" (Just Quad) [Addr defaultTarget 0]
+      return $ instrsCond ++ instrsJmp ++ [lastJump]
     k -> error $ "illegal IR: terminator kind " ++ show k
 
 -- always return a writable RegIdx
